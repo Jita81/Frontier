@@ -78,6 +78,11 @@ class LintTests(unittest.TestCase):
     def test_missing_end(self):
         self.assertIn("no end record", self.lint(GOOD_TAPE.replace("end 20\n", "")))
 
+    def test_end_zero(self):
+        # an empty tape would replay nothing and compare IDENTICAL vacuously
+        self.assertIn("line 2: end 0 replays nothing",
+                      self.lint(GOOD_TAPE.split("\n")[0] + "\nend 0\n"))
+
     def test_record_after_end(self):
         self.assertTrue(self.lint(GOOD_TAPE + "k 21 39\n"))
 
