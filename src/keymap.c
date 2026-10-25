@@ -344,6 +344,40 @@ void Keymap_UnInit(void)
 }
 
 
+#ifdef __APPLE__
+/* SDL 1.2 on macOS (sdl12-compat, as SDL 1.2's Quartz driver did) reports
+ * Mac virtual key codes (kVK_* in HIToolbox/Events.h) as scancodes, not PC
+ * ones, so the offset heuristic below cannot work there: translate the keys
+ * that are not mapped by their symbol with a table instead.  0 = no ST key. */
+static const Uint8 MacToStScanCode[128] =
+{
+  [0x35] = 0x01,  /* Escape */
+  [0x12] = 0x02, [0x13] = 0x03, [0x14] = 0x04, [0x15] = 0x05,  /* 1 2 3 4 */
+  [0x17] = 0x06, [0x16] = 0x07, [0x1A] = 0x08, [0x1C] = 0x09,  /* 5 6 7 8 */
+  [0x19] = 0x0a, [0x1D] = 0x0b,  /* 9 0 */
+  [0x1B] = 0x0c, [0x18] = 0x0d,  /* - = */
+  [0x33] = 0x0e, [0x30] = 0x0f,  /* Backspace, Tab */
+  [0x0C] = 0x10, [0x0D] = 0x11, [0x0E] = 0x12, [0x0F] = 0x13,  /* Q W E R */
+  [0x11] = 0x14, [0x10] = 0x15, [0x20] = 0x16, [0x22] = 0x17,  /* T Y U I */
+  [0x1F] = 0x18, [0x23] = 0x19,  /* O P */
+  [0x21] = 0x1a, [0x1E] = 0x1b,  /* [ ] */
+  [0x24] = 0x1c, [0x3B] = 0x1d,  /* Return, Control */
+  [0x00] = 0x1e, [0x01] = 0x1f, [0x02] = 0x20, [0x03] = 0x21,  /* A S D F */
+  [0x05] = 0x22, [0x04] = 0x23, [0x26] = 0x24, [0x28] = 0x25,  /* G H J K */
+  [0x25] = 0x26,  /* L */
+  [0x29] = 0x27, [0x27] = 0x28, [0x32] = 0x29,  /* ; ' ` */
+  [0x38] = 0x2a, [0x2A] = 0x2b,  /* Left Shift, \ */
+  [0x06] = 0x2c, [0x07] = 0x2d, [0x08] = 0x2e, [0x09] = 0x2f,  /* Z X C V */
+  [0x0B] = 0x30, [0x2D] = 0x31, [0x2E] = 0x32,  /* B N M */
+  [0x2B] = 0x33, [0x2F] = 0x34, [0x2C] = 0x35,  /* , . / */
+  [0x3C] = 0x36, [0x3A] = 0x38,  /* Right Shift, Option => Alternate */
+  [0x31] = 0x39, [0x39] = 0x3a,  /* Space, Caps Lock */
+  [0x7A] = 0x3b, [0x78] = 0x3c, [0x63] = 0x3d, [0x76] = 0x3e,  /* F1-F4 */
+  [0x60] = 0x3f, [0x61] = 0x40, [0x62] = 0x41, [0x64] = 0x42,  /* F5-F8 */
+  [0x65] = 0x43, [0x6D] = 0x44,  /* F9 F10 */
+};
+#endif
+
 /*-----------------------------------------------------------------------*/
 /*
   Heuristic analysis to find out the obscure scancode offset.
@@ -465,6 +499,11 @@ static char Keymap_PcToStScanCode(SDL_keysym* keysym)
 
     default:
     {
+#ifdef __APPLE__
+      if (keysym->scancode < 128 && MacToStScanCode[keysym->scancode])
+        return MacToStScanCode[keysym->scancode];
+      return -1;
+#else
       /* Process remaining keys: assume that it's PC101 keyboard
        * and that it is compatible with Atari ST keyboard (basically
        * same scancodes but on different platforms with different
@@ -489,6 +528,7 @@ static char Keymap_PcToStScanCode(SDL_keysym* keysym)
 	fprintf(stderr,"trying offset 8 (the most likely !)\n");
         return (scanPC - 8);
       }
+#endif
     }
   }
 }
@@ -555,6 +595,7 @@ char Keymap_RemapKeyToSTScanCode(SDL_keysym* pKeySym)
       return Keymap_GetKeyPadScanCode(pKeySym);
     }
 
+#ifndef __APPLE__	/* 0 is the A key's Mac key code, not an illegal one */
     /* We sometimes enter here with an illegal (=0) scancode, so we keep
      * track of the right scancodes in a table and then use a value from there.
      */
@@ -568,6 +609,7 @@ char Keymap_RemapKeyToSTScanCode(SDL_keysym* pKeySym)
       if(pKeySym->scancode == 0)
         fprintf(stderr, "Warning: Key scancode is 0!\n");
     }
+#endif
 
     return Keymap_PcToStScanCode(pKeySym);
 }
