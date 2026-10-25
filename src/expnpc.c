@@ -15,6 +15,8 @@
  *                            server instead of api.anthropic.com
  *   FE2_NPC_SELFTEST=1       also run rewrites that break a game fact through
  *                            the checks and log that each one is refused
+ *   FE2_NPC_PERSONA=<name>   test only: give every speaker this persona
+ *                            (brusque, formal, weary, friendly)
  *
  * The rewriter is claude-haiku-5-5 through the Anthropic Messages API when
  * ANTHROPIC_API_KEY is set in the environment (the key is only ever read
@@ -78,6 +80,7 @@ int expnpc_on;
 static int use_api;
 static int stub_delay_ms;
 static int show_personas;
+static int forced_persona = -1;
 static int self_test;
 static FILE *cache_fp;
 static struct entry entries[NPC_MAX_ENTRIES];
@@ -309,6 +312,21 @@ static int find_facts (const char *tmpl, char facts[][96], const unsigned char *
 static const char *negations[] = { "not", "no", "never", "n't", "forbidden",
 	"prohibited", "illegal", "banned", "denied", "refused", NULL };
 
+/* is w (lower case) a whole word of s, ignoring case */
+static int has_word (const char *s, const char *w)
+{
+	int len = strlen (w), i;
+
+	for (; *s; s++) {
+		for (i = 0; i < len && tolower ((unsigned char) s[i]) == w[i]; i++) ;
+		if (i == len && !isalpha ((unsigned char) s[len]) && s[len] != '\'')
+			return 1;
+		while (isalpha ((unsigned char) *s) || *s == '\'') s++;
+		if (!*s) break;
+	}
+	return 0;
+}
+
 static int has_negation (const char *s)
 {
 	char low[NPC_TXT];
@@ -391,6 +409,12 @@ static const char *validate (const char *r, const struct entry *e, char facts[][
 			/* a sentence may start with a common word, never a new name */
 			for (k = 0; start && sentence_words[k]; k++)
 				if (!strcmp (word, sentence_words[k])) known = 1;
+			/* or with a word of the original, capitalised ("Not", "Fine's") */
+			if (start && !known) {
+				if (len > 2 && !strcmp (word + len - 2, "'s")) word[len - 2] = 0;
+				word[0] = tolower ((unsigned char) word[0]);
+				known = has_word (e->tmpl, word);
+			}
 			if (!known) return "new name";
 		}
 	}
@@ -469,6 +493,7 @@ static const struct persona personas[] = {
 static const struct persona *persona_for (const char *speaker)
 {
 	unsigned h = 2166136261u;
+	if (forced_persona >= 0) return &personas[forced_persona];
 	while (*speaker) h = (h ^ (unsigned char) *speaker++) * 16777619u;
 	return &personas[h % NPERSONAS];
 }
@@ -569,39 +594,24 @@ static int json_text (const char *resp, char *out, int size)
 	return *p == '"';
 }
 
-static int api_rewrite (struct entry *e, char facts[][96], int nfacts, char *out)
+/* one Messages API request; sys and msgs are JSON already. The reply's
+ * text goes to out, trimmed of spaces and quotes */
+static int api_call (const char *sys, const char *msgs, char *out)
 {
-	const struct persona *p = persona_for (e->speaker);
-	char sys[2048], user[2048], fl[1024], js[2][4096], *body;
 	struct curl_slist *h = NULL;
 	struct buf b = { NULL, 0 };
-	char hdr[512];
+	char hdr[512], *body;
 	const char *key = getenv ("ANTHROPIC_API_KEY"), *url;
 	CURL *c;
 	long code = 0;
-	int i, n, ok = 0, budget = strlen (e->tmpl);	/* the lines are full already */
+	int ok = 0;
 
 	if (!key || !*key || !(c = curl_easy_init ())) return 0;
-	for (i = n = 0, fl[0] = 0; i < nfacts; i++)
-		n += snprintf (fl + n, sizeof (fl) - n, "%s\"%s\"", i ? ", " : "", facts[i]);
-	snprintf (sys, sizeof (sys),
-		"You rewrite one radio message in the space game Frontier: Elite II (year 3200) so it "
-		"sounds like its speaker. The speaker is %s. Keep the meaning exactly: every "
-		"placeholder such as {0} must appear exactly once and unchanged; copy these phrases "
-		"verbatim: %s; write no digits, no currency signs and no names that are not in the "
-		"message; keep any negation. No longer than the original: at most %d characters, "
-		"plain ASCII, one paragraph. "
-		"Reply with the rewritten message only.",
-		p->desc, nfacts ? fl : "(none)", budget);
-	snprintf (user, sizeof (user), "Speaker: %s\nMessage: %s", e->speaker, e->tmpl);
-	json_str (js[0], sizeof (js[0]), sys);
-	json_str (js[1], sizeof (js[1]), user);
-	body = malloc (16384);
-	snprintf (body, 16384,
+	body = malloc (32768);
+	snprintf (body, 32768,
 		"{\"model\":\"%s\",\"max_tokens\":256,\"thinking\":{\"type\":\"disabled\"},"
-		"\"output_config\":{\"effort\":\"low\"},\"system\":%s,"
-		"\"messages\":[{\"role\":\"user\",\"content\":%s}]}",
-		NPC_MODEL, js[0], js[1]);
+		"\"output_config\":{\"effort\":\"low\"},\"system\":%s,\"messages\":[%s]}",
+		NPC_MODEL, sys, msgs);
 	snprintf (hdr, sizeof (hdr), "x-api-key: %s", key);
 	h = curl_slist_append (h, hdr);
 	memset (hdr, 0, sizeof (hdr));
@@ -629,18 +639,56 @@ static int api_rewrite (struct entry *e, char facts[][96], int nfacts, char *out
 	free (body);
 	free (b.p);
 	if (ok) {
-		/* trim, then the same checks as the stub */
 		char *s = out, *t;
 		while (*s == ' ' || *s == '"') s++;
 		memmove (out, s, strlen (s) + 1);
 		for (t = out + strlen (out); t > out && (t[-1] == ' ' || t[-1] == '"'); ) *--t = 0;
-		const char *why = validate (out, e, facts, nfacts);
-		if (why) {
-			fprintf (stderr, "FE2_NPC: rewrite rejected (%s): \"%s\"\n", why, out);
-			ok = 0;
-		}
 	}
 	return ok;
+}
+
+/* ask once; if the checker refuses the reply, ask once more with the
+ * reason, then give up (the original is shown) */
+static int api_rewrite (struct entry *e, char facts[][96], int nfacts, char *out)
+{
+	const struct persona *p = persona_for (e->speaker);
+	char sys[2048], user[2048], fl[1024], again[512], js[4][4096], msgs[16384];
+	const char *why = NULL;
+	int i, n, try, budget = strlen (e->tmpl);	/* the lines are full already */
+
+	for (i = n = 0, fl[0] = 0; i < nfacts; i++)
+		n += snprintf (fl + n, sizeof (fl) - n, "%s\"%s\"", i ? ", " : "", facts[i]);
+	snprintf (sys, sizeof (sys),
+		"You rewrite one radio message in the space game Frontier: Elite II (year 3200) so it "
+		"sounds like its speaker. The speaker is %s. Keep the meaning exactly: every "
+		"placeholder such as {0} must appear exactly once and unchanged; copy these phrases "
+		"verbatim: %s; write no digits, no currency signs and no names that are not in the "
+		"message; keep any negation. No longer than the original: at most %d characters, "
+		"plain ASCII, one paragraph. "
+		"Reply with the rewritten message only.",
+		p->desc, nfacts ? fl : "(none)", budget);
+	snprintf (user, sizeof (user), "Speaker: %s\nMessage: %s", e->speaker, e->tmpl);
+	json_str (js[0], sizeof (js[0]), sys);
+	json_str (js[1], sizeof (js[1]), user);
+	snprintf (msgs, sizeof (msgs), "{\"role\":\"user\",\"content\":%s}", js[1]);
+	for (try = 0; try < 2; try++) {
+		if (!api_call (js[0], msgs, out)) return 0;
+		if (!(why = validate (out, e, facts, nfacts))) return 1;
+		fprintf (stderr, "FE2_NPC: rewrite rejected (%s): \"%s\"%s\n", why, out,
+			 try ? "" : ", asking again");
+		snprintf (again, sizeof (again), "A checker refused that: %s. It is %d characters; "
+			"the limit is %d. Write it again, keep every rule, and reply with the "
+			"message only.%s", why, (int) strlen (out), budget, strcmp (why, "new name") ? "" :
+			" Use no capitalised word that is not in the original message, except "
+			"to start a sentence with one of its own words.");
+		json_str (js[2], sizeof (js[2]), out);
+		json_str (js[3], sizeof (js[3]), again);
+		n = strlen (msgs);
+		snprintf (msgs + n, sizeof (msgs) - n,
+			",{\"role\":\"assistant\",\"content\":%s},{\"role\":\"user\",\"content\":%s}",
+			js[2], js[3]);
+	}
+	return 0;
 }
 #endif
 
@@ -770,6 +818,9 @@ void ExpNpc_Init (void)
 	if ((s = getenv ("FE2_NPC_STUB_DELAY_MS"))) stub_delay_ms = atoi (s);
 	show_personas = (s = getenv ("FE2_NPC_SHOW_PERSONAS")) && *s && strcmp (s, "0");
 	self_test = (s = getenv ("FE2_NPC_SELFTEST")) && *s && strcmp (s, "0");
+	if ((s = getenv ("FE2_NPC_PERSONA")))
+		for (forced_persona = NPERSONAS - 1; forced_persona >= 0; forced_persona--)
+			if (!strcmp (s, personas[forced_persona].name)) break;
 	if ((s = getenv ("FE2_NPC_CACHE")) && *s) cache_load (s);
 	pthread_create (&t, NULL, worker, NULL);
 	pthread_detach (t);
