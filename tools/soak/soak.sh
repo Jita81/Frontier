@@ -21,8 +21,13 @@
 #   2 liveness kill -0 on the game's PID every 5 s.
 #   3 watchdog window-only capture every 10 s (needs Screen Recording permission for
 #              the terminal); FAIL if the md5 is unchanged for 60 s or nothing is captured.
-#   4 memory   RSS every 10 s; least-squares slope over the last 20 min, skipping the
-#              first 60 s of start-up, must be < 1 MB/min.  `leaks <pid>` before SIGTERM
+#              Each capture records how much of the window other windows cover; macOS
+#              throttles a covered window, so a static stretch while it was >= 50 %
+#              covered is flagged as possibly occlusion rather than a game freeze.
+#   4 memory   RSS and phys_footprint every 10 s; the least-squares slope of each over
+#              the last 20 min, skipping the first 60 s of start-up, must be < 1 MB/min.
+#              (RSS alone is blind on macOS: compression shrank it 5 MB/min in a run
+#              that leaked 4 MB, so the footprint slope gates too.)  `leaks <pid>` before SIGTERM
 #              must report 0 blocks whose allocation stack touches the game binary
 #              (conservative: an SDL leak reached from host code counts as host).
 #   5 UBSan    only for a UBSan build: 0 "runtime error" lines on stderr; else SKIP.
@@ -125,6 +130,7 @@ if [ "$frames" = 1 ]; then
 fi
 mkdir -p "$out/frames"
 : >"$out/rss.tsv"
+: >"$out/footprint.tsv"
 : >"$out/frames.tsv"
 
 envs=(SDL_VIDEO_WINDOW_POS="$pos" SDL_AUDIODRIVER="${SDL_AUDIODRIVER:-dummy}")
@@ -143,10 +149,11 @@ echo "soak: pid $pid" >&2
 
 checks=0 died_at='' last_rss=0 last_frame=0
 captures=0 cap_fail=0 nowin=0 distinct=0 prev_md5='' last_change=0 max_static=0
+covered=0 static_covered=0 run_covered=0
 
 capture() { # $1 = seconds since start
-	local wid f md5 static
-	wid=$("$out/winid" "$pid" 2>/dev/null)
+	local wid f md5 static pct
+	read -r wid pct <<<"$("$out/winid" "$pid" 2>/dev/null)"
 	if [ -z "$wid" ]; then
 		nowin=$((nowin + 1)); printf '%s\tnowindow\n' "$1" >>"$out/frames.tsv"; return
 	fi
@@ -156,13 +163,15 @@ capture() { # $1 = seconds since start
 	fi
 	md5=$(md5 -q "$f")
 	captures=$((captures + 1))
+	[ "${pct:-0}" -ge 50 ] && covered=$((covered + 1))
 	if [ "$md5" != "$prev_md5" ]; then
-		distinct=$((distinct + 1)) prev_md5=$md5 last_change=$1
+		distinct=$((distinct + 1)) prev_md5=$md5 last_change=$1 run_covered=0
 	else
+		[ "${pct:-0}" -ge 50 ] && run_covered=1
 		static=$(($1 - last_change))
-		[ "$static" -gt "$max_static" ] && max_static=$static
+		if [ "$static" -gt "$max_static" ]; then max_static=$static static_covered=$run_covered; fi
 	fi
-	printf '%s\t%s\n' "$1" "$md5" >>"$out/frames.tsv"
+	printf '%s\t%s\t%s%%\n' "$1" "$md5" "${pct:-?}" >>"$out/frames.tsv"
 	[ "$keep_frames" = 1 ] || rm -f "$f"
 }
 
@@ -174,6 +183,8 @@ while :; do
 	if [ $((now - last_rss)) -ge 10 ]; then
 		rss=$(ps -o rss= -p "$pid" 2>/dev/null | tr -d ' ')
 		[ -n "$rss" ] && printf '%s\t%s\n' "$t" "$rss" >>"$out/rss.tsv"
+		fp=$(footprint -f bytes "$pid" 2>/dev/null | sed -n 's/^ *phys_footprint: \([0-9]*\) B$/\1/p')
+		[ -n "$fp" ] && printf '%s\t%s\n' "$t" "$((fp / 1024))" >>"$out/footprint.tsv"
 		last_rss=$now
 	fi
 	if [ "$frames" = 1 ] && [ $((now - last_frame)) -ge 10 ]; then
@@ -238,14 +249,17 @@ fi
 if [ "$frames" = 0 ]; then
 	result 3 SKIP "reason=\"${frames_note:-disabled by --no-frames}\""
 else
-	note=
+	note=''
+	[ "$max_static" -ge 60 ] && [ "$static_covered" = 1 ] &&
+		note=" note=\"the window was >= 50% covered during the static stretch: possibly occlusion, not a freeze\""
 	[ "$captures" -gt 1 ] && [ "$distinct" -le 1 ] &&
 		note=" note=\"every frame identical: frozen, or a blank capture (Screen Recording permission?)\""
 	if [ "$captures" -eq 0 ]; then v=FAIL; elif [ "$max_static" -ge 60 ]; then v=FAIL; else v=PASS; fi
-	result 3 $v "captures=$captures distinct=$distinct max_static_s=$max_static no_window=$nowin failed=$cap_fail$note"
+	result 3 $v "captures=$captures distinct=$distinct max_static_s=$max_static covered_captures=$covered no_window=$nowin failed=$cap_fail$note"
 fi
 
-slope=$(awk -F'\t' '
+slope_of() { # FILE of "seconds<TAB>KB" -> "MB_per_min window_s samples", or "na ..."
+	awk -F'\t' '
 	{ t[NR] = $1; r[NR] = $2; last = $1 }
 	END {
 		from = last - 1200; if (from < 60) from = 60
@@ -253,22 +267,25 @@ slope=$(awk -F'\t' '
 		if (n < 3 || n*sxx - sx*sx == 0) { print "na 0 " n + 0; exit }
 		b = (n*sxy - sx*sy) / (n*sxx - sx*sx)          # KB per second
 		printf "%.3f %d %d\n", b * 60 / 1024, last - from, n
-	}' "$out/rss.tsv")
-# shellcheck disable=SC2086  # split the three awk fields
-set -- $slope
-slope_mb=$1 window=$2 samples=$3
-if [ "$slope_mb" = na ]; then
-	slope_v=FAIL
-else
-	slope_v=$(awk -v s="$slope_mb" 'BEGIN { print (s < 1.0) ? "PASS" : "FAIL" }')
-fi
+	}' "$1"
+}
+under_1mb() { [ "$1" != na ] && awk -v s="$1" 'BEGIN { exit !(s < 1.0) }'; }
+# shellcheck disable=SC2046  # split the three fields
+set -- $(slope_of "$out/rss.tsv")
+rss_mb=$1 window=$2 samples=$3
+# shellcheck disable=SC2046
+set -- $(slope_of "$out/footprint.tsv")
+fp_mb=$1
+slope_v=PASS
+under_1mb "$rss_mb" || slope_v=FAIL
+under_1mb "$fp_mb" || slope_v=FAIL
 if [ "$leaks_check" = 0 ] || [ -z "$leaks_total" ]; then
 	leaks_v=SKIP; [ "$leaks_check" = 1 ] && leaks_v=FAIL
 else
 	if [ "${leaks_host:-0}" -eq 0 ]; then leaks_v=PASS; else leaks_v=FAIL; fi
 fi
 v=PASS; [ "$slope_v" = FAIL ] && v=FAIL; [ "$leaks_v" = FAIL ] && v=FAIL
-result 4 $v "rss_slope_mb_per_min=$slope_mb window_s=$window samples=$samples slope=$slope_v" \
+result 4 $v "rss_slope_mb_per_min=$rss_mb footprint_slope_mb_per_min=$fp_mb window_s=$window samples=$samples slope=$slope_v" \
 	"leaks_total=${leaks_total:-na} leaks_host=${leaks_host:-na} leaks=$leaks_v${leaks_note:+ note=\"$leaks_note\"}"
 
 if [ "$ubsan" = 1 ]; then
