@@ -1,0 +1,4 @@
+# Everything in dist/ is build output (dist/Frontier.app) and is never committed.
+# The app contains the compiled game, a derivative of fe2.s; keep it local.
+*
+!.gitignore
