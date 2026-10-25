@@ -1,4 +1,13 @@
 /*
+ * Provenance (S-5): copied unchanged from remileonard/glfrontier, commit
+ * 981d304 ("opengl wip"), and vendored here in a36733d.  Its licence is
+ * UNKNOWN: the file as copied carries no licence or copyright notice, and
+ * no grant has been obtained yet (docs/05 section 6, item 4).  Do not
+ * relicense it, and do not ship a release that includes it, until the grant
+ * is recorded here or the file is replaced by a clean-room reader with the
+ * same API.
+ */
+/*
  * Minimal INI file reader, vendored as a drop-in replacement for the
  * system "libini" dependency (struct INI / ini_open / ini_close /
  * ini_next_section / ini_read_pair), which is not commonly available.
