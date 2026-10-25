@@ -17,6 +17,13 @@
  *                            the checks and log that each one is refused
  *   FE2_NPC_PERSONA=<name>   test only: give every speaker this persona
  *                            (brusque, formal, weary, friendly)
+ *   FE2_NPC_MAX_CALLS=N      make at most N API requests in this run, then
+ *                            treat every further one as failed
+ *   FE2_NPC_TEST_LINES=<file> test only: queue these messages (speaker TAB
+ *                            body per line) at start-up, as if drawn, wrapped
+ *                            at FE2_NPC_TEST_WIDTH pixels (default: the comms
+ *                            panel's)
+ *   FE2_NPC_LOG_PROMPTS=1    log the prompts sent to the API (never the key)
  *
  * The rewriter is claude-haiku-5-5 through the Anthropic Messages API when
  * ANTHROPIC_API_KEY is set in the environment (the key is only ever read
@@ -61,6 +68,7 @@
 #define NPC_MAX_FACTS	8
 #define NPC_TXT		512
 #define NPC_MODEL	"claude-haiku-5-5"
+#define NPC_PANEL_W	114	/* widest comms line the game drew (the fine), for test lines */
 
 enum { E_PENDING, E_READY, E_FAILED };
 static const char *status_name[] = { "pending", "ready", "failed" };
@@ -81,6 +89,7 @@ static int use_api;
 static int stub_delay_ms;
 static int show_personas;
 static int forced_persona = -1;
+static int max_calls = -1, n_calls, log_prompts;
 static int self_test;
 static FILE *cache_fp;
 static struct entry entries[NPC_MAX_ENTRIES];
@@ -121,6 +130,8 @@ static int text_width (const char *s, int n)
 	while (n-- > 0 && *s) w += Font_CharWidth ((unsigned char) *s++);
 	return w;
 }
+
+static int templatize (struct msg *m);
 
 /* "\1 c1 Message from <speaker>:\r \1 c2 <body with \r wraps>\0" */
 static int parse_msg (u32 adr, struct msg *m)
@@ -163,8 +174,14 @@ static int parse_msg (u32 adr, struct msg *m)
 	m->body[n] = 0;
 	m->budget_lines = lines;
 	if (!n) return 0;
+	return templatize (m);
+}
 
-	/* numbers, optionally with a leading '$', become placeholders */
+/* numbers in m->body, optionally with a leading '$', become placeholders */
+static int templatize (struct msg *m)
+{
+	int i, n;
+
 	m->nnum = 0;
 	for (i = n = 0; m->body[i]; ) {
 		const char *s = m->body + i;
@@ -603,10 +620,18 @@ static int api_call (const char *sys, const char *msgs, char *out)
 	char hdr[512], *body;
 	const char *key = getenv ("ANTHROPIC_API_KEY"), *url;
 	CURL *c;
+	CURLcode rc;
 	long code = 0;
 	int ok = 0;
+	double t0;
 
-	if (!key || !*key || !(c = curl_easy_init ())) return 0;
+	if (!key || !*key) return 0;
+	if (max_calls >= 0 && n_calls >= max_calls) {
+		fprintf (stderr, "FE2_NPC: API call cap (%d) reached, request not sent\n", max_calls);
+		return 0;
+	}
+	if (!(c = curl_easy_init ())) return 0;
+	n_calls++;
 	body = malloc (32768);
 	snprintf (body, 32768,
 		"{\"model\":\"%s\",\"max_tokens\":256,\"thinking\":{\"type\":\"disabled\"},"
@@ -625,14 +650,27 @@ static int api_call (const char *sys, const char *msgs, char *out)
 	curl_easy_setopt (c, CURLOPT_WRITEDATA, &b);
 	curl_easy_setopt (c, CURLOPT_TIMEOUT, 20L);
 	curl_easy_setopt (c, CURLOPT_NOSIGNAL, 1L);
-	if (curl_easy_perform (c) == CURLE_OK) {
+	t0 = now_us ();
+	rc = curl_easy_perform (c);
+	if (rc == CURLE_OK) {
+		const char *ui = NULL, *uo = NULL, *sr;
+		char stop[32] = "?";
 		curl_easy_getinfo (c, CURLINFO_RESPONSE_CODE, &code);
-		if (code == 200 && b.p && strstr (b.p, "\"stop_reason\":\"end_turn\""))
+		if (b.p && (sr = strstr (b.p, "\"stop_reason\":\""))) sscanf (sr + 15, "%31[a-z_]", stop);
+		if (b.p) {
+			ui = strstr (b.p, "\"input_tokens\":");
+			uo = strstr (b.p, "\"output_tokens\":");
+		}
+		fprintf (stderr, "FE2_NPC: API call %d: HTTP %ld, stop %s, %.1f ms, usage in %ld out %ld\n",
+			 n_calls, code, stop, (now_us () - t0) / 1e3,
+			 ui ? strtol (ui + 15, NULL, 10) : -1L, uo ? strtol (uo + 16, NULL, 10) : -1L);
+		if (code == 200 && !strcmp (stop, "end_turn"))
 			ok = json_text (b.p, out, NPC_TXT);
 		else
-			fprintf (stderr, "FE2_NPC: API status %ld, response not used\n", code);
+			fprintf (stderr, "FE2_NPC: API status %ld, stop %s, response not used\n", code, stop);
 	} else {
-		fprintf (stderr, "FE2_NPC: API request failed\n");
+		fprintf (stderr, "FE2_NPC: API call %d: request failed after %.1f ms (%s)\n",
+			 n_calls, (now_us () - t0) / 1e3, curl_easy_strerror (rc));
 	}
 	curl_slist_free_all (h);
 	curl_easy_cleanup (c);
@@ -671,6 +709,7 @@ static int api_rewrite (struct entry *e, char facts[][96], int nfacts, char *out
 	json_str (js[0], sizeof (js[0]), sys);
 	json_str (js[1], sizeof (js[1]), user);
 	snprintf (msgs, sizeof (msgs), "{\"role\":\"user\",\"content\":%s}", js[1]);
+	if (log_prompts) fprintf (stderr, "FE2_NPC: prompt system: %s\nFE2_NPC: prompt user: %s\n", sys, user);
 	for (try = 0; try < 2; try++) {
 		if (!api_call (js[0], msgs, out)) return 0;
 		if (!(why = validate (out, e, facts, nfacts))) return 1;
@@ -681,6 +720,7 @@ static int api_rewrite (struct entry *e, char facts[][96], int nfacts, char *out
 			"message only.%s", why, (int) strlen (out), budget, strcmp (why, "new name") ? "" :
 			" Use no capitalised word that is not in the original message, except "
 			"to start a sentence with one of its own words.");
+		if (log_prompts && !try) fprintf (stderr, "FE2_NPC: prompt retry: %s\n", again);
 		json_str (js[2], sizeof (js[2]), out);
 		json_str (js[3], sizeof (js[3]), again);
 		n = strlen (msgs);
@@ -760,9 +800,9 @@ static void *worker (void *arg)
 					fprintf (stderr, "FE2_NPC: persona %-8s -> original (nothing fits)\n", personas[k].name);
 			}
 		}
-		fprintf (stderr, "FE2_NPC: %s [%s] \"%s\" -> %s%s%s (facts:", job.speaker,
-			 persona_for (job.speaker)->name, job.tmpl, ok ? "\"" : "original",
-			 ok ? out : "", ok ? "\"" : "");
+		fprintf (stderr, "FE2_NPC: %s [%s] \"%s\" -> %s%s%s (fit %d px x %d lines; %.1f ms; facts:",
+			 job.speaker, persona_for (job.speaker)->name, job.tmpl, ok ? "\"" : "original",
+			 ok ? out : "", ok ? "\"" : "", job.budget_w, job.budget_lines, (now_us () - t0) / 1e3);
 		for (idx = 0; idx < nfacts; idx++) fprintf (stderr, " \"%s\"", facts[idx]);
 		fprintf (stderr, ")\n");
 	}
@@ -804,6 +844,46 @@ static void cache_load (const char *path)
 	cache_fp = fopen (path, "a");
 }
 
+/* FE2_NPC_TEST_LINES: queue each "speaker TAB body" line as a new entry,
+ * with the budget of the body wrapped at the panel width, exactly as if the
+ * game had drawn it; the worker and the checks are the real ones */
+static void test_lines (const char *path)
+{
+	FILE *f = fopen (path, "r");
+	const char *s = getenv ("FE2_NPC_TEST_WIDTH");
+	int width = s && *s ? atoi (s) : NPC_PANEL_W;
+	char line[2 * NPC_TXT], wrapped[NPC_TXT], *tab;
+
+	if (!f) return;
+	while (fgets (line, sizeof (line), f) && nentries < NPC_MAX_ENTRIES) {
+		struct msg m;
+		struct entry *e;
+		line[strcspn (line, "\n")] = 0;
+		if (line[0] == '#' || !(tab = strchr (line, '\t'))) continue;
+		*tab = 0;
+		memset (&m, 0, sizeof (m));
+		snprintf (m.speaker, sizeof (m.speaker), "%s", line);
+		snprintf (m.body, sizeof (m.body), "%s", tab + 1);
+		if (!templatize (&m) || !(m.budget_lines = wrap (m.body, width, 8, wrapped, sizeof (wrapped)))) {
+			fprintf (stderr, "FE2_NPC: test line not usable: %s\n", tab + 1);
+			continue;
+		}
+		m.budget_w = width;
+		e = &entries[nentries++];
+		memset (e, 0, sizeof (*e));
+		strcpy (e->speaker, m.speaker);
+		strcpy (e->tmpl, m.tmpl);
+		memcpy (e->nums, m.nums, sizeof (m.nums));
+		e->nnum = m.nnum;
+		e->budget_w = m.budget_w;
+		e->budget_lines = m.budget_lines;
+		e->status = E_PENDING;
+		queue[q_tail++ % NPC_MAX_ENTRIES] = e - entries;
+		n_queued++;
+	}
+	fclose (f);
+}
+
 void ExpNpc_Init (void)
 {
 	const char *s;
@@ -821,7 +901,10 @@ void ExpNpc_Init (void)
 	if ((s = getenv ("FE2_NPC_PERSONA")))
 		for (forced_persona = NPERSONAS - 1; forced_persona >= 0; forced_persona--)
 			if (!strcmp (s, personas[forced_persona].name)) break;
+	if ((s = getenv ("FE2_NPC_MAX_CALLS")) && *s) max_calls = atoi (s);
+	log_prompts = (s = getenv ("FE2_NPC_LOG_PROMPTS")) && *s && strcmp (s, "0");
 	if ((s = getenv ("FE2_NPC_CACHE")) && *s) cache_load (s);
+	if ((s = getenv ("FE2_NPC_TEST_LINES")) && *s) test_lines (s);
 	pthread_create (&t, NULL, worker, NULL);
 	pthread_detach (t);
 	fprintf (stderr, "FE2_NPC: on, rewriter %s\n",
