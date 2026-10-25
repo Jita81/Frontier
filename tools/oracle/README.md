@@ -69,14 +69,19 @@ Other pins in oracle modes:
 - `--fullscreen` is refused (exit 2);
 - sound is forced off;
 - an hcall that runs longer than 10 s gives `invalid reason=hung-hcall`;
-- a SIGSEGV exits 139 with no `end` line, which `compare` treats as INVALID.
+- a SIGSEGV exits 139 with no `end` line, which `compare` treats as INVALID;
+- a replay's header names the tape's end (`tape_end=N`). A replay that stops
+  before it (window closed, or SIGTERM, which SDL turns into a quit) still
+  writes its `stat` and `end` lines, then `invalid reason=early-exit`, and exits
+  3. `compare` also checks the `end` VBL against `tape_end`, so a short run is
+  INVALID (ERROR-INFRA), never a game divergence (07 §7.1).
 
 ## Streams (07 §4.1)
 
 | Tag | Content | Class |
 |---|---|---|
-| `g v h` | Hash of every hcall entry and exit in VBL v: regs, CCR, rdest, exception state, top 32 bytes of stack | game |
-| `m v h` | RAM hash at HostUpdate, with the screen buffers masked | game |
+| `g v h` | Hash of every hcall entry and exit in VBL v: regs, CCR, rdest, exception state, the 32 bytes at A7 (unmasked; see "Memset" below) | game |
+| `m v h` | RAM hash at HostUpdate, with the screen buffers and `bmp_under_mouse` masked (see "Screen mask" below) | game |
 | `c v t l548 l552 w14482` | Checkpoint words read through A6 (their meaning is **UNVERIFIED**) | game |
 | `s v len h_data h_name` | `Fwrite` (save) length and hashes | game |
 | `r v len h` | `Fread` (load) length and hash | game |
@@ -107,16 +112,21 @@ How the commands run:
 - `replay` sets `SDL_VIDEO_WINDOW_POS` (default `1500,800`), so several agents can
   share a desktop.
 - `replay` enforces a subprocess timeout and kills only its own child.
-- Run replays **one at a time**. Two GL replays at the same window position once
-  produced `invalid reason=hung-hcall hc=68`. The watchdog marked it INVALID, which
-  is correct, but it costs a re-run.
+- Replays may run concurrently. Before the fix in this branch the watchdog
+  could read an hcall entry time newer than its own clock sample, and the
+  unsigned age wrapped, so a healthy run was marked `invalid reason=hung-hcall`
+  (seen in 2 of about 29 runs, and in one parallel pair, `hc=68`). The watchdog
+  now loads the shared times with acquire order before reading the clock and
+  uses a saturating age. 16 concurrent replays (10 GL, 6 `--old-renderer`)
+  all completed IDENTICAL afterwards.
 
 **Pairwise verdicts** (`compare`):
 
 - IDENTICAL;
 - DIVERGENT-GAME (any of `g m c s r w`, a counter, or the end VBL);
 - DIVERGENT-FRAME (only `f`/`p`);
-- INVALID (an `invalid` line, or no `end`).
+- INVALID (an `invalid` line, no `end`, or an `end` VBL that is not the
+  header's `tape_end`).
 
 **Scenario verdicts** (`verdict`, 07 §7.1):
 
@@ -140,12 +150,12 @@ To find that boundary it re-runs both sides with `--oracle-detail v-5:v+1`.
 ## Reference results (route.fe2rep, GL build, macOS arm64)
 
 ```
-end 3100 g=04240640be4bb4ad m=734f0b7cb04961c4 c=dcad3c8a8bf9c46d s=cbf29ce484222325 r=cbf29ce484222325 f=e2cf48f9f4d07294 p=d0b676b2ffc4d3cb
-stat flagged=3100 hostupdate=3100 wd=0 wdv=- keyovf=0 a6=0000015e a6chg=0 draws=3106 screens=3 idle=036f70:1000,03709e:3600,0729f4:600,037082:999
+end 3100 g=04240640be4bb4ad m=7e57accfe3a24acb c=dcad3c8a8bf9c46d s=cbf29ce484222325 r=cbf29ce484222325 f=e2cf48f9f4d07294 p=d0b676b2ffc4d3cb
+stat flagged=3100 hostupdate=3100 wd=0 wdv=- keyovf=0 a6=0000015e a6chg=0 draws=3106 screens=2 idle=036f70:1000,03709e:3600,0729f4:600,037082:999
 ```
 
-The record run and two replays produce byte-identical stream files (excluding
-the `#` header line, which names the oracle mode).
+Two replays produce byte-identical stream files. A record run gives the same
+streams; only the `#` header line differs, because it names the oracle mode.
 
 Replaying under `--old-renderer` gives **DIVERGENT-GAME**, by design (07 §3.7):
 
@@ -154,13 +164,43 @@ Replaying under `--old-renderer` gives **DIVERGENT-GAME**, by design (07 §3.7):
 - **Divergent streams.** From that point `g` and `m` differ (`m` from VBL 1), and so
   do `f` and `p`.
 - **Streams that agree.** `c`, `s`, `r` and every counter match over all 3100 VBLs.
-- **The `Call_Memset`/`Call_MemsetBlue` fill difference.** These calls fill with
-  0/0x0e under R_OLD and 0xff under GL (`src/hostcall.c` 74-109). They write only
-  screen memory, which `m` masks, and their exit `g` hash agrees, so the difference
-  shows up only in `f`.
+- **The `Call_Memset`/`Call_MemsetBlue` fill difference shows up in `g`, not only
+  in `f`.** These calls fill with 0/0x0e under R_OLD and 0xff under GL
+  (`src/hostcall.c` 74-109). They write only screen memory, which `m` masks. But the
+  G-trace hashes the 32 bytes at A7 at every hcall entry and exit, unmasked, as 07
+  §4.1 defines it. In this build the stack top sits directly below the screen
+  buffer at 0xf0000. Memset and MemsetBlue are called at shallow stack depth
+  (A7 0xefff0-0xefff4), so their window also covers the first 16-20 bytes of that
+  screen. Measured:
+  - the Memset of 0xf0000 at VBL 0 has the same entry hash (detail line #19,
+    `0x01 e`) under GL and `--old-renderer`, but a different exit hash (#20,
+    `0x01 x`);
+  - a scratch mutant that changed only the GL fill (255 to 254) was classed
+    DIVERGENT-GAME by `run.py diverge`, which named `VBL 0 hcall #20 0x01
+    Call_Memset exit` as the first divergent boundary.
+
+  So a change to a Memset fill value is **FAIL-GAME**. That is what 07 §10.7 M-04
+  expects, and such a change cannot go through `oracle:fb-bless`. The same applies to
+  any host change that writes the first 20 bytes of screen 0xf0000 before a
+  shallow-stack hcall. Whether the G-trace window should mask screen bytes, as `m`
+  does, is an open design question for 07 (see "Not done yet"). It is not changed
+  here, because 07 defines the window as unmasked and M-04 relies on it.
 
 Tapes are therefore per renderer mode: the tape header names the mode, and
 replaying in another mode prints a warning.
+
+## Screen mask (deviation from 07 §4.1)
+
+07 §4.1 masks from `m` "every address that has been passed to `SetScreenBase`".
+In this build the game's first hcall is a `SetScreenBase` with base 0x46. It is
+made before A6 is set, and that base is never displayed. Masking 64,000 bytes from
+0x46 hid the game's whole A6 variable block (A6 = 0x15e) from the RAM hash. The
+oracle therefore registers a base when it is **handed over for display**: the
+`VideoBase` at `Nu_DrawScreen` (0x6f) entry, the same bytes `f` hashes. On the
+route tape the masked set is the two display buffers, 0xf0000 and 0x100000
+(`screens=2`). This makes `m` stricter, never looser. A buffer the game writes but
+never displays is now hashed. The route double run is still byte-identical with the
+wider coverage.
 
 ## Reviewer sign-off
 
@@ -206,3 +246,8 @@ following, in order.
   `bisect` or CI workflow yet. The stub harness (T-0.9) is also missing.
 - **Watchdog.** The no-hcall spin injection path is written but has not been
   exercised by a scenario yet.
+- **Open design question for 07: G-trace window and screens.** The 32-byte A7
+  window is unmasked, so it can include screen bytes when the stack is shallow
+  (see "Memset" above). Masking registered screens there would let a frame-only
+  change to those bytes be fb-blessed. It would also make M-04 depend on the game
+  reading the fill back. That is the operator's call, in 07.
