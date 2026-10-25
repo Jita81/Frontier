@@ -6,8 +6,15 @@
 */
 
 #include <SDL.h>
+#ifdef __APPLE__
+#include <OpenGL/gl.h>
+#include <OpenGL/glu.h>
+/* macOS' glu.h has no _GLUfuncptr: gluTessCallback takes a GLvoid (*)() */
+typedef GLvoid (*_GLUfuncptr) ();
+#else
 #include <GL/gl.h>
 #include <GL/glu.h>
+#endif
 
 #include "main.h"
 #include "../m68000.h"
@@ -433,7 +440,7 @@ static void draw_control_panel ()
 				line[x] = pal[*(scr++)];
 			}
 		}
-		glTexSubImage2D (GL_TEXTURE_2D, 0, 0, y, 320, 2, GL_RGBA, GL_UNSIGNED_BYTE, line);
+		glTexSubImage2D (GL_TEXTURE_2D, 0, 0, y, 320, 1, GL_RGBA, GL_UNSIGNED_BYTE, line);
 	}
 	glTexEnvf (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
 	
