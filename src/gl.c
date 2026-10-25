@@ -129,8 +129,11 @@ static void change_vidmode ()
 	}
 
 	info = SDL_GetVideoInfo ();
-
-	assert (info != NULL);
+	if (info == NULL) {
+		fprintf (stderr, "SDL_GetVideoInfo failed: %s\n", SDL_GetError ());
+		SDL_Quit ();
+		exit (-1);
+	}
 
 	SDL_GL_SetAttribute (SDL_GL_DOUBLEBUFFER, 1);
 	/* No depth buffer is requested: the 3D view is drawn with a pure
@@ -351,8 +354,10 @@ int queued_string_pos;
 
 void Nu_QueueDrawStr ()
 {
-	assert (queued_string_pos < MAX_QUEUED_STRINGS);
+	/* S-6: was an assert; a full queue drops the string */
+	if (queued_string_pos >= MAX_QUEUED_STRINGS) return;
 	strncpy (queued_strings[queued_string_pos].str, GetReg (REG_A0) + STRam, 64);
+	queued_strings[queued_string_pos].str[63] = 0;
 	queued_strings[queued_string_pos].x = GetReg (REG_D1);
 	queued_strings[queued_string_pos].y = GetReg (REG_D2);
 	queued_strings[queued_string_pos++].col = GetReg (REG_D0);
@@ -581,20 +586,49 @@ static inline void znode_databegin ()
 	znode_cur->data = &obj_data_area[obj_data_pos];
 }
 
+/*
+ * S-6: the scene buffers are bounded. When a frame does not fit in
+ * obj_data_area or znode_buf, scene_overflow is set, every later write of
+ * the frame is dropped, and Nu_DrawScreen does not walk the (now cut
+ * short) display lists: the 3D view of that one frame is lost, nothing
+ * else. Nu_3DViewInit clears it for the next frame.
+ */
+static int scene_overflow;
+static unsigned int scene_overflows;
+
+static inline int znode_room (int n)
+{
+	if (scene_overflow) return 0;
+	if (n > MAX_OBJ_DATA - obj_data_pos) {
+		scene_overflow = 1;
+		return 0;
+	}
+	return 1;
+}
+
 static inline void znode_wrlong (int val)
 {
+	if (!znode_room (4)) return;
 	*((int*)(obj_data_area+obj_data_pos)) = val;
 	obj_data_pos+=4;
 }
 static inline void znode_wrword (short val)
 {
+	if (!znode_room (2)) return;
 	*((short*)(obj_data_area+obj_data_pos)) = val;
 	obj_data_pos+=2;
 }
 static inline void znode_wrbyte (char val)
 {
+	if (!znode_room (1)) return;
 	*((char*)(obj_data_area+obj_data_pos)) = val;
 	obj_data_pos++;
+}
+static inline void znode_wrblock (const void *data, int n)
+{
+	if (!znode_room (n)) return;
+	memcpy (obj_data_area + obj_data_pos, data, n);
+	obj_data_pos += n;
 }
 
 static inline void znode_wrnormal (p68K loc)
@@ -766,11 +800,20 @@ static inline void end_node ()
 	znode_wrlong (0);
 }
 
+/* where the writers point once znode_buf is full (S-6) */
+static struct ZNode znode_dummy;
+
 static void add_node (struct ZNode **node, unsigned int zval)
 {
-	assert (znode_buf_pos < MAX_ZNODES);
 	/* end previous znode display list!!!!!!! */
 	if (znode_cur) end_node ();
+	if (znode_buf_pos >= MAX_ZNODES) {
+		/* S-6: was an assert. The frame is dropped (see
+		 * scene_overflow); leave *node alone */
+		scene_overflow = 1;
+		znode_cur = &znode_dummy;
+		return;
+	}
 	
 	*node = znode_cur = &znode_buf[znode_buf_pos++];
 	znode_cur->z = zval;
@@ -898,6 +941,7 @@ void Nu_3DViewInit ()
 	num_subtrees = 0;
 	cur_ztree = &znode_start;
 	ztree_depth = 0;
+	scene_overflow = 0;
 }
 
 static void lighting_on (float light_vec[4], int rgb444_light_col, int rgb444_extra_col, int rgb444_obj_col)
@@ -1190,8 +1234,10 @@ void Nu_ComplexSNext ()
 void Nu_DrawComplexSNext (void **data)
 {
 	if (use_renderer == R_GLWIRE) {
-		znode_rdvertexd (data, tess_vertices[tess_vpos]);
-		glVertex3dv (tess_vertices[tess_vpos++]);
+		/* S-6: drawn at once, no need to keep it */
+		GLdouble v[3];
+		znode_rdvertexd (data, v);
+		glVertex3dv (v);
 	} else {
 		GLdouble v[3];
 		znode_rdvertexd (data, v);
@@ -1371,7 +1417,9 @@ void Nu_DrawComplexBezier (void **data)
 	//printf ("%d ", bezier_steps);
 	bezier_steps = 10;
 	
-	assert (tess_vpos + bezier_steps < MAX_TESS_VERTICES);
+	/* S-6: was an assert. The GL path is bounded in
+	 * push_contour_vertex; the wireframe one stores one vertex below */
+	if (use_renderer == R_GLWIRE && tess_vpos >= MAX_TESS_VERTICES) return;
 	delta = 1.0f/bezier_steps;
 
 	if (use_renderer == R_GLWIRE) {
@@ -2970,7 +3018,15 @@ void Nu_DrawScreen ()
 	if (znode_cur) end_node ();
 	//printf ("Frame: %d znodes.\n", znode_buf_pos);
 	planet_ground_seen = 0;
-	draw_3dview (znode_start);
+	if (scene_overflow) {
+		/* S-6: the display lists are cut short somewhere: drop this
+		 * frame's 3D view rather than walk them */
+		if ((scene_overflows++ & 255) == 0)
+			fprintf (stderr, "GL: 3D scene too big for the scene buffers, frame dropped (%u so far)\n",
+				 scene_overflows);
+	} else {
+		draw_3dview (znode_start);
+	}
 	//fprintf (stderr, "\n");
 
 #if PRIM_DEBUG
