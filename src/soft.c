@@ -77,15 +77,38 @@ int mouse_shown = 0;
 int screen_w = 320;
 int screen_h = 200;
 
+/* Largest window side change_vidmode() asks SDL for (S-16); Metal's texture
+ * limit is 16384 on Apple silicon, and a ST picture gains nothing past this. */
+#ifndef SOFT_MAX_DIM
+#define SOFT_MAX_DIM 8192
+#endif
+/* Desktop size, read once: before the first SDL_SetVideoMode,
+ * SDL_GetVideoInfo's current_w/current_h are the desktop's; afterwards
+ * they are the window's.  -1 = not read yet. */
+static int desk_w = -1, desk_h = -1;
+
 static void change_vidmode ()
 {
 	int modes;
 	const SDL_VideoInfo *info = SDL_GetVideoInfo ();
 
 	assert (info != NULL);
+	if (desk_w < 0) {
+		desk_w = info->current_w;
+		desk_h = info->current_h;
+	}
 
-	/* draw_control_panel() writes a whole 320x200 frame into the surface,
-	 * so a smaller one (--size 100 100) would be overrun (S-16). */
+	/* S-16.  An oversized request (--size 20000 20000) aborts inside SDL
+	 * on a Metal texture-size assertion before SDL_SetVideoMode can fail,
+	 * so the fallback below would never run: cap at the desktop, and at
+	 * SOFT_MAX_DIM when SDL does not know the desktop size.
+	 * draw_control_panel() writes a whole 320x200 frame into the surface,
+	 * so a smaller one (--size 100 100) would be overrun: the minimum is
+	 * applied last and wins. */
+	if (desk_w > 0 && screen_w > desk_w) screen_w = desk_w;
+	if (desk_h > 0 && screen_h > desk_h) screen_h = desk_h;
+	if (screen_w > SOFT_MAX_DIM) screen_w = SOFT_MAX_DIM;
+	if (screen_h > SOFT_MAX_DIM) screen_h = SOFT_MAX_DIM;
 	if (screen_w < 320) screen_w = 320;
 	if (screen_h < 200) screen_h = 200;
 	
