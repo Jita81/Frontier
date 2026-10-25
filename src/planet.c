@@ -82,6 +82,11 @@
 #define MAX_LEVEL	28
 #define MAX_POLYS	256
 #define MAX_POLY_VERTS	256
+/* S-11: hard limits. A feature list longer than this many bytes is cut
+ * there (the largest real ones are a few hundred bytes); an outline that
+ * needs more leaves than this gives up on the patch. */
+#define PSURF_MAX_BYTES		(64 << 10)
+#define PSURF_MAX_LEAVES	(1 << 20)
 
 struct PSPoly {
 	int code;
@@ -188,8 +193,12 @@ static void add_circle (struct PSurf *s, int code, const double dir[3], int angl
 	for (i = 0; i < 4; i++) *state = rng_step (*state);
 
 	if (s->npolys >= MAX_POLYS) return;
-	p = &s->polys[s->npolys++];
+	p = &s->polys[s->npolys];
 	memset (p, 0, sizeof (*p));
+	/* S-11: out of memory: leave the feature out */
+	p->v = malloc (4 * sizeof (*p->v));
+	if (!p->v) return;
+	s->npolys++;
 	p->code = code;
 	p->circle = 1;
 	memcpy (p->cdir, dir, sizeof (p->cdir));
@@ -197,7 +206,6 @@ static void add_circle (struct PSurf *s, int code, const double dir[3], int angl
 	p->crad = sn;
 	/* 4 base points, like L3dcbc */
 	p->n = 4;
-	p->v = malloc (4 * sizeof (*p->v));
 	perp3 (dir, u);
 	cross3d (dir, u, w);
 	for (i = 0; i < 3; i++) {
@@ -222,7 +230,10 @@ static void parse (struct PSurf *s)
 	double verts[MAX_POLY_VERTS][3];
 	int d7;
 
+	/* S-11: the list comes from 68000 memory: never read more than
+	 * PSURF_MAX_BYTES of it (p - feat_addr counts them, wrapping or not) */
 	for (;;) {
+		if (p - s->feat_addr >= PSURF_MAX_BYTES) break;
 		d7 = rdbyte (&p);
 		if (d7 == 0) break;
 
@@ -249,6 +260,7 @@ static void parse (struct PSurf *s)
 			frac = rdbyte (&p);
 			x = rdbyte (&p);
 			for (;;) {
+				if (p - s->feat_addr >= PSURF_MAX_BYTES) return;
 				y = rdbyte (&p);
 				z = rdbyte (&p);
 				if (n == 0 && STMemory_ReadByte (p) == 0) {
@@ -270,13 +282,20 @@ static void parse (struct PSurf *s)
 				continue;
 			}
 			if (s->npolys >= MAX_POLYS) break;
-			poly = &s->polys[s->npolys++];
+			poly = &s->polys[s->npolys];
 			memset (poly, 0, sizeof (*poly));
+			poly->v = malloc (n * sizeof (*poly->v));
+			poly->state = malloc (n * sizeof (*poly->state));
+			if (!poly->v || !poly->state) {
+				/* S-11: out of memory: stop here, keep what we have */
+				free (poly->v);
+				free (poly->state);
+				break;
+			}
+			s->npolys++;
 			poly->code = d7 & 0x3c;
 			poly->frac = frac;
 			poly->n = n;
-			poly->v = malloc (n * sizeof (*poly->v));
-			poly->state = malloc (n * sizeof (*poly->state));
 			memcpy (poly->v, verts, n * sizeof (*poly->v));
 			/* one generator step per edge, closing edge included */
 			for (i = 0; i < n; i++) {
@@ -288,9 +307,14 @@ static void parse (struct PSurf *s)
 	}
 }
 
-#define PSURF_CACHE	8
+/* S-9: least recently used goes first, and the cache is twice the GL
+ * texture cache (PLANET_TEX_CACHE in gl.c), so that the surfaces of the
+ * planets whose textures are kept stay parsed. gl.c never keeps a pointer
+ * to a surface: it asks psurf_get by key each time. */
+#define PSURF_CACHE	12
 static struct PSurf *cache[PSURF_CACHE];
-static int cache_next;
+static unsigned int cache_lru[PSURF_CACHE];
+static unsigned int cache_clock;
 
 static void psurf_free (struct PSurf *s)
 {
@@ -302,33 +326,51 @@ static void psurf_free (struct PSurf *s)
 	free (s);
 }
 
+/*
+ * l3cdd8 normalizes the radius word: it doubles it until bit 15 is set,
+ * then halves it once. Bit 15 of the word itself is lost by the first
+ * doubling, so that is the same as shifting w & 0x7fff up until its top
+ * bit is bit 14, at most 14 times. The ST never finishes for 0x8000 (it
+ * keeps doubling zero) and skips 0; both give 0x4000 here (S-10).
+ */
+int psurf_norm_radius (int radius_word)
+{
+	int m = radius_word & 0x7fff, i;
+
+	if (m == 0) return 0x4000;
+	for (i = 0; i < 15 && m < 0x4000; i++) m <<= 1;
+	return m;
+}
+
 struct PSurf *psurf_get (unsigned int feat_addr, unsigned int seed, int radius_word, int detail)
 {
 	struct PSurf *s;
-	int i, m;
+	int i, victim = 0;
 
 	for (i = 0; i < PSURF_CACHE; i++) {
 		s = cache[i];
 		if (s && s->feat_addr == feat_addr && s->seed == seed &&
-		    s->radius_word == radius_word && s->detail == detail)
+		    s->radius_word == radius_word && s->detail == detail) {
+			cache_lru[i] = ++cache_clock;
 			return s;
+		}
+		if (!cache[i] || (cache[victim] && cache_lru[i] < cache_lru[victim]))
+			victim = i;
 	}
 
 	s = calloc (1, sizeof (*s));
+	/* S-11: the caller draws no surface */
+	if (!s) return NULL;
 	s->feat_addr = feat_addr;
 	s->seed = seed;
 	s->radius_word = radius_word;
 	s->detail = detail;
-	/* l3cdd8: normalize the radius word to 0x4000..0x7fff */
-	m = radius_word & 0xffff;
-	if (m == 0) m = 0x4000;
-	while (!(m & 0x4000)) m <<= 1;
-	s->m = m;
+	s->m = psurf_norm_radius (radius_word);
 	parse (s);
 
-	if (cache[cache_next]) psurf_free (cache[cache_next]);
-	cache[cache_next] = s;
-	cache_next = (cache_next + 1) % PSURF_CACHE;
+	if (cache[victim]) psurf_free (cache[victim]);
+	cache[victim] = s;
+	cache_lru[victim] = ++cache_clock;
 	return s;
 }
 
@@ -346,13 +388,25 @@ struct Ctx {
 	double leaf_ang;
 	struct Leaf *leaves;
 	int nleaves, maxleaves;
+	/* S-11: out of memory or past PSURF_MAX_LEAVES */
+	int failed;
 };
 
 static void emit (struct Ctx *x, const double a[3], const double b[3])
 {
+	if (x->failed) return;
 	if (x->nleaves == x->maxleaves) {
-		x->maxleaves = x->maxleaves ? 2*x->maxleaves : 4096;
-		x->leaves = realloc (x->leaves, x->maxleaves * sizeof (struct Leaf));
+		struct Leaf *nl = NULL;
+		int nmax = x->maxleaves ? 2*x->maxleaves : 4096;
+		if (nmax > PSURF_MAX_LEAVES) nmax = PSURF_MAX_LEAVES;
+		if (nmax > x->maxleaves)
+			nl = realloc (x->leaves, nmax * sizeof (struct Leaf));
+		if (!nl) {
+			x->failed = 1;
+			return;
+		}
+		x->leaves = nl;
+		x->maxleaves = nmax;
 	}
 	memcpy (x->leaves[x->nleaves].a, a, sizeof (x->leaves[0].a));
 	memcpy (x->leaves[x->nleaves].b, b, sizeof (x->leaves[0].b));
@@ -379,6 +433,7 @@ static void split_edge (struct Ctx *x, const struct PSPoly *p,
 	unsigned int s1, s2;
 	int d6pre = 0;
 
+	if (x->failed) return;
 	if (p->frac) {
 		d6pre = 2*(p->frac + 16 + level) - 12 - s->detail;
 		if (d6pre >= 0) {
@@ -441,6 +496,7 @@ static void split_circle (struct Ctx *x, const struct PSPoly *p,
 	double mid[3], d[3];
 	int i;
 
+	if (x->failed) return;
 	if (len < x->leaf_ang || level >= MAX_LEVEL ||
 	    !arc_near_patch (x, a, b, len, 0.5*len)) {
 		emit (x, a, b);
@@ -529,19 +585,33 @@ static int cmp_ycross (const void *a, const void *b)
 	return (ya > yb) - (ya < yb);
 }
 
-void psurf_raster (struct PSurf *s, const struct PPatch *pt, unsigned char *codes)
+/* a double to an int in [lo, hi], NaN giving lo (S-21: the cast of an
+ * out of range or NaN double is undefined) */
+static int clamp_int (double v, int lo, int hi)
+{
+	if (!(v > lo)) return lo;
+	if (v > hi) return hi;
+	return (int) v;
+}
+
+int psurf_raster (struct PSurf *s, const struct PPatch *pt, unsigned char *codes)
 {
 	struct Ctx x;
 	struct Seg *segs = NULL;
-	struct Cross *cross;
+	struct Cross *cross = NULL;
 	struct YCross *yc = NULL;
-	int *row_count, *row_start;
+	int *row_count = NULL, *row_start = NULL;
 	int nsegs = 0, maxsegs = 0, nyc = 0, maxyc = 0;
 	int n = pt->n, i, j, k, pi, base_code = 0;
 	double texel = 2.0 * pt->half / n;
 	double xl = -pt->half - texel, yb = -pt->half - texel;
 	double q0[3];
-	int *left;
+	int *left = NULL;
+
+	if (n <= 0) return -1;
+	/* S-11: anything going wrong leaves an empty (code 0) patch */
+	memset (codes, 0, (size_t) n * n);
+	if (!s) return -1;
 
 	memset (&x, 0, sizeof (x));
 	x.s = s;
@@ -574,8 +644,14 @@ void psurf_raster (struct PSurf *s, const struct PPatch *pt, unsigned char *code
 
 			if (ca < 0.05 || cb < 0.05) continue;
 			if (nsegs == maxsegs) {
-				maxsegs = maxsegs ? 2*maxsegs : 4096;
-				segs = realloc (segs, maxsegs * sizeof (*segs));
+				int nmax = maxsegs ? 2*maxsegs : 4096;
+				struct Seg *ns = realloc (segs, nmax * sizeof (*segs));
+				if (!ns) {
+					x.failed = 1;
+					break;
+				}
+				segs = ns;
+				maxsegs = nmax;
 			}
 			sg = &segs[nsegs++];
 			sg->x0 = dot3 (a, pt->u) / ca;
@@ -586,9 +662,11 @@ void psurf_raster (struct PSurf *s, const struct PPatch *pt, unsigned char *code
 		}
 	}
 	free (x.leaves);
+	if (x.failed) goto fail;
 
 	/* colour at the start of every row: walk up the line x = xl from q0 */
 	left = malloc (n * sizeof (int));
+	if (!left) goto fail;
 	for (i = 0; i < nsegs; i++) {
 		struct Seg *sg = &segs[i];
 		double y;
@@ -596,8 +674,11 @@ void psurf_raster (struct PSurf *s, const struct PPatch *pt, unsigned char *code
 		y = sg->y0 + (xl - sg->x0) * (sg->y1 - sg->y0) / (sg->x1 - sg->x0);
 		if (y <= yb) continue;
 		if (nyc == maxyc) {
-			maxyc = maxyc ? 2*maxyc : 256;
-			yc = realloc (yc, maxyc * sizeof (*yc));
+			int nmax = maxyc ? 2*maxyc : 256;
+			struct YCross *ny = realloc (yc, nmax * sizeof (*yc));
+			if (!ny) goto fail;
+			yc = ny;
+			maxyc = nmax;
 		}
 		yc[nyc].y = y;
 		yc[nyc++].code = sg->code;
@@ -613,19 +694,19 @@ void psurf_raster (struct PSurf *s, const struct PPatch *pt, unsigned char *code
 		}
 	}
 	free (yc);
+	yc = NULL;
 
 	/* bucket the crossings of every row's centre line, then fill */
 	row_count = calloc (n + 1, sizeof (int));
 	row_start = malloc ((n + 1) * sizeof (int));
+	if (!row_count || !row_start) goto fail;
 	for (k = 0; k < 2; k++) {
 		for (i = 0; i < nsegs; i++) {
 			struct Seg *sg = &segs[i];
 			double ylo = sg->y0 < sg->y1 ? sg->y0 : sg->y1;
 			double yhi = sg->y0 < sg->y1 ? sg->y1 : sg->y0;
-			int j0 = (int) ceil ((ylo + pt->half) / texel - 0.5);
-			int j1 = (int) floor ((yhi + pt->half) / texel - 0.5);
-			if (j0 < 0) j0 = 0;
-			if (j1 > n-1) j1 = n-1;
+			int j0 = clamp_int (ceil ((ylo + pt->half) / texel - 0.5), 0, n);
+			int j1 = clamp_int (floor ((yhi + pt->half) / texel - 0.5), -1, n-1);
 			for (j = j0; j <= j1; j++) {
 				double y = -pt->half + (j + 0.5) * texel;
 				double xc;
@@ -648,6 +729,7 @@ void psurf_raster (struct PSurf *s, const struct PPatch *pt, unsigned char *code
 				tot += row_count[j];
 			}
 			cross = malloc ((tot + 1) * sizeof (*cross));
+			if (!cross) goto fail;
 		}
 	}
 	/* row_start[j] now points at the end of row j */
@@ -659,8 +741,7 @@ void psurf_raster (struct PSurf *s, const struct PPatch *pt, unsigned char *code
 
 		qsort (cross + start, end - start, sizeof (*cross), cmp_cross);
 		for (i = start; i < end; i++) {
-			int xe = (int) ceil ((cross[i].x + pt->half) / texel - 0.5);
-			if (xe > n) xe = n;
+			int xe = clamp_int (ceil ((cross[i].x + pt->half) / texel - 0.5), 0, n);
 			for (; xi < xe; xi++) row[xi] = c;
 			c ^= cross[i].code;
 		}
@@ -672,6 +753,17 @@ void psurf_raster (struct PSurf *s, const struct PPatch *pt, unsigned char *code
 	free (row_start);
 	free (left);
 	free (segs);
+	return 0;
+
+fail:
+	memset (codes, 0, (size_t) n * n);
+	free (cross);
+	free (row_count);
+	free (row_start);
+	free (left);
+	free (yc);
+	free (segs);
+	return -1;
 }
 
 int psurf_light_code (int flags, double cos_sun)

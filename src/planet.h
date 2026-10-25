@@ -25,13 +25,21 @@ struct PPatch {
  * feat_addr:	68k address of the feature list (fe2.s planet_features)
  * seed:	the planet object's random seed (long at 118(object))
  * radius_word:	high word of the planet model's radius long
- * detail:	L60d4_optdetail2 */
+ * detail:	L60d4_optdetail2
+ * Returns NULL when out of memory. The surface belongs to the cache and
+ * may be freed by any later psurf_get: do not keep the pointer. */
 struct PSurf *psurf_get (unsigned int feat_addr, unsigned int seed,
 			 int radius_word, int detail);
 
 /* Rasterize the XOR'ed feature codes (multiples of 4, 0..0x3c) of the
- * patch into codes[n*n], row major, row 0 at t = 0. */
-void psurf_raster (struct PSurf *s, const struct PPatch *p, unsigned char *codes);
+ * patch into codes[n*n], row major, row 0 at t = 0. s may be NULL.
+ * Returns 0, or -1 with codes all 0 when the surface could not be
+ * rasterized (no surface, out of memory, too many outline leaves). */
+int psurf_raster (struct PSurf *s, const struct PPatch *p, unsigned char *codes);
+
+/* The radius word normalized the way l3cdd8 does it: 0x4000..0x7fff,
+ * for any input (S-10). */
+int psurf_norm_radius (int radius_word);
 
 /* Light band code the ST renderer XORs over the feature codes for a surface
  * direction whose cosine to the sun is cos_sun (see planet.c). flags is the
