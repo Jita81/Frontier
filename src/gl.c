@@ -1909,8 +1909,12 @@ static void planet_bake (GLuint tex, const unsigned char *codes, int n, int ligh
 		pal[i][0] = r; pal[i][1] = g; pal[i][2] = b;
 	}
 	if (rgb_size < n*n*3) {
+		/* S-11: keep the old buffer if this fails, and the texture as
+		 * it was */
+		unsigned char *nrgb = realloc (rgb, n*n*3);
+		if (!nrgb) return;
+		rgb = nrgb;
 		rgb_size = n*n*3;
-		rgb = realloc (rgb, rgb_size);
 	}
 	o = rgb;
 	for (i = 0; i < n*n; i++) {
@@ -2000,14 +2004,25 @@ static struct PlanetTex *planet_get_tex (const struct PlanetPrim *p)
 
 	t = victim;
 	if (!t->used) {
+		int ok;
+		/* S-11: no planet rather than a crash when memory runs out */
+		t->patch_codes = malloc (PLANET_PATCH_RES * PLANET_PATCH_RES);
+		ok = t->patch_codes != NULL;
 		for (i = 0; i < 6; i++) {
+			t->face_codes[i] = malloc (PLANET_FACE_RES * PLANET_FACE_RES);
+			if (!t->face_codes[i]) ok = 0;
+		}
+		if (!ok) {
+			for (i = 0; i < 6; i++) free (t->face_codes[i]);
+			free (t->patch_codes);
+			memset (t, 0, sizeof (*t));
+			return NULL;
+		}
+		for (i = 0; i < 6; i++)
 			for (z = 0; z < PLANET_MAX_ZONES; z++)
 				planet_new_texture (&t->face_tex[i][z]);
-			t->face_codes[i] = malloc (PLANET_FACE_RES * PLANET_FACE_RES);
-		}
 		for (z = 0; z < PLANET_MAX_ZONES; z++)
 			planet_new_texture (&t->patch_tex[z]);
-		t->patch_codes = malloc (PLANET_PATCH_RES * PLANET_PATCH_RES);
 		t->used = 1;
 	}
 	t->lru = ++planet_tex_clock;
@@ -2518,6 +2533,7 @@ void Nu_DrawPlanet (void **data)
 	if (d < p.R * PLANET_SKY_RATIO) planet_ground_seen = 1;
 
 	t = planet_get_tex (&p);
+	if (!t) return;
 	planet_sun (&p, sun);
 	nzones = planet_zones (p.flags, zones);
 
