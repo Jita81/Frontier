@@ -787,7 +787,7 @@ void oracle_call (int n)
 
 static void oracle_atexit (void)
 {
-	int i;
+	int i, early;
 	if (atomic_exchange (&exiting, 1)) return;
 	g_flush ();
 	pthread_mutex_lock (&out_lock);
@@ -803,6 +803,9 @@ static void oracle_atexit (void)
 	fprintf (out, "end %u", hu_count);
 	for (i = 0; i < S_N; i++) fprintf (out, " %c=%016llx", stream_tag[i], (unsigned long long) cum[i]);
 	fputc ('\n', out);
+	early = oracle.mode == ORACLE_REPLAY && (long) hu_count != tape_end_v;
+	if (early)
+		fprintf (out, "invalid reason=early-exit v=%u hc=%02x\n", hu_count, cur_hc & 0xff);
 	fclose (out);
 	out = NULL;
 	pthread_mutex_unlock (&out_lock);
@@ -810,6 +813,14 @@ static void oracle_atexit (void)
 		fprintf (tape_out, "end %u\n", hu_count);
 		fclose (tape_out);
 		tape_out = NULL;
+	}
+	if (early) {
+		/* a quit (window close, SIGTERM via SDL_QUIT) before the tape's
+		 * end: the trace is incomplete, so exit 3 like the watchdog */
+		fprintf (stderr, "oracle: invalid reason=early-exit v=%u (tape end %ld)\n",
+			 hu_count, tape_end_v);
+		fflush (NULL);
+		_exit (3);
 	}
 }
 
@@ -942,8 +953,10 @@ void oracle_install (void)
 		fprintf (stderr, "oracle: warning: tape mode=%s replayed in mode=%s; "
 			 "expect renderer-dependent divergence (07 3.7)\n", tape_mode, mode_name);
 	}
-	fprintf (out, "# fe2gold 1 mode=%s oracle=%s seed=%ld\n", mode_name,
+	fprintf (out, "# fe2gold 1 mode=%s oracle=%s seed=%ld", mode_name,
 		 oracle.mode == ORACLE_REPLAY ? "replay" : "record", seed);
+	if (oracle.mode == ORACLE_REPLAY) fprintf (out, " tape_end=%ld", tape_end_v);
+	fputc ('\n', out);
 
 	for (i = 0; i < S_N; i++) cum[i] = FNV_OFF;
 	gv = FNV_OFF;

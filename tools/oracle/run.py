@@ -165,7 +165,7 @@ def lint_tape(path):
 # stream files
 
 LINE_RES = [
-    re.compile(r"^# fe2gold 1 mode=[a-z-]+ oracle=(replay|record) seed=-?\d+$"),
+    re.compile(r"^# fe2gold 1 mode=[a-z-]+ oracle=(replay|record) seed=-?\d+( tape_end=-?\d+)?$"),
     re.compile(r"^[gmfpd] \d+ [0-9a-f]{16}$"),
     re.compile(r"^c \d+ [0-9a-f]{8} [0-9a-f]{8} [0-9a-f]{8} [0-9a-f]{4}$"),
     re.compile(r"^s \d+ [0-9a-f]{8} [0-9a-f]{16} [0-9a-f]{16}$"),
@@ -224,6 +224,22 @@ class Trace:
         m = re.search(r"mode=(\S+)", self.header)
         return m.group(1) if m else "?"
 
+    @property
+    def tape_end(self):
+        """The tape's end VBL, from a replay header; None for a record run."""
+        m = re.search(r" tape_end=(-?\d+)", self.header)
+        return int(m.group(1)) if m else None
+
+    def truncated(self):
+        """A replay whose end line stops short of (or past) the tape's end:
+        07 7.1 PASS needs "end is reached at the tape's v", and a run that
+        stops before end is ERROR-INFRA, never a game divergence."""
+        te = self.tape_end
+        if te is None or self.end is None or self.end["v"] == te:
+            return None
+        return "%s: ended at VBL %d, the tape ends at %d (quit or kill before end)" % (
+            self.path, self.end["v"], te)
+
 
 def vbl_of(line):
     return int(line.split()[1])
@@ -241,12 +257,15 @@ def first_diff(a, b):
 def compare(a, b, names=None):
     """Return (verdict, report_lines, first_divergence) for traces a and b."""
     rep = []
-    if a.invalid or b.invalid or a.end is None or b.end is None:
+    if (a.invalid or b.invalid or a.end is None or b.end is None
+            or a.truncated() or b.truncated()):
         for t in (a, b):
             if t.invalid:
                 rep.append("%s: %s" % (t.path, t.invalid))
             elif t.end is None:
                 rep.append("%s: no end line (crash or kill before end)" % t.path)
+            elif t.truncated():
+                rep.append(t.truncated())
         return "INVALID", rep, None
     if a.mode != b.mode:
         rep.append("note: modes differ: %s vs %s" % (a.mode, b.mode))

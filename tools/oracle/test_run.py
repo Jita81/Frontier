@@ -20,8 +20,12 @@ end 20
 """
 
 
-def stream(v_end=3, g=H, f=H, keyovf=0, flagged=None, invalid=None, cstr="00000001 00000002 00000003 0004"):
-    lines = ["# fe2gold 1 mode=gl-rgl oracle=replay seed=0"]
+def stream(v_end=3, g=H, f=H, keyovf=0, flagged=None, invalid=None, cstr="00000001 00000002 00000003 0004",
+           tape_end=None, early_exit=False):
+    head = "# fe2gold 1 mode=gl-rgl oracle=replay seed=0"
+    if tape_end is not None:
+        head += " tape_end=%d" % tape_end
+    lines = [head]
     for v in range(v_end):
         lines.append("m %d %s" % (v + 1, H))
         lines.append("c %d %s" % (v + 1, cstr))
@@ -35,6 +39,8 @@ def stream(v_end=3, g=H, f=H, keyovf=0, flagged=None, invalid=None, cstr="000000
         lines.append("stat flagged=%d hostupdate=%d wd=0 wdv=- keyovf=%d a6=0000015e a6chg=0 draws=%d "
                      "screens=3 idle=036f70:%d" % (fl, v_end, keyovf, v_end, v_end))
         lines.append("end %d g=%s m=%s c=%s s=%s r=%s f=%s p=%s" % ((v_end,) + (H,) * 7))
+        if early_exit:
+            lines.append("invalid reason=early-exit v=%d hc=07" % v_end)
     return "\n".join(lines) + "\n"
 
 
@@ -98,6 +104,10 @@ class FilterTests(unittest.TestCase):
         t = Tmp()
         self.assertEqual(run.filter_ok(t.file("a", stream())), [])
 
+    def test_tape_end_header_passes(self):
+        t = Tmp()
+        self.assertEqual(run.filter_ok(t.file("a", stream(tape_end=3, early_exit=True))), [])
+
     def test_free_text_fails(self):
         t = Tmp()
         self.assertEqual(run.filter_ok(t.file("a", stream() + "COMMANDER JAMESON\n")), [19])
@@ -137,6 +147,22 @@ class CompareTests(unittest.TestCase):
     def test_truncated_is_invalid(self):
         self.assertEqual(self.cmp(stream(), stream().rsplit("stat", 1)[0])[0], "INVALID")
 
+    def test_end_before_tape_end_is_invalid(self):
+        # a replay quit early (SIGTERM -> SDL_QUIT) writes a normal end line
+        # at a VBL short of the tape's end: INVALID, not a game divergence
+        v, rep, _ = self.cmp(stream(v_end=5, tape_end=5), stream(v_end=3, tape_end=5))
+        self.assertEqual(v, "INVALID")
+        self.assertTrue(any("ended at VBL 3, the tape ends at 5" in line for line in rep))
+
+    def test_end_at_tape_end_is_identical(self):
+        self.assertEqual(self.cmp(stream(tape_end=3), stream(tape_end=3))[0], "IDENTICAL")
+
+    def test_record_header_has_no_tape_end(self):
+        self.assertEqual(self.cmp(stream(v_end=5), stream(v_end=5))[0], "IDENTICAL")
+
+    def test_early_exit_line_is_invalid(self):
+        self.assertEqual(self.cmp(stream(tape_end=3), stream(tape_end=3, early_exit=True))[0], "INVALID")
+
 
 class VerdictTests(unittest.TestCase):
     def setUp(self):
@@ -167,6 +193,12 @@ class VerdictTests(unittest.TestCase):
 
     def test_invalid_is_infra(self):
         self.assertEqual(self.verdict(stream(), stream(invalid="timeout"), stream()), "ERROR-INFRA")
+
+    def test_truncated_run_is_infra(self):
+        full = stream(v_end=5, tape_end=5)
+        short = stream(v_end=3, tape_end=5)
+        self.assertEqual(self.verdict(full, short, short), "ERROR-INFRA")
+        self.assertEqual(self.verdict(full, full, short), "ERROR-INFRA")
 
 
 class HcallNameTests(unittest.TestCase):
