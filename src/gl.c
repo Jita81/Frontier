@@ -5,6 +5,20 @@
   option any later version. Read the file gpl.txt for details.
 */
 
+/*
+ * Provenance (docs/05 section 4.3). This stream was assigned picks #7, #8,
+ * #10, #11 and #12, but B's 5e5c602 (#8) is written against B's own gl.c
+ * and does not apply to the base's: git apply --check of its gl.c diff
+ * fails (at the hunk for line 1535). So this file is B's gl.c at the tip,
+ * which also carries the gl.c parts of #1-#3 (981d304, b53521f, 03a5942)
+ * and #9 (756647f), with these differences:
+ *  - not taken: #6's SDL_RESIZABLE window (84b737b) and #1's in_atmosphere;
+ *  - the projection is the base's 1.9 aspect, not #1's window aspect;
+ *  - the S-2 S-6 S-7 S-9 S-11 S-23 fixes and V-1 of this stream.
+ * The hostcall.c, screen.h and main.c parts of #1-#6 and #9 were not
+ * taken.
+ */
+
 #include <SDL.h>
 #ifdef __APPLE__
 #include <OpenGL/gl.h>
