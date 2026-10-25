@@ -375,6 +375,15 @@ static const Uint8 MacToStScanCode[128] =
   [0x7A] = 0x3b, [0x78] = 0x3c, [0x63] = 0x3d, [0x76] = 0x3e,  /* F1-F4 */
   [0x60] = 0x3f, [0x61] = 0x40, [0x62] = 0x41, [0x64] = 0x42,  /* F5-F8 */
   [0x65] = 0x43, [0x6D] = 0x44,  /* F9 F10 */
+  [0x0A] = 0x60,  /* ISO section (kVK_ISO_Section) => ST ISO key */
+  /* Keypad, by position.  The keypad syms are normally translated before
+   * this table is consulted; these entries are the fallback if a keypad key
+   * arrives with a non-keypad sym. */
+  [0x52] = 0x70, [0x53] = 0x6d, [0x54] = 0x6e, [0x55] = 0x6f,  /* KP 0 1 2 3 */
+  [0x56] = 0x6a, [0x57] = 0x6b, [0x58] = 0x6c,  /* KP 4 5 6 */
+  [0x59] = 0x67, [0x5B] = 0x68, [0x5C] = 0x69,  /* KP 7 8 9 */
+  [0x41] = 0x71, [0x4C] = 0x72,  /* KP . Enter */
+  [0x4B] = 0x65, [0x43] = 0x66, [0x4E] = 0x4a, [0x45] = 0x4e,  /* KP / * - + */
 };
 #endif
 
@@ -500,6 +509,11 @@ static char Keymap_PcToStScanCode(SDL_keysym* keysym)
     default:
     {
 #ifdef __APPLE__
+      /* kVK 0 is the A key, but sdl12-compat also reports 0 for any key it
+       * cannot translate.  Only trust 0 when the symbol says A; otherwise an
+       * unknown key would become a phantom ST 'A' (S-3, O-4). */
+      if (keysym->scancode == 0 && keysym->sym != SDLK_a)
+        return -1;
       if (keysym->scancode < 128 && MacToStScanCode[keysym->scancode])
         return MacToStScanCode[keysym->scancode];
       return -1;
@@ -667,6 +681,9 @@ void Keymap_KeyDown(SDL_keysym *sdlkey)
 
   /*fprintf(stderr, "keydown: sym=%i scan=%i mod=$%x\n",symkey, scankey, modkey);*/
 
+  if (symkey < 0 || symkey >= SDLK_LAST)
+    return;  /* key_states[] is indexed by sym */
+
   /* Handle special keys */
   if(symkey == SDLK_MODE || symkey == SDLK_LMETA || symkey == SDLK_NUMLOCK)
   {
@@ -713,6 +730,9 @@ void Keymap_KeyUp(SDL_keysym *sdlkey)
   //int scankey = sdlkey->scancode;
 
   /*fprintf(stderr, "keyup: sym=%i scan=%i mod=$%x\n",symkey, scankey, modkey);*/
+
+  if (symkey < 0 || symkey >= SDLK_LAST)
+    return;  /* key_states[] is indexed by sym */
 
   /* Handle special keys */
   if(symkey == SDLK_MODE || symkey == SDLK_LMETA || symkey == SDLK_NUMLOCK)
