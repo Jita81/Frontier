@@ -14,13 +14,23 @@
 # CI-ready invocation (any runner with git + bash + shasum):
 #   bash tools/check-no-game-data.sh --rev HEAD
 #
-# What counts as game data (docs/07 T-0.13 and section 10.2):
+# What counts as game data (docs/07 T-0.13 and section 10.2).  Names are matched
+# without regard to case (FE2.S, Gen/ and *.WAV are refused like fe2.s, gen/, *.wav):
 #   - a path named fe2.s, fe2.s.*, fixups.h, or a binary named frontier, at any depth;
 #   - anything under a gen/, sfx/, savs/, music/, captures/ or oracle-out/ directory;
 #   - any *.fstr, *.wav or *.ogg file;
 #   - a file larger than 1 MB under tools/oracle/ (tapes and goldens are small text);
 #   - any blob whose SHA-256, after stripping CRs, equals a known fe2.s lineage hash
-#     or a hash listed in tools/oracle/gamedata.sha256 (catches a renamed fe2.s).
+#     or a hash listed in tools/oracle/gamedata.sha256 (catches a renamed fe2.s);
+#   - any executable (Mach-O, fat Mach-O, ELF or PE): the repository is source, and
+#     every build of the game links the translated core (catches a renamed binary,
+#     e.g. the fe2soak copy tools/soak/soak.sh makes);
+#   - any blob identical to a local game file in this work tree: fe2.s, fe2.s.c,
+#     fe2.s.bin, fixups.h, frontier, san/*/frontier, gen/* (catches any renaming);
+#   - when fe2.s is present locally, any file sharing 10 or more distinct lines of
+#     8+ characters with it, after whitespace is collapsed (catches an excerpt);
+#   - any raster image (png, jpg, gif, bmp, ppm, tga, tiff, ...), since screenshots
+#     show game screens, unless its path is listed in .githooks/allowed-images.
 # Oracle tapes (tools/oracle/tapes/*.fe2rep) hold only ST key codes, VBL indices
 # and hashes, so they are allowed.
 #
@@ -85,19 +95,47 @@ entries=$(list_entries) || exit 2
 bad=0
 report() { echo "check-no-game-data: REFUSED $1 ($2)" >&2; bad=1; }
 
+# Blob ids of the game files present in this work tree (absent ones are skipped).
+local_blobs=$(
+  { for f in fe2.s fe2.s.c fe2.s.bin fixups.h frontier san/*/frontier gen/*; do
+      [ -f "$f" ] && printf '%s\n' "$f"
+    done; } | git hash-object --stdin-paths 2>/dev/null)
+
+allowed_images=
+[ -f .githooks/allowed-images ] && allowed_images=$(grep -v '^#' .githooks/allowed-images)
+
+# Excerpt check input: the text blobs to compare with fe2.s, one stream.
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/check-no-game-data.XXXXXX") || exit 2
+trap 'rm -rf "$tmp"' EXIT
+: >"$tmp/stream"
+
 while IFS= read -r entry; do
   [ -n "$entry" ] || continue
   meta=${entry%%	*}; path=${entry#*	}
   blob=${meta%% *}; size=${meta#* }
-  base=${path##*/}
-  case "/$path" in
+  lpath=$(printf '%s' "$path" | tr 'A-Z' 'a-z')
+  base=${lpath##*/}
+  case "/$lpath" in
     */gen/*|*/sfx/*|*/savs/*|*/music/*|*/captures/*|*/oracle-out/*)
       report "$path" "game-data directory"; continue ;;
   esac
   case "$base" in
     fe2.s|fe2.s.*|fixups.h|frontier) report "$path" "fe2.s or a file derived from it"; continue ;;
     gen|sfx|savs|music) report "$path" "game-data path"; continue ;;
-    *.fstr|*.wav|*.ogg|*.FSTR|*.WAV|*.OGG) report "$path" "game frame stream or audio"; continue ;;
+    *.fstr|*.wav|*.ogg) report "$path" "game frame stream or audio"; continue ;;
+    *.png|*.jpg|*.jpeg|*.gif|*.bmp|*.ppm|*.pgm|*.pnm|*.tga|*.tif|*.tiff|*.webp|*.heic|*.iff|*.pi1|*.neo)
+      if ! printf '%s\n' "$allowed_images" | grep -qxF -- "$path"; then
+        report "$path" "image (screenshots show game screens); list it in .githooks/allowed-images if it is not one"
+        continue
+      fi ;;
+  esac
+  if [ -n "$local_blobs" ] && printf '%s\n' "$local_blobs" | grep -qx "$blob"; then
+    report "$path" "identical to a local game file"; continue
+  fi
+  magic=$(git cat-file blob "$blob" | od -An -tx1 -N4 | tr -d ' \n')
+  case "$magic" in
+    cffaedfe|cefaedfe|feedfacf|feedface|cafebabe|bebafeca|7f454c46|4d5a*)
+      report "$path" "executable binary ($magic)"; continue ;;
   esac
   case "$path" in
     tools/oracle/*) [ "$size" -gt 1048576 ] && { report "$path" "over 1 MB under tools/oracle/"; continue; } ;;
@@ -109,9 +147,28 @@ while IFS= read -r entry; do
       report "$path" "content matches a known game-data SHA-256"; continue
     fi
   fi
+  if [ -f fe2.s ] && [ "$size" -le 4194304 ]; then
+    { printf '\001%s\n' "$path"; git cat-file blob "$blob"; printf '\n'; } >>"$tmp/stream"
+  fi
 done <<ENTRIES
 $entries
 ENTRIES
+
+# Excerpt check: distinct normalised lines (8+ chars) a file shares with fe2.s.
+if [ -f fe2.s ] && [ -s "$tmp/stream" ]; then
+  excerpts=$(LC_ALL=C awk '
+    function norm(l) { gsub(/\r/, "", l); gsub(/[ \t]+/, " ", l); sub(/^ /, "", l); sub(/ $/, "", l); return l }
+    FNR == NR { l = norm($0); if (length(l) >= 8) src[l] = 1; next }
+    /^\001/ { flush(); file = substr($0, 2); delete seen; n = 0; next }
+    { l = norm($0); if (length(l) >= 8 && (l in src) && !(l in seen)) { seen[l] = 1; n++ } }
+    function flush() { if (file != "" && n >= 10) printf "%s\t%d\n", file, n }
+    END { flush() }' fe2.s "$tmp/stream")
+  while IFS='	' read -r path n; do
+    [ -n "$path" ] && report "$path" "shares $n lines with fe2.s: an excerpt"
+  done <<EXCERPTS
+$excerpts
+EXCERPTS
+fi
 
 if [ "$bad" -ne 0 ]; then
   echo "check-no-game-data: game data is Frontier Developments copyright and must not be committed." >&2

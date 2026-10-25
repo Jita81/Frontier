@@ -3,3 +3,10 @@ frontier
 fe2.s.*
 fixups.h
 gen
+/fe2.s
+/sfx/
+/music/
+/savs/
+/san/
+/dist/
+/build/

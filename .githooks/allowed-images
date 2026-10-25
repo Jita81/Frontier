@@ -1,0 +1,3 @@
+# Images the game-data guard (tools/check-no-game-data.sh) lets into git.
+# One repository path per line.  Never list a screenshot or capture of the game.
+cursor.png
