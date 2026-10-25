@@ -27,6 +27,14 @@ void ExpText_Memcpy (unsigned int dest, unsigned int src, unsigned int count);
 const unsigned char *ExpText_Peel (const unsigned char *raster);
 void ExpText_Draw (int screen_w, int screen_h);
 void ExpText_Stats (FILE *f);
+
+/* E3 FE2_SHIP_MESH / FE2_MESH_LOG (expmesh.c, GL build only) */
+extern int expmesh_on;
+void ExpMesh_Init (void);
+int ExpMesh_Prim (int n);
+void ExpMesh_EndFrame (void);
+void ExpMesh_Draw (int idx);
+void Nu_ExtMeshNode (unsigned int zval, int idx);	/* gl.c */
 #endif
 
 #endif /* _EXP_H */

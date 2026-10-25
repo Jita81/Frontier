@@ -1,0 +1,27 @@
+# Model census from run C (FE2_MESH_LOG only). One line per model index: frames seen, header scale and size
+# (words 10 and 14), number of distinct emitted-vertex boxes, and the dominant face colours (rgb444) seen.
+# What each model is was judged from the screenshots of the frame it appeared in.
+model=2   instances=60    scale=17 size=76 boxes=59 cols= ddd ccc
+model=16  instances=444   scale=8 size=125 boxes=2 cols= f88 666
+model=36  instances=59    scale=13 size=122 boxes=59 cols= 666 444 ddd 888 bbb
+model=49  instances=659   scale=16 size=68 boxes=6 cols= 444 700 d88
+model=70  instances=659   scale=22 size=76 boxes=1 cols= 888
+model=74  instances=344   scale=22 size=118 boxes=8 cols= a44
+model=88  instances=1     scale=10 size=64 boxes=1 cols= 888
+model=97  instances=1553  scale=7 size=70 boxes=1 cols= 888
+model=99  instances=2567  scale=16 size=91 boxes=17 cols= e88 888 f88 c88 d88
+
+# Identification: model=16 player's ship (seen in External View, v1/v4, and from inside in Rear View, v3);
+# model=49 the Merlin surface starport complex; model=99 starport buildings; model=97 small particles (dust/exhaust,
+# no filled faces); model=70/74 distant bodies and sky objects; model=2/36/88 intro-sequence models.
+
+# Every instance in frame 579 (just before shot v1), run D:
+F579 model=74 pos=382862886,304080224,716232722 scale=22 size=118 prims=62 verts=16 box=-200633040..218841456,-1651514..1500751,-281427808..219523600 ax0=0.640,-0.095,0.763 col=a44
+F579 model=70 pos=-32272,-315932598,15543300 scale=22 size=76 prims=6 verts=0 box=0..0,0..0,0..0 ax0=0.000,0.125,-0.992 col=888
+F579 model=49 pos=-252125,-331935,-191034 scale=16 size=68 prims=681 verts=1118 box=-1129450..3549700,-3003..76257,-414584..5999264 ax0=1.000,0.000,0.000 col=444
+F579 model=16 pos=0,6,48413 scale=8 size=125 prims=41 verts=28 box=-8442..8442,-1514..1512,-6304..6303 ax0=1.000,0.000,0.000 col=666 REPLACED
+F579 model=99 pos=-380079,-190453,-598553 scale=16 size=91 prims=77 verts=13 box=-3769520..2933702,-97073..2613524,-3835804..6309377 ax0=0.178,-0.049,-0.983 col=888
+F579 model=99 pos=15325166,180292,8173968 scale=16 size=91 prims=38 verts=4 box=382635..574865,-23354..1936870,5733314..6318202 ax0=-0.018,0.043,0.999 col=c88
+F579 model=99 pos=-8951446,-179628,-86200 scale=16 size=91 prims=38 verts=4 box=2178266..2945401,-96680..1936168,4007264..4977750 ax0=0.958,0.021,0.284 col=e88
+F579 model=99 pos=1599481,-132749,580637 scale=16 size=91 prims=68 verts=9 box=-2875587..1021969,-96880..1936397,-1333884..579292 ax0=0.304,-0.047,-0.951 col=d88
+F579 model=99 pos=-7238005,-170509,-1391000 scale=16 size=91 prims=22 verts=2 box=-2176046..-2175908,-47766..1936557,4163255..4163485 ax0=-0.031,-0.052,-0.998 col=888

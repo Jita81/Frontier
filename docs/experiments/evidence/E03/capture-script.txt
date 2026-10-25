@@ -1,0 +1,17 @@
+0 trace on
+40 mark INTRO
++20 key 39
++60 key 02
++150 key 3b
++40 mark CLICK7
++5 mouse 262 194
++5 click l
++200 key 3b
++60 shot v1
++5 key 3b
++60 shot v2
++5 key 3b
++60 shot v3
++5 key 3b
++60 shot v4
++5 quit

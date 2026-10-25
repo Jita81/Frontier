@@ -15,6 +15,9 @@
  *   FE2_PROVENANCE=1      measurement only: track who wrote each pixel of the
  *                         screen buffers; 'shot' then also writes
  *                         <name>.prov.ppm and <name>.prov.txt
+ *   FE2_MESH_LOG=<file>   GL only: log every projected 3D model instance
+ *   FE2_SHIP_MESH=<index> GL only: draw a generated placeholder mesh for that
+ *                         model index (see expmesh.c)
  *
  * With none of them set, Exp_Init returns without touching hcalls[] and the
  * other entry points return on their first test, so the game runs exactly
@@ -355,6 +358,10 @@ static void trace_call (int n)
 		if (is_str) fprintf (trace_fp, " str=\"%s\"", text);
 		fputc ('\n', trace_fp);
 	}
+#ifdef WITH_GL
+	/* E3: primitives of the replaced model are not recorded */
+	if (expmesh_on && n >= 0x60 && n <= 0x79 && ExpMesh_Prim (n)) return;
+#endif
 	if (prov_on && may_write_screen (n)) {
 		u32 sp = GetReg (REG_A7);
 		prov_before (n);
@@ -628,6 +635,8 @@ void Exp_Init (void)
 		ExpText_Init ();
 		exp_any = 1;
 	}
+	ExpMesh_Init ();
+	if (expmesh_on) exp_any = 1;
 #endif
 	/* the script's 'wait' reads strings from the trace wrappers */
 	if (exp_any) install_trace ();
@@ -652,6 +661,9 @@ void Exp_EndFrame (void)
 		fputc ('\n', trace_fp);
 	}
 	memset (calls_this_frame, 0, sizeof (calls_this_frame));
+#ifdef WITH_GL
+	if (expmesh_on) ExpMesh_EndFrame ();
+#endif
 	if (shot_pending[0]) {
 		unsigned char *rgb;
 		int w, h;

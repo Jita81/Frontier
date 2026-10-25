@@ -710,6 +710,7 @@ enum NuPrimitive {
 	NU_OVALTHINGY,
 	NU_POINT,
 	NU_2DLINE,
+	NU_EXTMESH,	/* E3 FE2_SHIP_MESH (expmesh.c) */
 	NU_MAX
 };
 
@@ -1794,6 +1795,25 @@ void Nu_GLClearArea ()
 	}
 }
 
+/* E3 FE2_SHIP_MESH: a node holding one host-drawn mesh, put in the z-sorted
+ * list in place of a model's own primitives (only expmesh.c calls this) */
+void Nu_ExtMeshNode (unsigned int zval, int idx)
+{
+	if (use_renderer == R_OLD) return;
+	if (no_znodes_kthx) return;
+	if (znode_start == NULL) {
+		add_node (&znode_start, zval);
+	} else {
+		znode_insert (znode_start, zval);
+	}
+	znode_wrlong (NU_EXTMESH);
+	znode_wrlong (idx);
+}
+static void Nu_DrawExtMesh (void **data)
+{
+	ExpMesh_Draw (znode_rdlong (data));
+}
+
 typedef void (*NU_DRAWFUNC) (void **);
 NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	NULL,
@@ -1814,7 +1834,8 @@ NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	&Nu_DrawBlob,
 	&Nu_DrawOval,
 	&Nu_DrawPoint,
-	&Nu_Draw2DLine
+	&Nu_Draw2DLine,
+	&Nu_DrawExtMesh
 };
 
 static void Nu_DrawPrimitive (void *data)

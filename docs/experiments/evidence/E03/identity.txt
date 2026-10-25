@@ -1,0 +1,39 @@
+# E3 identity and flag-on evidence. Script: capture-script.txt (intro -> start at Ross 154 -> launch from Merlin ->
+# F1 cycles External (v1), Front (v2), Rear (v3), External (v4) views). All with SDL_AUDIODRIVER=dummy, --size 1280 800, GL build.
+# Runs: A = pre-E3 binary (404ccae, E1+E2 harness), B = E3 binary no flags, C = E3 binary FE2_MESH_LOG only (observe),
+#       D and E = E3 binary FE2_SHIP_MESH=16 + FE2_MESH_LOG, run twice (two independent arrivals).
+
+## 1. Shown frames (glReadPixels) and the game's own 320x200 buffers (.st), md5
+v1: A 1c6c96bd6bac9ede6231dac6bc2b545d B 1c6c96bd6bac9ede6231dac6bc2b545d C 1c6c96bd6bac9ede6231dac6bc2b545d D 0f0ef6d2823eb8237694043008ad58fc E 0f0ef6d2823eb8237694043008ad58fc
+v1.st: A 3756f34b804b7080cb7680a6c94ac983 B 3756f34b804b7080cb7680a6c94ac983 C 3756f34b804b7080cb7680a6c94ac983 D 3756f34b804b7080cb7680a6c94ac983 E 3756f34b804b7080cb7680a6c94ac983
+v2: A a668a52a2bae83a17bf6c90a538fc4c5 B a668a52a2bae83a17bf6c90a538fc4c5 C a668a52a2bae83a17bf6c90a538fc4c5 D a668a52a2bae83a17bf6c90a538fc4c5 E a668a52a2bae83a17bf6c90a538fc4c5
+v2.st: A 6201d8c9214f2e81640742ffe36aa1eb B 6201d8c9214f2e81640742ffe36aa1eb C 6201d8c9214f2e81640742ffe36aa1eb D 6201d8c9214f2e81640742ffe36aa1eb E 6201d8c9214f2e81640742ffe36aa1eb
+v3: A 63102a4cbc7a2a1961f304457abde87b B 63102a4cbc7a2a1961f304457abde87b C 63102a4cbc7a2a1961f304457abde87b D 63102a4cbc7a2a1961f304457abde87b E 63102a4cbc7a2a1961f304457abde87b
+v3.st: A 207c4774dc1ba820f1a9271ab90f8653 B 207c4774dc1ba820f1a9271ab90f8653 C 207c4774dc1ba820f1a9271ab90f8653 D 207c4774dc1ba820f1a9271ab90f8653 E 207c4774dc1ba820f1a9271ab90f8653
+v4: A 243ee9115fff3e7b477e3faccb4c60ed B 243ee9115fff3e7b477e3faccb4c60ed C 243ee9115fff3e7b477e3faccb4c60ed D 25730405203240186423d7fc0e699ff9 E 25730405203240186423d7fc0e699ff9
+v4.st: A 989fd6242579755492b9897c9f282c5f B 989fd6242579755492b9897c9f282c5f C 989fd6242579755492b9897c9f282c5f D 989fd6242579755492b9897c9f282c5f E 989fd6242579755492b9897c9f282c5f
+
+A = B = C on every shot: the hook off, and the observer on its own, change nothing.
+D differs from A only in v1 and v4, the two External View frames where model 16 (the player's ship) is in view
+with the camera outside its clipping radius. v2 (Front) and v3 (Rear, camera inside the hull) are unchanged, and
+all four .st buffers are unchanged, so the game's own state and 2D output are untouched by the swap.
+D = E: the swap is reproducible.
+
+## 2. Mesh logs
+D vs E: byte-identical (6346 instance lines).
+C vs D: identical apart from the REPLACED tag (129 instances replaced), so the swap does not change what the game projects.
+
+## 3. Fidelity: derived parameters of model 16 (position, rotation and primitive count dropped), per run
+run e3D:
+ 129 model=16 scale=8 size=125 verts=28 box=-8442..8442,-1514..1512,-6304..6303 col=666 REPLACED
+ 315 model=16 scale=8 size=125 verts=96 box=-7699..7699,-1513..1985,-6303..10086 col=f88
+run e3E:
+ 129 model=16 scale=8 size=125 verts=28 box=-8442..8442,-1514..1512,-6304..6303 col=666 REPLACED
+ 315 model=16 scale=8 size=125 verts=96 box=-7699..7699,-1513..1985,-6303..10086 col=f88
+External view: one parameter set in every frame of both runs, the set the replacement is built from.
+Rear view (cockpit, camera inside the hull): the game emits a different primitive set for the same model, so the
+derived box and colour differ; the replacement is not used there (camera inside size << scale).
+
+## 4. Where the swap changed the picture (v1, A vs D)
+21,178 of 1,024,000 pixels differ, all inside x 461..844, y 305..442 (1280x800 frame): the footprint of the
+player's ship. v1-changed-pixels-mask.png (scaled to 640x400) shows them in white. It is a mask only, no game art.
