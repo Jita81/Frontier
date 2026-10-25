@@ -42,6 +42,21 @@ BOOL bSoundWorking = TRUE;                /* Is sound OK */
 volatile BOOL bPlayingBuffer = FALSE;     /* Is playing buffer? */
 int SoundBufferSize = 1024;               /* Size of sound buffer */
 
+/* E2: FE2_AUDIO_DIR=<dir> loads <dir>/sfx_NN.wav and <dir>/NN.ogg in place
+ * of the originals where such a file exists (default off). FE2_AUDIO_CAPTURE
+ * =<file> is measurement only: it appends every mixed buffer to <file> as raw
+ * 16-bit stereo and prints a hash of each loaded sample. */
+static const char *audio_dir;
+static FILE *audio_capture;
+
+static FILE *open_override (const char *name)
+{
+	char buf[512];
+	if (audio_dir == NULL) return NULL;
+	snprintf (buf, sizeof (buf), "%s/%s", audio_dir, name);
+	return fopen (buf, "rb");
+}
+
 #ifdef OGG_MUSIC
 static OggVorbis_File music_file;
 static int music_mode;
@@ -57,7 +72,9 @@ static void play_music (int track)
 	
 	snprintf (buf, sizeof (buf), "music/%02d.ogg", track);
 
-	f = fopen (buf, "rb");
+	f = audio_dir ? open_override (buf + 6) : NULL;
+	if (f) fprintf (stderr, "FE2_AUDIO_DIR: music %02d replaced\n", track);
+	else f = fopen (buf, "rb");
 	if (f == NULL) {
 		music_playing = FALSE;
 		return;
@@ -221,7 +238,7 @@ void Audio_CallBack(void *userdata, Uint8 *pDestBuffer, int len)
 	}
 #endif /* OGG_MUSIC */
 	
-	if (!playing) return;
+	if (!playing) goto done;
 	
 	for (i = 0; i < len; i+=4) {
 		sample = 0;
@@ -244,6 +261,8 @@ void Audio_CallBack(void *userdata, Uint8 *pDestBuffer, int len)
 		*((short*)pBuffer) += sample;
 		pBuffer += 2;
 	}
+done:
+	if (audio_capture) fwrite (pDestBuffer, 1, len, audio_capture);
 }
 
 /*
@@ -328,9 +347,22 @@ void Audio_Init(void)
 
   SoundBufferSize = desiredAudioSpec.size;      /* May be different than the requested one! */
 
+  audio_dir = getenv ("FE2_AUDIO_DIR");
+  if (audio_dir && *audio_dir == 0) audio_dir = NULL;
+  if (getenv ("FE2_AUDIO_CAPTURE") && *getenv ("FE2_AUDIO_CAPTURE"))
+	  audio_capture = fopen (getenv ("FE2_AUDIO_CAPTURE"), "wb");
+
   for (i=0; i<MAX_SAMPLES; i++) {
+	  char path[512];
+	  FILE *f;
 	  snprintf (filename, sizeof (filename), "sfx/sfx_%02d.wav", i);
-	  if (SDL_LoadWAV (filename, &desiredAudioSpec, &sfx_buf[i].buf,
+	  strcpy (path, filename);
+	  if (audio_dir && (f = open_override (filename + 4))) {
+		  fclose (f);
+		  snprintf (path, sizeof (path), "%s/%s", audio_dir, filename + 4);
+		  fprintf (stderr, "FE2_AUDIO_DIR: sfx %02d replaced\n", i);
+	  }
+	  if (SDL_LoadWAV (path, &desiredAudioSpec, &sfx_buf[i].buf,
 				  &sfx_buf[i].buf_len) == NULL) {
 	  	printf ("Error loading %s: %s\n", filename, SDL_GetError ());
 		sfx_buf[i].buf = NULL;
@@ -341,6 +373,13 @@ void Audio_Init(void)
 	  if (i == 19) sfx_buf[i].loop = SND_FREQ; /* loop to about 0.5 sec in */
 	  else if (i == 23) sfx_buf[i].loop = 0;
 	  else sfx_buf[i].loop = -1;
+	  if (audio_capture) {
+		  unsigned long h = 5381; int k;
+		  for (k = 0; sfx_buf[i].buf && k < sfx_buf[i].buf_len; k++)
+			  h = h * 33 + sfx_buf[i].buf[k];
+		  fprintf (stderr, "FE2_AUDIO_CAPTURE: sfx %02d len %d loop %d djb2 %08lx\n",
+			   i, sfx_buf[i].buf ? sfx_buf[i].buf_len : 0, sfx_buf[i].loop, h & 0xffffffff);
+	  }
   }
   
   /* All OK */

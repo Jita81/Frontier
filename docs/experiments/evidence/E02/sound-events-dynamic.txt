@@ -1,0 +1,142 @@
+# Dynamic sound host calls from four scripted runs (FE2_TRACE_HCALLS=1 FE2_TRACE_ONLY=12,1d,1e,...).
+# 12 = PlaySFX(d0=sample, d1=channel; d2 shown as the caller left it), 1d = PlayMusic(d0=mode/track,
+# d1:d2=track mask), 1e = StopMusic. MARK lines are script annotations (what the script just did).
+# Repeated identical PlayMusic calls are collapsed into one line with a count.
+
+== run e2probe
+F2      1e StopMusic d0=ffff d1=78
+F40     MARK INTRO
+F61     1d PlayMusic d0=1 d1=ffffffff d2=ffffffff   x60 (through F120)
+F121    1e StopMusic d0=0 d1=e968
+F271    12 PlaySFX d0=0 d1=0 d2=0
+F310    MARK COCKPIT
+F335    MARK H1
+F356    MARK H2
+F377    MARK H3
+F398    MARK H4
+F419    MARK H7
+F440    MARK H8
+F461    MARK H9
+F482    MARK H10
+F503    MARK T1
+F524    MARK T2
+
+== run e2launch
+F2      1e StopMusic d0=ffff d1=78
+F40     MARK INTRO
+F61     1d PlayMusic d0=1 d1=ffffffff d2=ffffffff   x60 (through F120)
+F121    1e StopMusic d0=0 d1=e968
+F271    12 PlaySFX d0=0 d1=0 d2=0
+F310    MARK CLICK7
+F321    12 PlaySFX d0=1d d1=0 d2=9e03
+F321    12 PlaySFX d0=15 d1=1 d2=aa
+F321    12 PlaySFX d0=0 d1=0 d2=1
+
+== run e2hyp
+F2      1e StopMusic d0=ffff d1=78
+F40     MARK INTRO
+F61     1d PlayMusic d0=1 d1=ffffffff d2=ffffffff   x60 (through F120)
+F121    1e StopMusic d0=0 d1=e968
+F271    12 PlaySFX d0=0 d1=0 d2=0
+F310    MARK LAUNCH
+F321    12 PlaySFX d0=1d d1=0 d2=9e03
+F321    12 PlaySFX d0=15 d1=1 d2=aa
+F321    12 PlaySFX d0=0 d1=0 d2=1
+F720    MARK LASER_SPACE
+F751    MARK LASER_A
+F782    MARK GALMAP
+F784    12 PlaySFX d0=0 d1=0 d2=0
+F884    12 PlaySFX d0=0 d1=0 d2=0
+F913    MARK F1_FLYING
+F919    MARK ICON8
+F988    MARK ICON9
+F993    12 PlaySFX d0=1a d1=2 d2=1
+F993    12 PlaySFX d0=0 d1=0 d2=1
+F1057   MARK ICON10
+F1062   12 PlaySFX d0=0 d1=0 d2=1
+
+== run e2hyp2
+F2      1e StopMusic d0=ffff d1=78
+F40     MARK INTRO
+F61     1d PlayMusic d0=1 d1=ffffffff d2=ffffffff   x60 (through F120)
+F121    1e StopMusic d0=0 d1=e968
+F271    12 PlaySFX d0=0 d1=0 d2=0
+F310    MARK LAUNCH
+F321    12 PlaySFX d0=1d d1=0 d2=9e03
+F321    12 PlaySFX d0=15 d1=1 d2=aa
+F321    12 PlaySFX d0=0 d1=0 d2=1
+F620    MARK FRONTVIEW
+F622    12 PlaySFX d0=0 d1=0 d2=0
+F651    MARK LASER_SPACE
+F653    12 PlaySFX d0=1d d1=0 d2=9e05
+F653    12 PlaySFX d0=15 d1=1 d2=aa
+F653    1e StopMusic d0=3 d1=e6
+F653    12 PlaySFX d0=1 d1=1 d2=7f0002
+F685    12 PlaySFX d0=1 d1=1 d2=7f0002
+F722    MARK LASER_CLICK
+F726    12 PlaySFX d0=1c d1=0 d2=4
+F765    MARK GALMAP
+F767    12 PlaySFX d0=0 d1=0 d2=0
+F972    12 PlaySFX d0=0 d1=0 d2=0
+F1001   MARK ICON7
+F1006   12 PlaySFX d0=0 d1=0 d2=4
+F1011   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1012   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1013   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1014   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1015   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1016   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1017   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1018   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1019   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1020   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1021   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1022   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1023   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1024   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1025   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1026   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1027   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1028   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1029   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1030   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1031   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1032   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1033   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1034   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1035   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1036   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1037   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1038   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1039   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1040   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1041   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1042   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1043   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1044   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1045   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1046   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1047   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1048   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1049   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1050   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1051   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1052   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1053   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1054   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1055   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1056   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1057   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1058   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1059   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1060   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1461   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1462   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1463   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1464   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1465   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1466   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1467   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1468   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1469   12 PlaySFX d0=2 d1=1 d2=7f0008
+F1470   12 PlaySFX d0=2 d1=1 d2=7f0008

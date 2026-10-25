@@ -8,6 +8,8 @@
  *                         per frame, plus a per-frame histogram line. Idle
  *                         (0x1f, the vbl busy-wait) is only counted unless
  *                         the value is 2
+ *   FE2_TRACE_ONLY=12,1d  only log these host calls (hex, comma separated);
+ *                         the per-frame 'H' histogram line is dropped too
  *   FE2_SCRIPT=<file>     scripted input and screenshots, see below
  *   FE2_SHOT_DIR=<dir>    where 'shot' writes its PPM files (default ".")
  *   FE2_PROVENANCE=1      measurement only: track who wrote each pixel of the
@@ -53,6 +55,8 @@ static HOSTCALL orig_hcalls[EXP_MAX_HCALLS];
 static FILE *trace_fp;
 static int trace_on;
 static int trace_level;	/* 1: all calls but Idle (counted only), 2: Idle too */
+static unsigned char trace_only[EXP_MAX_HCALLS];	/* FE2_TRACE_ONLY=12,1d,1e */
+static int trace_only_on;
 static unsigned long frame_no;
 static unsigned long calls_this_frame[EXP_MAX_HCALLS];
 
@@ -338,7 +342,8 @@ static void trace_call (int n)
 		decode_str ((unsigned char *) STRam + GetReg (REG_A0), text, sizeof (text));
 		note_text (text);
 	}
-	if (trace_on && trace_fp && (n != 0x1f || trace_level > 1)) {
+	if (trace_on && trace_fp && (n != 0x1f || trace_level > 1) &&
+	    (!trace_only_on || trace_only[n])) {
 		u32 sp = GetReg (REG_A7);
 		fprintf (trace_fp, "F%lu %02x %s d0=%x d1=%x d2=%x d3=%x d4=%x d5=%x a0=%x a1=%x sp+2=[%08x %08x %08x]",
 			frame_no, n, hcall_names[n] ? hcall_names[n] : "?",
@@ -599,6 +604,16 @@ void Exp_Init (void)
 		trace_on = 1;
 		trace_level = atoi (s) > 1 ? 2 : 1;
 		exp_any = 1;
+		if ((s = getenv ("FE2_TRACE_ONLY")) && *s) {
+			char *e;
+			do {
+				unsigned long id = strtoul (s, &e, 16);
+				if (e == s) break;
+				if (id < EXP_MAX_HCALLS) trace_only[id] = 1;
+				s = (*e == ',') ? e + 1 : e;
+			} while (*e == ',');
+			trace_only_on = 1;
+		}
 	}
 	if ((s = getenv ("FE2_PROVENANCE")) && *s && strcmp (s, "0")) {
 		prov_on = 1;
@@ -629,7 +644,7 @@ void Exp_EndFrame (void)
 	int i;
 
 	if (!exp_any) return;
-	if (trace_fp && trace_on) {
+	if (trace_fp && trace_on && !trace_only_on) {
 		fprintf (trace_fp, "H F%lu", frame_no);
 		for (i = 0; i < EXP_MAX_HCALLS; i++)
 			if (calls_this_frame[i])

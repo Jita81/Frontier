@@ -1,0 +1,55 @@
+# E2 identity and flag-on evidence. Script: capture-script.txt (intro -> start at Ross 154 -> F1 -> launch icon).
+# Runs: A = pre-E2 binary (b38e56f, E1 harness), B = E2 binary flags off, C = E2 binary + FE2_AUDIO_CAPTURE only,
+#       D = E2 binary + FE2_AUDIO_DIR=<generated files> + FE2_AUDIO_CAPTURE. All with SDL_AUDIODRIVER=dummy,
+#       FE2_TRACE_HCALLS=1, --size 1280 800. The original music/ folder is absent in this worktree.
+
+## 1. Sound host-call sequence (PlaySFX/PlayMusic/StopMusic lines: frame, id, d0, d1, d2)
+run A: 66 calls, md5 91598c240a83565f504995e48582308f
+run B: 66 calls, md5 91598c240a83565f504995e48582308f
+run C: 66 calls, md5 91598c240a83565f504995e48582308f
+run D: 7 calls, md5 d760cb5a2f4f172f9f781dc733739d1f
+D differs only because IsMusicPlaying now returns 1, so the title screen asks for track 1 once instead of 60 times:
+  (no non-PlayMusic differences)
+
+## 2. Shown frames (glReadPixels) and game screen buffers (.st), md5
+l1: A dd6700eb7b5a8cbd9e269bc39a265657 B dd6700eb7b5a8cbd9e269bc39a265657 C dd6700eb7b5a8cbd9e269bc39a265657 D dd6700eb7b5a8cbd9e269bc39a265657
+l1.st: A 648c71c628b0d0aa9bb73a784e4e7dd6 B 648c71c628b0d0aa9bb73a784e4e7dd6 C 648c71c628b0d0aa9bb73a784e4e7dd6 D 648c71c628b0d0aa9bb73a784e4e7dd6
+l2: A eafa2069144123ac239bbaa6909750e8 B eafa2069144123ac239bbaa6909750e8 C eafa2069144123ac239bbaa6909750e8 D 66167e41d624a23e2a71bc28b0117753
+l2.st: A 3d37cd9784edae496f1ddf24b45387b9 B 3d37cd9784edae496f1ddf24b45387b9 C 3d37cd9784edae496f1ddf24b45387b9 D 823a4fe3c505cab60e2b387930f57ccb
+l3: A bbd84f4d0350ec08761c47a27a21d6c0 B bbd84f4d0350ec08761c47a27a21d6c0 C bbd84f4d0350ec08761c47a27a21d6c0 D c02e385f6af43fa7a8bfb3c1104c50dc
+l3.st: A 6fa82c196bfc8177ffd30672da446e6d B 6fa82c196bfc8177ffd30672da446e6d C 6fa82c196bfc8177ffd30672da446e6d D 6fa82c196bfc8177ffd30672da446e6d
+
+## 3. Full host-call trace (866,823 lines per run)
+A vs B differing lines, ignoring the Idle spin count: 14
+B vs C (same binary, run twice) differing lines, same filter: 14
+A vs C: 12. In every pair the only differing lines are the same six input-poll calls in frame 122
+(HostUpdate, GetMouseInput, GetKeyboardEvent, NotifyMousePos, RestoreUnderCursor, BlitCursor) and that
+frame's histogram: they run inside the 20 ms VBL interrupt, so where it lands and the registers it sees
+vary from run to run. Two runs of the same binary (B, C) differ by exactly as much as A and B do.
+
+## 4. Loaded-sample hashes and capture search
+sfx 00 python=f1de2cee/3914 off(C)=f1de2cee/3914 on(D)=133daf76/3968
+flag off: 33/33 loaded-sample hashes equal the independent Python decode
+generated sfx_00 djb2=133daf76/3968
+capture C (2093056 bytes): original sfx_00 (after its 232 silent lead-in samples): 1 bit-exact copies at ['6.28s']
+capture C (2093056 bytes): generated chirp: 0 bit-exact copies at []
+capture D (2076672 bytes): original sfx_00 (after its 232 silent lead-in samples): 0 bit-exact copies at []
+capture D (2076672 bytes): generated chirp: 1 bit-exact copies at ['6.22s']
+capture C RMS per 0.5 s, first 8 s: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 140, 0, 248, 1758]
+capture D RMS per 0.5 s, first 8 s: [0, 0, 259, 3126, 4474, 3334, 0, 0, 0, 0, 0, 0, 1895, 0, 1926, 1734]
+(the first sfx 0 at F271 plays alone and is found bit-exact; the second at F321 is mixed with sfx 0x1d and 0x15)
+(D's RMS at 1-3 s is the generated track 01 playing on the title screen; C is silent there because music/ is absent)
+
+## 5. Log lines
+run C:
+run D:
+  FE2_AUDIO_DIR: sfx 00 replaced
+  FE2_AUDIO_DIR: music 01 replaced
+run B prints no FE2_AUDIO line.
+
+## 6. Flag-on screen difference
+D's l2/l3 frames differ from A-C. The host-call histograms match through frame 593; in frame 594 the
+game's input-poll loop ran 3 times instead of 1 (a VBL interrupt landed differently), after which the
+launch velocity readout is 10.0 instead of 11.0 km/h (22 pixels). The game advances on the 20 ms SDL
+timer, so extra decode work on the audio thread can shift it; this is the known Phase 1 pacing issue,
+not a change to game data.
