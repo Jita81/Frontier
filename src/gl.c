@@ -156,17 +156,17 @@ static void change_vidmode ()
 
 	glMatrixMode (GL_PROJECTION);
 	glLoadIdentity ();
-	/* Aspect ratio of frontier's 3d view is 320/168 = 1.90 at the
-	 * original ST resolution, but the 3d viewport (set_main_viewport)
-	 * excludes the bottom control-panel strip and follows the actual
-	 * screen_w/screen_h - so the projection must follow it too, or the
-	 * 3D scene stretches/squashes relative to the 2D control panel at
-	 * any resolution other than the original 4:3-ish one. */
-	{
-		int ctrl_h = 32*screen_h/200;
-		float aspect = (float) screen_w / (float) (screen_h - ctrl_h);
-		gluPerspective (36.5f, aspect, GL_NEAR_PLANE, GL_FAR_PLANE);
-	}
+	/* Aspect ratio of frontier's 3d view is 320/168 = 1.90, in ST
+	 * pixels, whatever the window's shape: the software renderer
+	 * stretches its 320x200 frame over the whole window, so the GL view
+	 * has to stretch the same way or the two renderers frame different
+	 * parts of the sky. With the window's own aspect instead (screen_w /
+	 * (screen_h - ctrl_h), taken over with B's 981d304), a 640x480 window
+	 * sees about 32 degrees either side in the software renderer but only
+	 * 28 in GL, so a planet near the edge - Lave from Lave Station - is on
+	 * the screen in one and off it in the other. This is the base's
+	 * projection again. */
+	gluPerspective (36.5f, 1.9f, GL_NEAR_PLANE, GL_FAR_PLANE);
 
 	glEnable (GL_TEXTURE_2D);
 	glGenTextures (1, &screen_tex);
