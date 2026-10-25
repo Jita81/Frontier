@@ -1,26 +1,50 @@
 THIS=Makefile-C
 VERSION=20060623
 
-SRCOBJS := audio.o hostcall.o keymap.o main.o shortcut.o input.o joystick.o
+SRCOBJS := audio.o hostcall.o keymap.o main.o shortcut.o input.o joystick.o ini.o
 
 COMPILER ?= gcc
 CC := $(CROSS_COMPILE)$(COMPILER)
 
-SDL_CONFIG := $(shell $(CC) --print-sysroot)/usr/bin/sdl-config
+UNAME_S := $(shell uname -s)
+
+# the toolchain's sysroot sdl-config when cross compiling, else the one in PATH
+# (clang, the macOS compiler, has no --print-sysroot)
+SYSROOT_SDL_CONFIG := $(shell $(CC) --print-sysroot 2>/dev/null)/usr/bin/sdl-config
+SDL_CONFIG ?= $(if $(wildcard $(SYSROOT_SDL_CONFIG)),$(SYSROOT_SDL_CONFIG),sdl-config)
 SDL_CFLAGS := $(shell $(SDL_CONFIG) --cflags)
 SDL_LIBS := $(shell $(SDL_CONFIG) --libs)
 
-CFLAGS := -O3 -fomit-frame-pointer -Wall -Wno-unused $(SDL_CFLAGS) -DOGG_MUSIC
+# include/library paths of libvorbis/libogg when they are not in the system
+# ones (Homebrew on macOS)
+VORBIS_CFLAGS := $(shell pkg-config --cflags vorbisfile 2>/dev/null)
+VORBIS_LDFLAGS := $(shell pkg-config --libs-only-L vorbisfile vorbis ogg 2>/dev/null)
 
-LIBS := -lvorbisfile -lvorbis -logg -lini $(SDL_LIBS) -lSDL_image
+# -fwrapv: the translated 68k code relies on signed 32-bit wraparound (overflow
+# flag); without it optimised clang builds hang on planets
+CFLAGS := -O3 -fomit-frame-pointer -fwrapv -Wall -Wno-unused $(SDL_CFLAGS) $(VORBIS_CFLAGS) -DOGG_MUSIC
+
+LIBS := $(VORBIS_LDFLAGS) -lvorbisfile -lvorbis -logg $(SDL_LIBS)
 
 WITH_GL=y
 ifeq ($(WITH_GL),y)
 	SRCOBJS += gl.o
-	LIBS += -lGL -lGLU
 	CFLAGS += -DWITH_GL
+ifeq ($(UNAME_S),Darwin)
+	LIBS += -framework OpenGL
+	CFLAGS += -DGL_SILENCE_DEPRECATION
+else
+	LIBS += -lGL -lGLU
+endif
 else
 	SRCOBJS += soft.o
+ifeq ($(UNAME_S),Darwin)
+	# no SDL_image for SDL 1.2 on Homebrew: soft.c reads cursor.png with libpng
+	CFLAGS += -DNO_SDL_IMAGE $(shell pkg-config --cflags libpng)
+	LIBS += $(shell pkg-config --libs libpng)
+else
+	LIBS += -lSDL_image
+endif
 endif
 
 OBJS := fe2.s.o host.o \
