@@ -24,6 +24,7 @@
 #include <signal.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <dirent.h>
 #include <sys/stat.h>
 
@@ -105,10 +106,17 @@ static volatile u32 n_wd;
 static u32 key_ovf;
 static u32 a6_first, a6_set, a6_changes;
 static u32 n_draw;
-static int exiting;
+static atomic_int exiting;
 
-static volatile u64 last_hcall_ns, hcall_enter_ns;
-static volatile int in_hcall, cur_hc;
+/* Shared with the watchdog thread.  hcall_enter_ns is the entry time of the
+ * hcall in progress, 0 when none is; last_hcall_ns is the time of the last
+ * hcall entry or exit.  The main thread stores them with release order
+ * after taking the timestamp; the watchdog loads them with acquire order
+ * BEFORE it reads the clock, so it never sees a time later than its own
+ * "now" (an unsigned now - then could otherwise wrap to a huge age and trip
+ * hung-hcall on a healthy run). */
+static _Atomic u64 last_hcall_ns, hcall_enter_ns;
+static volatile int cur_hc;
 
 /* cumulative hashes, one per stream */
 enum { S_G, S_M, S_C, S_S, S_R, S_F, S_P, S_N };
@@ -420,6 +428,12 @@ static u64 machine_hash (void)
 	return h;
 }
 
+/* now - then, never wrapping: 0 if then is not before now */
+static inline u64 age_ns (u64 now, u64 then)
+{
+	return now > then ? now - then : 0;
+}
+
 static void *watchdog (void *arg)
 {
 	u32 last_v = hu_count, inj_since_progress = 0;
@@ -427,19 +441,22 @@ static void *watchdog (void *arg)
 	int stable = 0;
 	(void) arg;
 	for (;;) {
-		u64 t;
+		u64 t, enter, last;
 		usleep (100000);
-		if (exiting) return NULL;
+		if (atomic_load (&exiting)) return NULL;
+		/* load the shared times first, then read the clock (see above) */
+		enter = atomic_load_explicit (&hcall_enter_ns, memory_order_acquire);
+		last = atomic_load_explicit (&last_hcall_ns, memory_order_acquire);
 		t = now_ns ();
-		if (timeout_s > 0 && t - start_ns > (u64) (timeout_s * 1e9)) invalid ("timeout");
-		if (in_hcall && t - hcall_enter_ns > (u64) (hcall_s * 1e9)) invalid ("hung-hcall");
+		if (timeout_s > 0 && age_ns (t, start_ns) > (u64) (timeout_s * 1e9)) invalid ("timeout");
+		if (enter && age_ns (t, enter) > (u64) (hcall_s * 1e9)) invalid ("hung-hcall");
 		if (hu_count != last_v) {
 			last_v = hu_count;
 			last_progress = t;
 			inj_since_progress = 0;
 		}
-		if (t - last_progress > (u64) (stall_s * 1e9)) invalid ("no-vbl-progress");
-		if (!in_hcall && t - last_hcall_ns > 250000000ULL && exceptions_pending == 0) {
+		if (age_ns (t, last_progress) > (u64) (stall_s * 1e9)) invalid ("no-vbl-progress");
+		if (!enter && age_ns (t, last) > 250000000ULL && exceptions_pending == 0) {
 			u64 h = machine_hash ();
 			stable = (stable && h == prev) ? stable + 1 : 1;
 			prev = h;
@@ -730,9 +747,8 @@ void oracle_call (int n)
 {
 	u64 t = now_ns ();
 	cur_hc = n;
-	hcall_enter_ns = t;
-	last_hcall_ns = t;
-	in_hcall = 1;
+	atomic_store_explicit (&last_hcall_ns, t, memory_order_release);
+	atomic_store_explicit (&hcall_enter_ns, t, memory_order_release);
 
 	switch (n) {
 	case 0x07: hostupdate (); break;
@@ -762,8 +778,8 @@ void oracle_call (int n)
 		g_record (n, 1);
 		break;
 	}
-	last_hcall_ns = now_ns ();
-	in_hcall = 0;
+	atomic_store_explicit (&last_hcall_ns, now_ns (), memory_order_release);
+	atomic_store_explicit (&hcall_enter_ns, 0, memory_order_release);
 }
 
 /* ------------------------------------------------------------------ */
@@ -772,8 +788,7 @@ void oracle_call (int n)
 static void oracle_atexit (void)
 {
 	int i;
-	if (exiting) return;
-	exiting = 1;
+	if (atomic_exchange (&exiting, 1)) return;
 	g_flush ();
 	pthread_mutex_lock (&out_lock);
 	fprintf (out, "stat flagged=%u hostupdate=%u wd=%u wdv=", n_flagged, hu_count, n_wd);
@@ -940,7 +955,8 @@ void oracle_install (void)
 
 	atexit (oracle_atexit);
 	signal (SIGSEGV, oracle_segv);
-	start_ns = t0_ns = last_hcall_ns = now_ns ();
+	start_ns = t0_ns = now_ns ();
+	atomic_store (&last_hcall_ns, start_ns);
 	if (pthread_create (&th, NULL, watchdog, NULL)) die2 ("cannot start the watchdog");
 	pthread_detach (th);
 }
