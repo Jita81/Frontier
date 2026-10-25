@@ -1,0 +1,31 @@
+# scripted live input for a record run (SDL events pushed before HostUpdate v)
+# v key <SDLK sym> <mac kVK scancode hex> down|up
+# space: skip the intro
+250 key 32 31 down
+253 key 32 31 up
+# mouse wander over the menu
+300 motion 200 200 5 3
+320 motion 260 230 60 30
+340 motion 300 260 40 30
+# key 2: Mars in the Sol system
+500 key 50 13 down
+503 key 50 13 up
+# in flight: F-keys and mouse
+900 key 282 7a down
+903 key 282 7a up
+1200 motion 320 240 20 10
+1210 button 3 down 320 240
+1260 motion 340 250 20 10
+1300 button 3 up 340 250
+1500 key 283 78 down
+1503 key 283 78 up
+1800 key 284 63 down
+1803 key 284 63 up
+2100 key 282 7a down
+2103 key 282 7a up
+2400 motion 300 200 -40 -50
+2600 key 285 76 down
+2603 key 285 76 up
+2900 button 1 down 300 200
+2903 button 1 up 300 200
+3100 quit
