@@ -1768,8 +1768,10 @@ struct PlanetPrim {
 #define PLANET_PATCH_RES	1024
 #define PLANET_FACE_GRID	48
 /* planets whose textures are kept: up to 6*4 face textures each, baked
- * lazily for the faces and light zones actually seen */
-#define PLANET_TEX_CACHE	3
+ * lazily for the faces and light zones actually seen. S-9: sized together
+ * with PSURF_CACHE in planet.c, which must stay at least this big so that
+ * the surfaces of the cached planets are not parsed again and again. */
+#define PLANET_TEX_CACHE	6
 
 /* Use the textured sphere down to this distance/radius ratio, the ground
  * cone with a local patch below it (horizon 37 degrees away).
@@ -1834,7 +1836,8 @@ struct PlanetTex {
 	/* key */
 	unsigned int feat_addr, seed;
 	int radius_word, detail;
-	struct PSurf *surf;
+	/* S-9: no struct PSurf * here - planet.c may free it at any time;
+	 * ask psurf_get by the key above whenever it is needed */
 	/* colours all the textures below were baked with */
 	unsigned short table[16];
 
@@ -2031,11 +2034,14 @@ static struct PlanetTex *planet_get_tex (const struct PlanetPrim *p)
 	t->radius_word = p->radius_word;
 	t->detail = p->detail;
 	memcpy (t->table, p->table, sizeof (t->table));
-	t->surf = psurf_get (p->feat_addr, p->seed, p->radius_word, p->detail);
-	for (i = 0; i < 6; i++) {
-		struct PPatch pt;
-		planet_face_patch (i, &pt);
-		psurf_raster (t->surf, &pt, t->face_codes[i]);
+	{
+		/* NULL (out of memory) rasterizes as an empty surface */
+		struct PSurf *s = psurf_get (p->feat_addr, p->seed, p->radius_word, p->detail);
+		for (i = 0; i < 6; i++) {
+			struct PPatch pt;
+			planet_face_patch (i, &pt);
+			psurf_raster (s, &pt, t->face_codes[i]);
+		}
 	}
 	t->patch_valid = 0;
 	planet_forget_colours (t);
@@ -2092,7 +2098,8 @@ static void planet_update_patch (struct PlanetTex *t, const double down[3], doub
 	}
 	t->patch.half = want;
 	t->patch.n = PLANET_PATCH_RES;
-	psurf_raster (t->surf, &t->patch, t->patch_codes);
+	psurf_raster (psurf_get (t->feat_addr, t->seed, t->radius_word, t->detail),
+		      &t->patch, t->patch_codes);
 	t->patch_valid = 1;
 	for (z = 0; z < PLANET_MAX_ZONES; z++) t->patch_code[z] = -1;
 }
