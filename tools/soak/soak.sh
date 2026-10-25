@@ -4,7 +4,8 @@
 #   tools/soak/soak.sh [options] [-- game arguments]
 #
 # Options:
-#   --binary PATH    build to soak (default ./frontier; san/ubsan/frontier for item 5)
+#   --binary PATH    build to soak (default ./frontier; san/ubsan/frontier or
+#                    san/asan/frontier for item 5)
 #   --duration SEC   wall-clock run length (default 1800; 04 §8.3 asks for >= 1800)
 #   --pos X,Y        SDL_VIDEO_WINDOW_POS, so two soaks never share a spot (default 60,80)
 #   --cwd DIR        directory the game runs in, holding fe2.s.bin (default: repo top)
@@ -20,17 +21,27 @@
 #              idle intro is a second run without --tape.
 #   2 liveness kill -0 on the game's PID every 5 s.
 #   3 watchdog window-only capture every 10 s (needs Screen Recording permission for
-#              the terminal); FAIL if the md5 is unchanged for 60 s or nothing is captured.
-#              Each capture records how much of the window other windows cover; macOS
-#              throttles a covered window, so a static stretch while it was >= 50 %
-#              covered is flagged as possibly occlusion rather than a game freeze.
+#              the terminal); FAIL if no frame changed for 60 s or nothing is captured.
+#              A check with no window or a failed capture is not a change: it extends
+#              the static stretch, so one good capture cannot carry a run of failures.
+#              Each capture also records how much of the window other windows cover.
+#              That is diagnostic only and never changes the verdict: a covered window
+#              has not been shown to stop drawing, and an uncovered UBSan build has
+#              been seen static for 100 s.
 #   4 memory   RSS and phys_footprint every 10 s; the least-squares slope of each over
 #              the last 20 min, skipping the first 60 s of start-up, must be < 1 MB/min.
 #              (RSS alone is blind on macOS: compression shrank it 5 MB/min in a run
 #              that leaked 4 MB, so the footprint slope gates too.)  `leaks <pid>` before SIGTERM
 #              must report 0 blocks whose allocation stack touches the game binary
 #              (conservative: an SDL leak reached from host code counts as host).
-#   5 UBSan    only for a UBSan build: 0 "runtime error" lines on stderr; else SKIP.
+#   5 sanitizer  UBSan build: 0 "runtime error" lines on stderr.  ASan build: 0
+#              "ERROR: AddressSanitizer" reports.  Any other build: SKIP.
+#              An ASan build runs with ASAN_OPTIONS=detect_leaks=0 unless set (LSan is
+#              not supported on macOS arm64) and without `leaks` or MallocStackLogging,
+#              which clash with ASan's allocator; item 4's leak half is then SKIP.
+#              sdl12-compat cannot find libSDL2 from an ASan process unless the SDL2
+#              libdir is on DYLD_FALLBACK_LIBRARY_PATH (it hangs before main), so the
+#              script prepends `pkg-config --variable=libdir sdl2` there.
 #   6 exit     SIGTERM to the PID gives exit 0 and stderr holds only the loader line
 #              (MallocStackLogging's own notices, which this script causes, are ignored).
 #
@@ -90,8 +101,13 @@ fi
 out=$(cd "$out" && pwd)
 [ -n "$tape" ] && game_args+=(--oracle-replay "$tape" --oracle-out "$out/oracle.out" --pace)
 
-ubsan=0
+ubsan=0 asan=0
 otool -L "$binary" 2>/dev/null | grep -q 'libclang_rt\.ubsan' && ubsan=1
+otool -L "$binary" 2>/dev/null | grep -q 'libclang_rt\.asan' && asan=1
+leaks_note=
+if [ "$asan" = 1 ] && [ "$leaks_check" = 1 ]; then
+	leaks_check=0 leaks_note="ASan build: leaks and MallocStackLogging clash with ASan's allocator"
+fi
 
 pid=
 # shellcheck disable=SC2329  # run by the EXIT trap
@@ -108,7 +124,6 @@ trap cleanup EXIT
 trap 'exit 130' INT TERM
 
 cp "$binary" "$out/fe2soak" || die "cannot copy $binary"
-leaks_note=
 if [ "$leaks_check" = 1 ]; then
 	# leaks can only read a process whose binary carries get-task-allow.
 	cat >"$out/get-task-allow.plist" <<'PLIST'
@@ -136,9 +151,15 @@ mkdir -p "$out/frames"
 envs=(SDL_VIDEO_WINDOW_POS="$pos" SDL_AUDIODRIVER="${SDL_AUDIODRIVER:-dummy}")
 [ "$leaks_check" = 1 ] && envs+=(MallocStackLogging=lite)
 [ "$ubsan" = 1 ] && envs+=(UBSAN_OPTIONS="${UBSAN_OPTIONS:-print_stacktrace=1}")
+if [ "$asan" = 1 ]; then
+	sdl2_lib=$(pkg-config --variable=libdir sdl2 2>/dev/null)
+	[ -n "$sdl2_lib" ] || sdl2_lib=/opt/homebrew/lib
+	envs+=(ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0}")
+	envs+=(DYLD_FALLBACK_LIBRARY_PATH="$sdl2_lib:${DYLD_FALLBACK_LIBRARY_PATH:-$HOME/lib:/usr/local/lib:/usr/lib}")
+fi
 
 echo "soak: run dir $out" >&2
-echo "soak: $binary for ${duration}s at $pos (ubsan=$ubsan frames=$frames leaks=$leaks_check)" >&2
+echo "soak: $binary for ${duration}s at $pos (ubsan=$ubsan asan=$asan frames=$frames leaks=$leaks_check)" >&2
 cd "$cwd" || die "cannot cd to $cwd"
 env "${envs[@]}" "$out/fe2soak" ${game_args[@]+"${game_args[@]}"} \
 	>"$out/stdout.log" 2>"$out/stderr.log" &
@@ -151,15 +172,20 @@ checks=0 died_at='' last_rss=0 last_frame=0
 captures=0 cap_fail=0 nowin=0 distinct=0 prev_md5='' last_change=0 max_static=0
 covered=0 static_covered=0 run_covered=0
 
+stale() { # $1 = seconds since start; no new frame at this check
+	local static=$(($1 - last_change))
+	if [ "$static" -gt "$max_static" ]; then max_static=$static static_covered=$run_covered; fi
+}
+
 capture() { # $1 = seconds since start
-	local wid f md5 static pct
+	local wid f md5 pct
 	read -r wid pct <<<"$("$out/winid" "$pid" 2>/dev/null)"
 	if [ -z "$wid" ]; then
-		nowin=$((nowin + 1)); printf '%s\tnowindow\n' "$1" >>"$out/frames.tsv"; return
+		nowin=$((nowin + 1)); printf '%s\tnowindow\n' "$1" >>"$out/frames.tsv"; stale "$1"; return
 	fi
 	f=$out/frames/$1.png
 	if ! screencapture -x -o -l "$wid" "$f" 2>/dev/null || [ ! -s "$f" ]; then
-		cap_fail=$((cap_fail + 1)); printf '%s\tfailed\n' "$1" >>"$out/frames.tsv"; return
+		cap_fail=$((cap_fail + 1)); printf '%s\tfailed\n' "$1" >>"$out/frames.tsv"; stale "$1"; return
 	fi
 	md5=$(md5 -q "$f")
 	captures=$((captures + 1))
@@ -168,8 +194,7 @@ capture() { # $1 = seconds since start
 		distinct=$((distinct + 1)) prev_md5=$md5 last_change=$1 run_covered=0
 	else
 		[ "${pct:-0}" -ge 50 ] && run_covered=1
-		static=$(($1 - last_change))
-		if [ "$static" -gt "$max_static" ]; then max_static=$static static_covered=$run_covered; fi
+		stale "$1"
 	fi
 	printf '%s\t%s\t%s%%\n' "$1" "$md5" "${pct:-?}" >>"$out/frames.tsv"
 	[ "$keep_frames" = 1 ] || rm -f "$f"
@@ -251,7 +276,7 @@ if [ "$frames" = 0 ]; then
 else
 	note=''
 	[ "$max_static" -ge 60 ] && [ "$static_covered" = 1 ] &&
-		note=" note=\"the window was >= 50% covered during the static stretch: possibly occlusion, not a freeze\""
+		note=" note=\"the window was >= 50% covered during the longest static stretch (diagnostic only)\""
 	[ "$captures" -gt 1 ] && [ "$distinct" -le 1 ] &&
 		note=" note=\"every frame identical: frozen, or a blank capture (Screen Recording permission?)\""
 	if [ "$captures" -eq 0 ]; then v=FAIL; elif [ "$max_static" -ge 60 ]; then v=FAIL; else v=PASS; fi
@@ -288,12 +313,14 @@ v=PASS; [ "$slope_v" = FAIL ] && v=FAIL; [ "$leaks_v" = FAIL ] && v=FAIL
 result 4 $v "rss_slope_mb_per_min=$rss_mb footprint_slope_mb_per_min=$fp_mb window_s=$window samples=$samples slope=$slope_v" \
 	"leaks_total=${leaks_total:-na} leaks_host=${leaks_host:-na} leaks=$leaks_v${leaks_note:+ note=\"$leaks_note\"}"
 
-if [ "$ubsan" = 1 ]; then
-	n=$(grep -c 'runtime error' "$out/stderr.log")
-	if [ "$n" -eq 0 ]; then v=PASS; else v=FAIL; fi
-	result 5 $v "runtime_errors=$n"
+if [ "$ubsan" = 1 ] || [ "$asan" = 1 ]; then
+	n=0 a=0
+	[ "$ubsan" = 1 ] && n=$(grep -c 'runtime error' "$out/stderr.log")
+	[ "$asan" = 1 ] && a=$(grep -c 'ERROR: AddressSanitizer' "$out/stderr.log")
+	if [ "$n" -eq 0 ] && [ "$a" -eq 0 ]; then v=PASS; else v=FAIL; fi
+	result 5 $v "ubsan=$ubsan runtime_errors=$n asan=$asan asan_errors=$a"
 else
-	result 5 SKIP "reason=\"not a UBSan build\""
+	result 5 SKIP "reason=\"not a sanitizer build\""
 fi
 
 loader='^fe2\.s\.bin: 0x[0-9a-f]+ bytes \(code end 0x[0-9a-f]+\), [0-9]+ fixups; loaded at 0x[0-9a-f]+\.$'
