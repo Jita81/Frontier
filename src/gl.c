@@ -2372,6 +2372,28 @@ static void draw_horizon_cap (struct PlanetTex *t, const struct PlanetPrim *p, d
  * draw each layer as the disc of directions around the planet centre
  * that reaches that far beyond the planet's limb.
  */
+/* S-23: add an atmosphere tint to a colour one 4-bit channel at a time,
+ * saturating, instead of letting a carry run from one channel into the
+ * next (and out of the colour). A negative tint word darkens each
+ * channel by the digits of its magnitude. */
+static unsigned short rgb444_add_sat (unsigned short col, unsigned short tint)
+{
+	int neg = (short) tint < 0;
+	int t = neg ? -(short) tint : tint;
+	int out = 0, sh;
+
+	for (sh = 0; sh < 12; sh += 4) {
+		int c = (col >> sh) & 15, d = (t >> sh) & 15;
+		c = neg ? c - d : c + d;
+		if (c < 0)
+			c = 0;
+		if (c > 15)
+			c = 15;
+		out |= c << sh;
+	}
+	return out;
+}
+
 static void planet_read_atmosphere (struct PlanetPrim *p, int model, int a3, int a6, int detail3)
 {
 	int ptr = model, tint, d0, i, n = 0;
@@ -2409,7 +2431,7 @@ static void planet_read_atmosphere (struct PlanetPrim *p, int model, int a3, int
 	for (i = 0; i < n; i++) {
 		if ((short) scale[i] <= detail3) continue;
 		p->atm_scale[p->natm] = scale[i] / 16384.0;
-		p->atm_col[p->natm++] = (col[i] + tint) & 0xfff;
+		p->atm_col[p->natm++] = rgb444_add_sat (col[i], tint);
 	}
 }
 
