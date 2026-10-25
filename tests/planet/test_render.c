@@ -9,7 +9,10 @@
  *
  * V-1/V-2: the atmosphere limb comes from the body's own model data. A
  * model with an atmosphere list gets its layers read and drawn; the same
- * body without one gets no layers and no limb geometry at all.
+ * body without one gets no layers and no limb geometry at all. And it is
+ * drawn where the ST draws it (planet_atmosphere_band): not for a planet
+ * small on the screen, nor for one that fills it, and the band reaches as
+ * far as the ST's formula says.
  *
  * run.sh cuts the block between the PLANET BEGIN and PLANET END markers
  * out of src/gl.c into planet_block.c, which this includes.
@@ -62,6 +65,7 @@ static void draw (int i, double dist, double angle)
 	void *data;
 
 	make_planet (&p, i, dist, angle);
+	planet_atmosphere_band (&p);
 	data = &p;
 	Nu_DrawPlanet (&data);
 	data = &p;
@@ -90,45 +94,94 @@ static int check_tint (void)
 
 /* V-1/V-2: lay out a planet model in fake ST memory, with or without an
  * atmosphere list between the header and the features (the layout
- * planet_read_atmosphere reads), and count the limb geometry drawn. */
-static int check_limb (void)
+ * planet_read_atmosphere reads), put the planet at dist planet radii,
+ * angle off the line of sight, and count the limb geometry drawn. */
+static long limb (int with, double dist, double angle, struct PlanetPrim *p)
 {
 	const int model = 0xc000, a3 = 0xd000, a6 = 0xe000;
-	int with, bad = 0;
+	void *data;
+	long before;
+	int k;
 
-	for (with = 0; with < 2; with++) {
+	for (k = 0; k < 0x40; k += 2) MemWriteWord (model + k, 0);
+	for (k = -256; k < 256; k += 2) {
+		MemWriteWord (a3 + k, 0);
+		MemWriteWord (a6 + k, 0);
+	}
+	make_planet (p, 0, dist, angle);
+	p->flags = 0x80 | 0x40;	/* no extra header words before the list */
+	if (with) {
+		MemWriteWord (model + 8, 0x123);	/* atmosphere colour */
+		MemWriteWord (model + 10, 0x4400);	/* layer: scale, colour */
+		MemWriteWord (model + 12, 0x48f);
+		MemWriteWord (model + 14, 0x4200);
+		MemWriteWord (model + 16, 0x36f);
+		MemWriteWord (model + 18, 0);		/* end of layers */
+		p->feat_addr = model + 20;
+	} else {
+		p->feat_addr = model + 10;	/* colour word 0: no atmosphere */
+	}
+	planet_read_atmosphere (p, model, a3, a6, 0);
+	planet_atmosphere_band (p);
+	before = vertex_count;
+	data = p;
+	Nu_DrawAtmosphere (&data);
+	return vertex_count - before;
+}
+
+/* the ST's own formulas for the near and far limb (l3d274, l3d2d4), in
+ * pixels on the line from the screen centre through the planet centre:
+ * 256 (rho z -+ r T) / (z^2 - r^2), T = sqrt (x^2 + y^2 + z^2 - r^2) */
+static double st_limb (const struct PlanetPrim *p, int sign)
+{
+	double x = p->centre[0], y = p->centre[1], z = p->centre[2], r = p->R;
+	double rho = sqrt (x*x + y*y), T = sqrt (x*x + y*y + z*z - r*r);
+	return 256.0 * (rho*z + sign*r*T) / (z*z - r*r);
+}
+
+static int check_limb (void)
+{
+	static const struct { int with; double dist, angle; int want; const char *what; } t[] = {
+		/* the limb near the centre of the screen: the bands show */
+		{ 1, 1.5, 0.75, 1, "V-1: body with an atmosphere, limb on screen" },
+		{ 0, 1.5, 0.75, 0, "V-2: body without an atmosphere, limb on screen" },
+		/* the planet fills the screen: the $ff4e test */
+		{ 1, 1.5, 0.0, 0, "V-1: body with an atmosphere, filling the screen" },
+		/* small on the screen: the ST draws a circle, no atmosphere */
+		{ 1, 20.0, 0.0, 0, "V-1: body with an atmosphere, small on screen" },
+		/* moderate range: far + near under $199, the small path too */
+		{ 1, 3.0, 0.4, 0, "V-1: body with an atmosphere, moderate range" },
+		/* closer, the limb 74 pixels off the centre: the bands show */
+		{ 1, 2.0, 0.8, 1, "V-1: body with an atmosphere, limb off centre" },
+		{ 0, 2.0, 0.8, 0, "V-2: body without an atmosphere, limb off centre" },
+		/* off the screen: near limb at 178 pixels or more */
+		{ 1, 3.0, 1.2, 0, "V-1: body with an atmosphere, off screen" },
+	};
+	int i, l, bad = 0;
+
+	for (i = 0; i < (int) (sizeof (t) / sizeof (t[0])); i++) {
 		struct PlanetPrim p;
-		void *data;
-		long before;
-		int k;
+		long n = limb (t[i].with, t[i].dist, t[i].angle, &p);
 
-		for (k = 0; k < 0x40; k += 2) MemWriteWord (model + k, 0);
-		for (k = -256; k < 256; k += 2) {
-			MemWriteWord (a3 + k, 0);
-			MemWriteWord (a6 + k, 0);
-		}
-		make_planet (&p, 0, 1.5, 0.0);
-		p.flags = 0x80 | 0x40;	/* no extra header words before the list */
-		if (with) {
-			MemWriteWord (model + 8, 0x123);	/* atmosphere colour */
-			MemWriteWord (model + 10, 0x4400);	/* layer: scale, colour */
-			MemWriteWord (model + 12, 0x48f);
-			MemWriteWord (model + 14, 0x4200);
-			MemWriteWord (model + 16, 0x36f);
-			MemWriteWord (model + 18, 0);		/* end of layers */
-			p.feat_addr = model + 20;
-		} else {
-			p.feat_addr = model + 10;	/* colour word 0: no atmosphere */
-		}
-		planet_read_atmosphere (&p, model, a3, a6, 0);
-		before = vertex_count;
-		data = &p;
-		Nu_DrawAtmosphere (&data);
-		printf ("V-%d: body %s an atmosphere: %d layers, %ld limb vertices\n",
-			with ? 1 : 2, with ? "with" : "without", p.natm, vertex_count - before);
-		if (with ? (p.natm != 2 || vertex_count == before)
-			 : (p.natm != 0 || vertex_count != before))
+		printf ("%s: %d layers, %ld limb vertices\n", t[i].what, p.natm, n);
+		if (t[i].want ? (p.natm != 2 || n == 0) : n != 0)
 			bad++;
+		/* the band against the ST's formula: the near side of the
+		 * layer's cone projects to near - 3 - (f-1) (2 far - (near-3)) */
+		for (l = 0; l < p.natm; l++) {
+			double x = p.centre[0], y = p.centre[1], z = p.centre[2];
+			double gam = atan2 (sqrt (x*x + y*y), z);
+			double near = floor (st_limb (&p, -1)), far = floor (st_limb (&p, 1));
+			double n0 = near - 3.0, got, want;
+
+			if (far + near >= 1536.0) far = 1536.0;
+			want = n0 - (p.atm_scale[l] - 1.0) * (2.0*far - n0);
+			got = 256.0 * tan (gam - p.atm_th[l]);
+			if (fabs (got - want) > 0.5) {
+				printf ("V-1: layer %d edge at %.2f pixels, ST formula %.2f\n", l, got, want);
+				bad++;
+			}
+		}
 	}
 	return bad;
 }

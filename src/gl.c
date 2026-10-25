@@ -1758,10 +1758,13 @@ struct PlanetPrim {
 	unsigned int feat_addr, seed;
 	int radius_word, detail, flags;
 	unsigned short table[16];
-	/* atmosphere layers, innermost first: scale and colour */
+	/* atmosphere layers, innermost first: scale and colour, and the
+	 * half angle of the cone of directions about the planet centre that
+	 * the layer covers (planet_atmosphere_band) */
 	int natm;
 	double atm_scale[8];
 	unsigned short atm_col[8];
+	double atm_th[8];
 };
 
 #define PLANET_FACE_RES		512
@@ -2435,6 +2438,68 @@ static void planet_read_atmosphere (struct PlanetPrim *p, int model, int a3, int
 	}
 }
 
+/*
+ * V-1: where the ST draws the atmosphere, and how far out (docs/09 §3).
+ *
+ * In ST pixels (focal length 256) on the line from the centre of the
+ * screen through the planet's: near and far limb (l3d274, l3d2d4).
+ * - near limb at 178 or more: the planet is off the screen (l3cd84);
+ * - the view plane cuts the planet, or far + near >= $600: big path with
+ *   the far limb taken as $600 (l3d710);
+ * - far + near >= $199: big path (l3d716);
+ * - otherwise the planet is small on the screen: the ST draws a circle
+ *   and no atmosphere at all;
+ * - big path: the atmosphere is drawn iff near - 3 > -178 (the $ff4e test
+ *   after l3d716), i.e. not when the planet fills the whole screen.
+ * Each layer is the planet outline 3 pixels in from the near limb, scaled
+ * by scale/$4000 about the point 2*far out along that line: on the line
+ * its edge is (f-1)*(2*far - near) pixels further in. That gives the half
+ * angle of the layer's cone of directions about the planet centre.
+ * Worked out from the same numbers the ST uses (the position and the
+ * radius before planet_fix_radius), in doubles: the ST's 16 bit wrap of
+ * near - 3 and far + near at saturation is not copied. No host constants.
+ */
+#define ST_FOCAL	256.0
+
+/* view angle off the screen centre -> ST pixels, saturating as the ST's
+ * words do */
+static double st_pixels (double a)
+{
+	if (a >= M_PI/2) return 32767.0;
+	if (a <= -M_PI/2) return -32768.0;
+	a = ST_FOCAL * tan (a);
+	return a > 32767.0 ? 32767.0 : a < -32768.0 ? -32768.0 : a;
+}
+
+static void planet_atmosphere_band (struct PlanetPrim *p)
+{
+	double x = p->centre[0], y = p->centre[1], z = p->centre[2], r = p->R;
+	double d = sqrt (x*x + y*y + z*z), gam, thp, near, far, n0;
+	int l, n = p->natm;
+
+	if (!n) return;
+	p->natm = 0;
+	if (r <= 0.0 || d <= 0.0) return;
+	gam = atan2 (sqrt (x*x + y*y), z);
+	thp = asin (r < d ? r/d : 1.0);
+	near = floor (st_pixels (gam - thp));
+	if (near >= 178.0) return;
+	if (z*z - r*r <= 0.0) {
+		far = 1536.0;
+	} else {
+		far = floor (st_pixels (gam + thp));
+		if (far + near >= 1536.0) far = 1536.0;
+		else if (far + near < 409.0) return;
+	}
+	n0 = near - 3.0;
+	if (n0 <= -178.0) return;
+	for (l = 0; l < n; l++) {
+		double w = (p->atm_scale[l] - 1.0) * (2.0*far - n0);
+		p->atm_th[l] = gam - atan ((n0 - w) / ST_FOCAL);
+	}
+	p->natm = n;
+}
+
 #define ATMOSPHERE_RINGS	24
 #define ATMOSPHERE_SLICES	64
 
@@ -2462,26 +2527,11 @@ static void draw_planet_atmosphere (const struct PlanetPrim *p, double d)
 	 * inserts them all at the same depth, and they come out the other way
 	 * round) */
 	for (l = p->natm - 1; l >= 0; l--) {
-		/* limb to scaling centre distance, in radians: about 2*$600
-		 * ST pixels (focal length ~255) at most, less for a smaller
-		 * planet. The ST does not draw the atmosphere of a planet that
-		 * is small on screen at all (it takes the l3d2d4 path); fade
-		 * it in rather than popping it. Calibrated against the
-		 * software renderer: the fade (0.4, 0.3) and the reach (8.0,
-		 * at most 24.0) are host constants, not ST data
-		 * (docs/09 §3). */
-		double tp = theta_p > 1.5 ? 100.0 : tan (theta_p);
-		double reach = 8.0 * tp, fade = (tp - 0.4) / 0.3;
-		double th;
-
-		if (fade <= 0.0) continue;
-		if (fade > 1.0) fade = 1.0;
-		if (reach > 24.0) reach = 24.0;
-		reach *= fade;
-		th = theta_p + (p->atm_scale[l] - 1.0) * reach;
-		if (th <= theta_p) continue;
+		/* how far out: planet_atmosphere_band, from the ST's band */
+		double th = p->atm_th[l];
 		int r, g, b;
 
+		if (th <= theta_p) continue;
 		if (th > M_PI - 0.01) th = M_PI - 0.01;
 		split_rgb444b (p->atm_col[l], &r, &g, &b);
 		glColor3ub (r, g, b);
@@ -2626,6 +2676,8 @@ void Nu_PutPlanet ()
 	for (i = 0; i < 16; i++)
 		p.table[i] = STMemory_ReadWord (a3 + 2*i);
 	planet_read_atmosphere (&p, model, a3, a6, (short) GetReg (REG_D3));
+	/* V-1: only where the ST draws it */
+	planet_atmosphere_band (&p);
 
 	znode_wrlong (NU_PLANET);
 	/* S-7: through the checked writer */
