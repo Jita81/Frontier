@@ -6,7 +6,12 @@
 */
 
 #include <SDL.h>
+#ifdef NO_SDL_IMAGE
+#include <string.h>
+#include <png.h>
+#else
 #include <SDL_image.h>
+#endif
 
 #include "main.h"
 #include "../m68000.h"
@@ -29,6 +34,33 @@ unsigned long logscreen, logscreen2, physcreen, physcreen2;
 
 static SDL_Surface *sdlscrn;                             /* The SDL screen surface */
 static SDL_Surface *cursor;
+
+#ifdef NO_SDL_IMAGE
+/* No SDL_image for SDL 1.2 (macOS Homebrew): read cursor.png with libpng */
+static SDL_Surface *IMG_Load (const char *file)
+{
+	png_image png;
+	SDL_Surface *s;
+
+	memset (&png, 0, sizeof (png));
+	png.version = PNG_IMAGE_VERSION;
+	if (!png_image_begin_read_from_file (&png, file))
+		return NULL;
+	png.format = PNG_FORMAT_RGBA;	/* bytes R, G, B, A */
+	s = SDL_CreateRGBSurface (SDL_SWSURFACE, png.width, png.height, 32,
+#if SDL_BYTEORDER == SDL_LIL_ENDIAN
+			0x000000ff, 0x0000ff00, 0x00ff0000, 0xff000000);
+#else
+			0xff000000, 0x00ff0000, 0x0000ff00, 0x000000ff);
+#endif
+	if (s == NULL || !png_image_finish_read (&png, NULL, s->pixels, s->pitch, NULL)) {
+		png_image_free (&png);
+		SDL_FreeSurface (s);
+		return NULL;
+	}
+	return s;
+}
+#endif
 
 BOOL bGrabMouse = FALSE;                          /* Grab the mouse cursor in the window */
 BOOL bInFullScreen = FALSE;
