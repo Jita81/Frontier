@@ -1037,13 +1037,26 @@ void CALLBACK vertexCallback(GLvoid *vertex, GLvoid *poly_data)
  *  but weight[4] may be used to average color, normal, or texture
  *  coordinate data.  In this program, color is weighted.
  */
+/* S-2: the vertices made here have to stay alive until gluTessEndPolygon;
+ * they come from a pool emptied before each gluTessBeginPolygon (see
+ * Nu_DrawComplexStart) instead of a malloc nothing ever freed. When the
+ * pool runs out we return NULL, which makes GLU report
+ * GLU_TESS_NEED_COMBINE_CALLBACK and drop the polygon. */
+#define MAX_COMBINE_VERTICES	1024
+static GLdouble combine_vertices[MAX_COMBINE_VERTICES][3];
+static int combine_vpos;
+
 void CALLBACK combineCallback(GLdouble coords[3], 
                      GLdouble *vertex_data[4],
                      GLfloat weight[4], GLdouble **dataOut )
 {
    GLdouble *vertex;
 
-   vertex = (GLdouble *) malloc(3 * sizeof(GLdouble));
+   if (combine_vpos >= MAX_COMBINE_VERTICES) {
+      *dataOut = NULL;
+      return;
+   }
+   vertex = combine_vertices[combine_vpos++];
 
    vertex[0] = coords[0];
    vertex[1] = coords[1];
@@ -1201,6 +1214,7 @@ void Nu_ComplexStart ()
 void Nu_DrawComplexStart (void **data)
 {
 	tess_vpos = 0;
+	combine_vpos = 0;
 	
 	if (use_renderer == R_GL) {
 		glGetDoublev (GL_MODELVIEW_MATRIX, tessModelMatrix);
