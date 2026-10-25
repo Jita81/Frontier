@@ -2583,8 +2583,8 @@ void Nu_PutPlanet ()
 	planet_read_atmosphere (&p, model, a3, a6, (short) GetReg (REG_D3));
 
 	znode_wrlong (NU_PLANET);
-	memcpy (obj_data_area + obj_data_pos, &p, sizeof (p));
-	obj_data_pos += sizeof (p);
+	/* S-7: through the checked writer */
+	znode_wrblock (&p, sizeof (p));
 
 	/* The ST draws each atmosphere layer as a primitive of its own,
 	 * inserted at the very back (the largest depth, in L3d8f4): it is a
