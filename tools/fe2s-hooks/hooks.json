@@ -1,0 +1,136 @@
+{
+ "input_sha256": "fa7699c1611ed0cc32c71a9f6c08c8ac77ba84c3d7854ccd5b6b646f6f3d298f",
+ "output_sha256": "77bd74fa4ce35d7cd95af24105c581f83400a0ab74485bc3d62e4b376c1103b4",
+ "hunks": [
+  {
+   "anchor": "Call_Fclosedir",
+   "offset": 0,
+   "line_sha256": "2967cabf6fa3e31458f7500e1c8ca6e6929d14da16216cb7beb520e59c511c41",
+   "op": "insert_after",
+   "lines": [
+    "Call_DetailBoost\tequ\t$28"
+   ]
+  },
+  {
+   "anchor": "Nu_Draw2DLine",
+   "offset": 0,
+   "line_sha256": "57da0c914d84bdbd0fcec9e3c1758381ecb74a481e65c011ba00bd5769d76446",
+   "op": "insert_after",
+   "lines": [
+    "Nu_ComplexAbort\t\tequ\t$7a",
+    "Nu_ZTreePush\t\tequ\t$7b",
+    "Nu_ZTreePop\t\tequ\t$7c"
+   ]
+  },
+  {
+   "anchor": "l3a494",
+   "offset": 0,
+   "line_sha256": "858abcec5c2711693bfb6a3885556ef1c3a2e5610f17410d6cdd93d92ea52a05",
+   "op": "move_label",
+   "lines": [
+    "\t* End of a nested z-tree: go back to sorting into the parent one.",
+    "\tl3a494:\thcall\t#Nu_ZTreePop"
+   ]
+  },
+  {
+   "anchor": "l3a50a",
+   "offset": 10,
+   "line_sha256": "dfe53aa8f037f32f91b678252698348eb885a14e54feb2f847b5e33f383b8588",
+   "op": "insert_after",
+   "lines": [
+    "\t\t* The node just inserted becomes the root of a nested z-tree:",
+    "\t\t* what follows is sorted within it, and painted as one block at",
+    "\t\t* its place in the parent tree.",
+    "\t\thcall\t#Nu_ZTreePush"
+   ]
+  },
+  {
+   "anchor": "L3b7ba",
+   "offset": 0,
+   "line_sha256": "f2529547bfba1732401bf839bb12865295c757fe216147aee04aa0d823be0090",
+   "op": "insert_after",
+   "lines": [
+    "\t\t* The complex polygon crosses the near plane and its model says",
+    "\t\t* to drop it altogether in that case (bit 7 of -186(a6), see",
+    "\t\t* l3b87e): the 2D primitives already pushed are thrown away below.",
+    "\t\t* Tell the GL renderer to forget the ones it was given too.",
+    "\t\thcall\t#Nu_ComplexAbort"
+   ]
+  },
+  {
+   "anchor": "planet_col2",
+   "offset": 0,
+   "line_sha256": "9a387062e243c1fd58838780cc302da62b24fec5477acb198356c4c622dd0da3",
+   "op": "insert_after",
+   "lines": [
+    "* For the GL renderer (Nu_PutPlanet): start of the planet model data",
+    "* (just after the radius/vertex long) and of its surface feature list",
+    "* (continents, seas, ice caps...).",
+    "planet_model:\tds.l\t1",
+    "planet_features:\tds.l\t1"
+   ]
+  },
+  {
+   "anchor": "L3cd9c_ProjectPlanet",
+   "offset": 7,
+   "line_sha256": "3da705fb89ec11a9aee40e902762d76ce6a8514e12885d46817e124bbc37e97c",
+   "op": "insert_after",
+   "lines": [
+    "\t\tmove.l\ta5,planet_model"
+   ]
+  },
+  {
+   "anchor": "L3d3f0",
+   "offset": 0,
+   "line_sha256": "860392c2f31a9e571540b44df2597a604223727de4bc49a18e9d431072a2d0fd",
+   "op": "insert_after",
+   "lines": [
+    "\t\tmove.l\ta5,planet_features"
+   ]
+  },
+  {
+   "anchor": "fuck_planet",
+   "offset": 5,
+   "line_sha256": "34b3eabc1ec6e48d06e0f0bf7c03245b0450cf231be46bd927a79759b4205f40",
+   "op": "replace",
+   "lines": [
+    "\t\tmovem.l\ta0-2/a4/d0-3/d6,-(a7)"
+   ]
+  },
+  {
+   "anchor": "fuck_planet",
+   "offset": 12,
+   "line_sha256": "dae3a72bd0886876f2791f989d56fca963e94fbb47a5182bfc252709d34363c2",
+   "op": "insert_after",
+   "lines": [
+    "\t\t* surface features, model data and detail level for the GL",
+    "\t\t* renderer. a3 still points at the ProjectPlanet frame: the",
+    "\t\t* movem above only clobbers it from 178(a3) on, so its colour",
+    "\t\t* table (0-30(a3)) and planet position (122(a3)) are intact.",
+    "\t\tmove.l\tplanet_features(pc),a2",
+    "\t\tmove.l\tplanet_model(pc),a4",
+    "\t\tmove.w\tL60d4_optdetail2,d2",
+    "\t\tmove.w\tL60d6_optdetail3,d3"
+   ]
+  },
+  {
+   "anchor": "fuck_planet",
+   "offset": 14,
+   "line_sha256": "a141198a5020f9828fb3c605186f479d98478b18ad6a08d8313f8efccc532558",
+   "op": "replace",
+   "lines": [
+    "\t\tmovem.l\t(a7)+,a0-2/a4/d0-3/d6"
+   ]
+  },
+  {
+   "anchor": "l72608",
+   "offset": 0,
+   "line_sha256": "e7ba91a6e0b43c70c417b9f9cc814057ada2aa2170b6de1642e473cb097983fd",
+   "op": "move_label",
+   "lines": [
+    "\t* let the host push the shape detail distances further (d1, d2)",
+    "\tl72608:\thcall\t#Call_DetailBoost"
+   ]
+  }
+ ]
+}
