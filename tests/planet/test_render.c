@@ -7,6 +7,10 @@
  * way through as after a video mode change (#12) and at the end, and must
  * all be gone then.
  *
+ * V-1/V-2: the atmosphere limb comes from the body's own model data. A
+ * model with an atmosphere list gets its layers read and drawn; the same
+ * body without one gets no layers and no limb geometry at all.
+ *
  * run.sh cuts the block between the PLANET BEGIN and PLANET END markers
  * out of src/gl.c into planet_block.c, which this includes.
  */
@@ -84,6 +88,51 @@ static int check_tint (void)
 	return bad;
 }
 
+/* V-1/V-2: lay out a planet model in fake ST memory, with or without an
+ * atmosphere list between the header and the features (the layout
+ * planet_read_atmosphere reads), and count the limb geometry drawn. */
+static int check_limb (void)
+{
+	const int model = 0xc000, a3 = 0xd000, a6 = 0xe000;
+	int with, bad = 0;
+
+	for (with = 0; with < 2; with++) {
+		struct PlanetPrim p;
+		void *data;
+		long before;
+		int k;
+
+		for (k = 0; k < 0x40; k += 2) MemWriteWord (model + k, 0);
+		for (k = -256; k < 256; k += 2) {
+			MemWriteWord (a3 + k, 0);
+			MemWriteWord (a6 + k, 0);
+		}
+		make_planet (&p, 0, 1.5, 0.0);
+		p.flags = 0x80 | 0x40;	/* no extra header words before the list */
+		if (with) {
+			MemWriteWord (model + 8, 0x123);	/* atmosphere colour */
+			MemWriteWord (model + 10, 0x4400);	/* layer: scale, colour */
+			MemWriteWord (model + 12, 0x48f);
+			MemWriteWord (model + 14, 0x4200);
+			MemWriteWord (model + 16, 0x36f);
+			MemWriteWord (model + 18, 0);		/* end of layers */
+			p.feat_addr = model + 20;
+		} else {
+			p.feat_addr = model + 10;	/* colour word 0: no atmosphere */
+		}
+		planet_read_atmosphere (&p, model, a3, a6, 0);
+		before = vertex_count;
+		data = &p;
+		Nu_DrawAtmosphere (&data);
+		printf ("V-%d: body %s an atmosphere: %d layers, %ld limb vertices\n",
+			with ? 1 : 2, with ? "with" : "without", p.natm, vertex_count - before);
+		if (with ? (p.natm != 2 || vertex_count == before)
+			 : (p.natm != 0 || vertex_count != before))
+			bad++;
+	}
+	return bad;
+}
+
 int main (void)
 {
 	int round, i, frame;
@@ -110,6 +159,7 @@ int main (void)
 		}
 	}
 	if (check_tint ()) return 1;
+	if (check_limb ()) return 1;
 	printf ("S-9: %d planets drawn in 2 rounds, %d texture uploads, %d GL misuses, "
 		"0 textures left\n", NPLANETS, tex_uploads, gl_errors);
 	return gl_errors != 0;

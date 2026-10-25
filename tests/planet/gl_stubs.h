@@ -15,6 +15,7 @@
 static unsigned char tex_live[MAX_TEX];
 static GLuint tex_next = 1, tex_bound;
 static int gl_errors, tex_count, tex_uploads, unpack_align = 4;
+static long vertex_count;
 static unsigned long pixel_sum;
 
 static void gl_error (const char *what, GLuint t)
@@ -76,8 +77,8 @@ void glColor4f (GLfloat r, GLfloat g, GLfloat b, GLfloat a) { (void) r; (void) g
 void glColor4ub (GLubyte r, GLubyte g, GLubyte b, GLubyte a) { (void) r; (void) g; (void) b; (void) a; }
 void glTexCoord2dv (const GLdouble *v) { pixel_sum += (v[0] == v[0]) + (v[1] == v[1]); }
 void glTexCoord2d (GLdouble s, GLdouble t) { (void) s; (void) t; }
-void glVertex3d (GLdouble x, GLdouble y, GLdouble z) { (void) x; (void) y; (void) z; }
-void glVertex3dv (const GLdouble *v) { (void) v[2]; }
+void glVertex3d (GLdouble x, GLdouble y, GLdouble z) { (void) x; (void) y; (void) z; vertex_count++; }
+void glVertex3dv (const GLdouble *v) { (void) v[2]; vertex_count++; }
 void glBlendFunc (GLenum a, GLenum b) { (void) a; (void) b; }
 void glDepthMask (GLboolean a) { (void) a; }
 
