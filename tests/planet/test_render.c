@@ -166,22 +166,55 @@ static int check_limb (void)
 		printf ("%s: %d layers, %ld limb vertices\n", t[i].what, p.natm, n);
 		if (t[i].want ? (p.natm != 2 || n == 0) : n != 0)
 			bad++;
-		/* the band against the ST's formula: the near side of the
-		 * layer's cone projects to near - 3 - (f-1) (2 far - (near-3)) */
+		/* the band against the ST's limb formulas: the near side of
+		 * the layer's cone projects to near - (f-1) 6 far, the width
+		 * measured on the ST's screen (see planet_atmosphere_band) */
 		for (l = 0; l < p.natm; l++) {
 			double x = p.centre[0], y = p.centre[1], z = p.centre[2];
 			double gam = atan2 (sqrt (x*x + y*y), z);
-			double near = floor (st_limb (&p, -1)), far = floor (st_limb (&p, 1));
-			double n0 = near - 3.0, got, want;
+			double edge = st_limb (&p, -1), near = floor (edge), far = floor (st_limb (&p, 1));
+			double got, want;
 
 			if (far + near >= 1536.0) far = 1536.0;
-			want = n0 - (p.atm_scale[l] - 1.0) * (2.0*far - n0);
+			want = edge - (p.atm_scale[l] - 1.0) * 6.0 * far;
 			got = 256.0 * tan (gam - p.atm_th[l]);
 			if (fabs (got - want) > 0.5) {
 				printf ("V-1: layer %d edge at %.2f pixels, ST formula %.2f\n", l, got, want);
 				bad++;
 			}
 		}
+	}
+	return bad;
+}
+
+/* V-1 against the screen: Lave from Lave Station, front view, in the
+ * software renderer. Its near limb is 159.3 pixels off the centre, the
+ * far one 569, and its four layers' band edges were sampled at 153.4,
+ * 150.3, 145.2 and 138.1 pixels along the line to the planet centre. */
+static int check_lave (void)
+{
+	static const double scale[4] = { 1.0018, 1.0027, 1.0042, 1.0063 };
+	static const double seen[4] = { 153.4, 150.3, 145.2, 138.1 };
+	double a = atan (159.3 / 256.0), b = atan (569.5 / 256.0);
+	double gam = (a + b) / 2, thp = (b - a) / 2, d = 1.0e8 / sin (thp);
+	struct PlanetPrim p;
+	int l, bad = 0;
+
+	memset (&p, 0, sizeof (p));
+	p.R = 1.0e8;
+	p.centre[0] = d * sin (gam);
+	p.centre[2] = d * cos (gam);
+	p.natm = 4;
+	for (l = 0; l < 4; l++) p.atm_scale[l] = scale[l];
+	planet_atmosphere_band (&p);
+	if (p.natm != 4) {
+		printf ("V-1: Lave from Lave Station, %d layers, want 4\n", p.natm);
+		return 1;
+	}
+	for (l = 0; l < 4; l++) {
+		double got = 256.0 * tan (gam - p.atm_th[l]);
+		printf ("V-1: Lave layer %d edge at %.1f pixels, the ST drew it at %.1f\n", l, got, seen[l]);
+		if (fabs (got - seen[l]) > 1.0) bad++;
 	}
 	return bad;
 }
@@ -213,6 +246,7 @@ int main (void)
 	}
 	if (check_tint ()) return 1;
 	if (check_limb ()) return 1;
+	if (check_lave ()) return 1;
 	printf ("S-9: %d planets drawn in 2 rounds, %d texture uploads, %d GL misuses, "
 		"0 textures left\n", NPLANETS, tex_uploads, gl_errors);
 	return gl_errors != 0;

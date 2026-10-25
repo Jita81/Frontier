@@ -2451,13 +2451,22 @@ static void planet_read_atmosphere (struct PlanetPrim *p, int model, int a3, int
  *   and no atmosphere at all;
  * - big path: the atmosphere is drawn iff near - 3 > -178 (the $ff4e test
  *   after l3d716), i.e. not when the planet fills the whole screen.
- * Each layer is the planet outline 3 pixels in from the near limb, scaled
- * by scale/$4000 about the point 2*far out along that line: on the line
- * its edge is (f-1)*(2*far - near) pixels further in. That gives the half
- * angle of the layer's cone of directions about the planet centre.
- * Worked out from the same numbers the ST uses (the position and the
- * radius before planet_fix_radius), in doubles: the ST's 16 bit wrap of
- * near - 3 and far + near at saturation is not copied. No host constants.
+ * How wide each band is was measured on the screen, not derived: the ST
+ * scales the planet outline by f = scale/$4000 about 2*far along that
+ * line (114(a3)), which on paper puts the band's edge (f-1)*(2*far -
+ * near) pixels in, but the bands the software renderer draws are about
+ * three times that. Sampled along the line through the planet centre,
+ * the ST's band edges sit at near - (f-1)*6*far, far taken as $600 on the
+ * l3d710 paths: Lave from Lave Station (l3d716, near 159, far 569, four
+ * layers at 138.1 145.2 150.3 153.4 pixels, the formula gives 138.0
+ * 145.2 150.3 153.4) and landed on Mars (l3d710: the widths agree, but
+ * the ST's bands start about 5 pixels nearer the horizon than these, an
+ * offset this does not model).
+ * That gives the half angle of the layer's cone of directions about the
+ * planet centre. Worked out from the same numbers the ST uses (the
+ * position and the radius before planet_fix_radius), in doubles: the
+ * ST's 16 bit wrap of near - 3 and far + near at saturation is not
+ * copied. No host constants.
  */
 #define ST_FOCAL	256.0
 
@@ -2474,7 +2483,7 @@ static double st_pixels (double a)
 static void planet_atmosphere_band (struct PlanetPrim *p)
 {
 	double x = p->centre[0], y = p->centre[1], z = p->centre[2], r = p->R;
-	double d = sqrt (x*x + y*y + z*z), gam, thp, near, far, n0;
+	double d = sqrt (x*x + y*y + z*z), gam, thp, edge, near, far;
 	int l, n = p->natm;
 
 	if (!n) return;
@@ -2482,7 +2491,8 @@ static void planet_atmosphere_band (struct PlanetPrim *p)
 	if (r <= 0.0 || d <= 0.0) return;
 	gam = atan2 (sqrt (x*x + y*y), z);
 	thp = asin (r < d ? r/d : 1.0);
-	near = floor (st_pixels (gam - thp));
+	edge = st_pixels (gam - thp);
+	near = floor (edge);
 	if (near >= 178.0) return;
 	if (z*z - r*r <= 0.0) {
 		far = 1536.0;
@@ -2491,11 +2501,10 @@ static void planet_atmosphere_band (struct PlanetPrim *p)
 		if (far + near >= 1536.0) far = 1536.0;
 		else if (far + near < 409.0) return;
 	}
-	n0 = near - 3.0;
-	if (n0 <= -178.0) return;
+	if (near - 3.0 <= -178.0) return;
 	for (l = 0; l < n; l++) {
-		double w = (p->atm_scale[l] - 1.0) * (2.0*far - n0);
-		p->atm_th[l] = gam - atan ((n0 - w) / ST_FOCAL);
+		double w = (p->atm_scale[l] - 1.0) * 6.0 * far;
+		p->atm_th[l] = gam - atan ((edge - w) / ST_FOCAL);
 	}
 	p->natm = n;
 }
