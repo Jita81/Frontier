@@ -125,7 +125,12 @@ static u64 cum[S_N];
 static u64 gv;                     /* g hash of the current VBL */
 static u32 gv_seq;                 /* hcall records in the current VBL */
 
-/* screens registered through SetScreenBase (RAM mask, 07 4.1) */
+/* Screens masked from the RAM hash (07 4.1).  A base is registered when it
+ * is handed over for display (VideoBase at Nu_DrawScreen, 0x6f entry, the
+ * same bytes the f stream hashes), not at every SetScreenBase call: the
+ * game's first SetScreenBase, before A6 is set, passes a base that is never
+ * displayed and whose 64000 bytes hold the game's A6 variable block, and
+ * masking it left that block out of m. */
 #define MAX_SCREENS 32
 static u32 screens[MAX_SCREENS];
 static int n_screens;
@@ -763,12 +768,14 @@ void oracle_call (int n)
 			      (unsigned long long) hash_ram_range (Regs[12]._u32, len),
 			      (unsigned long long) hash_cstr (Regs[1]._u32));
 		}
-		if (n == 0x6f) frame_hash (hu_count);
+		if (n == 0x6f) {
+			add_screen ((u32) VideoBase);
+			frame_hash (hu_count);
+		}
 		if (n == 0x25) oracle_fopendir ();
 		else if (n == 0x26) oracle_freaddir ();
 		else if (n == 0x27) oracle_fclosedir ();
 		else orig[n] ();
-		if (n == 0x0e) add_screen ((u32) VideoBase);
 		if (n == 0x22) {
 			u32 len = Regs[0]._u32;
 			emit (S_R, hu_count, "%08x %016llx", len,
