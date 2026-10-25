@@ -1,0 +1,16 @@
+FE2_NPC: on, rewriter deterministic stub
+FE2_NPC: selftest amount changed                     refused (new currency sign)
+FE2_NPC: selftest amount dropped                     refused (placeholder not kept exactly once)
+FE2_NPC: selftest amount doubled                     refused (placeholder not kept exactly once)
+FE2_NPC: selftest crime (game string) changed        refused (game fact changed)
+FE2_NPC: selftest new name added                     refused (new name)
+FE2_NPC: selftest negation dropped                   refused (negation lost)
+FE2_NPC: selftest longer than the original's lines   refused (does not fit the original width and line count)
+FE2_NPC: selftest non-ASCII                          refused (non-ASCII or control character)
+FE2_NPC: selftest original template accepted
+FE2_NPC: persona brusque  -> "Pilot! [fe2.s:59900] is illegal. Fine: {0}. Now."
+FE2_NPC: persona formal   -> "[fe2.s:59900] is prohibited. Remit a {0} fine."
+FE2_NPC: persona weary    -> "Sigh. [fe2.s:59900] isn't allowed. That's {0}."
+FE2_NPC: persona friendly -> "[fe2.s:59900] isn't allowed. That's a {0} fine."
+FE2_NPC: Sirocco Station [formal] "[fe2.s:59900] is not permitted here. Pay a {0} fine." -> "[fe2.s:59900] is prohibited. Remit a {0} fine." (facts: "[fe2.s:59900]")
+FE2_NPC: messages 2: rewritten 0, first sight (queued) 1, still pending 1, rejected 0, cached but no fit 0; worker 1 done 1 accepted, slowest 14.7 ms; hook on main thread: total 5 us, max 4 us

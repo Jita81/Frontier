@@ -3,3 +3,6 @@ frontier
 fe2.s.*
 fixups.h
 gen
+docs/experiments/evidence/**/*.png
+docs/screenshots/
+docs/experiments-local/

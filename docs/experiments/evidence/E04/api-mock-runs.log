@@ -1,0 +1,19 @@
+# Mock API runs (local server, fake key value, FE2_NPC_API_URL)
+## mock reply 1: valid wording but one word too wide (rejected on pixel fit, before the budget fix)
+FE2_NPC: on, rewriter claude-haiku-5-5 (Anthropic API)
+FE2_NPC: rewrite rejected (does not fit the original width and line count): "[fe2.s:59900] is forbidden. Pay the {0} fine, pilot."
+FE2_NPC: Sirocco Station [formal] "[fe2.s:59900] is not permitted here. Pay a {0} fine." -> original (facts: "[fe2.s:59900]")
+FE2_NPC: messages 2: rewritten 0, first sight (queued) 1, still pending 1, rejected 0, cached but no fit 0; worker 1 done 0 accepted, slowest 16.0 ms; hook on main thread: total 4 us, max 4 us
+## mock reply 2: invents an amount (must be rejected)
+FE2_NPC: on, rewriter claude-haiku-5-5 (Anthropic API)
+FE2_NPC: rewrite rejected (new currency sign): "[fe2.s:59900] is forbidden. Pay $50."
+FE2_NPC: Sirocco Station [formal] "[fe2.s:59900] is not permitted here. Pay a {0} fine." -> original (facts: "[fe2.s:59900]")
+FE2_NPC: messages 2: rewritten 0, first sight (queued) 1, still pending 1, rejected 0, cached but no fit 0; worker 1 done 0 accepted, slowest 17.0 ms; hook on main thread: total 5 us, max 4 us
+## mock reply 3: valid and fits (accepted, cached)
+FE2_NPC: on, rewriter claude-haiku-5-5 (Anthropic API)
+FE2_NPC: Sirocco Station [formal] "[fe2.s:59900] is not permitted here. Pay a {0} fine." -> "[fe2.s:59900] is forbidden. Pay the {0} fine." (facts: "[fe2.s:59900]")
+FE2_NPC: messages 2: rewritten 0, first sight (queued) 1, still pending 1, rejected 0, cached but no fit 0; worker 1 done 1 accepted, slowest 16.1 ms; hook on main thread: total 4 us, max 4 us
+## warm run afterwards, no key, no server
+FE2_NPC: 1 cached rewrites loaded from <scratch>
+FE2_NPC: on, rewriter deterministic stub
+FE2_NPC: messages 2: rewritten 2, first sight (queued) 0, still pending 0, rejected 0, cached but no fit 0; worker 0 done 0 accepted, slowest 0.0 ms; hook on main thread: total 26 us, max 16 us

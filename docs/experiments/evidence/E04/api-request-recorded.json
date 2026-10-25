@@ -1,0 +1,23 @@
+{
+  "path": "/v1/messages",
+  "version": "2026-10-21",
+  "content_type": "application/json",
+  "has_key_header": true,
+  "body": {
+    "model": "claude-haiku-5-5",
+    "max_tokens": 256,
+    "thinking": {
+      "type": "disabled"
+    },
+    "output_config": {
+      "effort": "low"
+    },
+    "system": "You rewrite one radio message in the space game Frontier: Elite II (year 3200) so it sounds like its speaker. The speaker is a stiff, by-the-book station official. Keep the meaning exactly: every placeholder such as {0} must appear exactly once and unchanged; copy these phrases verbatim: \"[fe2.s:59900]\"; write no digits, no currency signs and no names that are not in the message; keep any negation. No longer than the original: at most 66 characters, plain ASCII, one paragraph. Reply with the rewritten message only.",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Speaker: Sirocco Station\nMessage: [fe2.s:59900] is not permitted here. Pay a {0} fine."
+      }
+    ]
+  }
+}

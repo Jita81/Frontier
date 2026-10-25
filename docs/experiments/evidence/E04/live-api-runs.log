@@ -1,0 +1,75 @@
+# E04 live runs against claude-haiku-5-5 (Anthropic Messages API), 2026-10-25
+# The key came from the macOS Keychain into the environment of each run only;
+# it was never printed, logged or written. After every batch, grep for the key
+# prefix over all run directories found nothing.
+# Script: capture-script.txt. Message: Sirocco Station's fine for launching
+# without clearance. Template: "[fe2.s:59900] is not permitted
+# here. Pay a {0} fine." Fact found in game memory: "[fe2.s:59900]".
+# Sirocco Station hashes to formal; FE2_NPC_PERSONA=<voice> (test only) forces
+# another voice. "ms" is the worker's wall time for the template, both calls
+# when there was a retry.
+#
+# Batch 1: the checker and prompt of 20a9aab, no retry (the P runs add only the
+# test-only FE2_NPC_PERSONA switch)
+# run   voice     ms       result
+L1      formal    6361.0   accepted  [fe2.s:59900] is not permitted. Remit fine of {0}.
+L3      formal    1156.0   accepted  [fe2.s:59900] is not permitted. Remit fine of {0}.
+L4      formal    1176.0   accepted  [fe2.s:59900] is not permitted. Remit a {0} fine.
+L5      formal    1136.6   accepted  [fe2.s:59900] is not permitted. Remit a {0} fine.
+L6      formal    1140.7   accepted  [fe2.s:59900] is not permitted. Fine due: {0}.
+L2      formal    -        warm run on L1's cache: rewrite drawn, no call, hook max 26 us
+P_a/b   brusque   2055.7 / 2327.4   accepted x2  [fe2.s:59900] is not permitted. Fine: {0}.
+P_a     formal    1290.2   accepted  [fe2.s:59900] is not permitted. Pay the {0} fine.
+P_b     formal    1230.7   accepted  [fe2.s:59900] is not permitted. Remit fine of {0}.
+P_a     weary     1549.9   REFUSED (new name)  ...here. Fine's {0}, pay up.     <- "Fine's" is sentence-initial
+P_b     weary     1238.7   REFUSED (new name)  ...here. Fine's {0}, pal.
+P_a/b   friendly  2041.9 / 1237.2   REFUSED x2 (new name)  ...here, friend. Settle the {0} fine.
+#
+# Batch 2: checker fix - a sentence-initial capitalised word is allowed when the
+# word (minus "'s") is a word of the original ("Not", "Fine's")
+P_c/d   brusque   1156.8 / 1159.0   accepted x2  [fe2.s:59900] is not permitted. Fine: {0}.
+P_c     formal    1627.1   accepted  [fe2.s:59900] is not permitted. Fine due: {0}.
+P_d     formal    11292.4  accepted  [fe2.s:59900] is not permitted. Remit fine: {0}.
+P_c/d   weary     1318.4 / 1335.8   accepted x2  [fe2.s:59900]? Not allowed here. Fine's {0}, pay up.
+P_c/d   friendly  1639.5 / 1566.7   REFUSED x2 (new name)  ...here, friend. Settle the {0} fine.   <- "Settle" is new
+#
+# Batch 3: retry once with the refusal reason (the refused reply goes back as an
+# assistant turn, the reason as a user turn), then the original is shown
+Q_e     brusque   1433.9   accepted  [fe2.s:59900] is not permitted. Fine: {0}.
+Q_e     formal    1140.3   accepted  [fe2.s:59900] is not permitted. Fine due: {0}.
+Q_e     weary     1313.3   accepted  [fe2.s:59900]? Not allowed here. Fine's {0}, pay up.
+Q_e     friendly  4219.5   1st REFUSED (new name): ...here, friend. Settle the {0} fine.
+                           2nd REFUSED (placeholder not kept exactly once): the same line, then the
+                           model argued with the checker in the reply ("Wait, that version has no new
+                           capitalised words...") and repeated the line; the extra {0} caught it
+Q_f     friendly  2697.4   1st REFUSED (does not fit): ...here, friend. Pay the {0} fine.   (72 chars, limit 66)
+                           2nd REFUSED (does not fit): [fe2.s:59900]? Sorry, no, not here. Pay the {0} fine.
+# Batch 3b: the retry message also gives the reply's length and the limit and
+# says "reply with the message only"
+Q_g     friendly  3036.7   1st REFUSED (new name): ...here, friend. Settle a {0} fine.
+                           2nd REFUSED (new name): [fe2.s:59900]? Not allowed, friend. Settle that {0} fine.
+Q_h     friendly  1442.7   accepted (1st)  [fe2.s:59900]? Not allowed here, friend. Fine's {0}.
+W       friendly  -        warm run on Q_h's cache: rewrite drawn over the original's two lines,
+                           hook max 17 us; frames mean 23.763 ms, median 24.048, p99 30.466, max 46.167
+#
+# Totals: 28 cold runs, 31 API calls, all HTTP 200 with stop_reason end_turn.
+# Accepted: 19 of 28 runs. After the checker fix (batches 2-3): brusque 3/3,
+# formal 3/3, weary 3/3, friendly 1/6. The retry ran 3 times and rescued none.
+# Single-call latency: 1136-2328 ms, except the first call of the session
+# (6361 ms) and one outlier (11292 ms). Retries: 2697-4220 ms in all.
+# No reply, accepted or refused, invented an amount, changed the crime name or
+# dropped the negation. Every refusal was of the voice's own wording (a new
+# capitalised verb, length, or chat with the checker), and the original was drawn.
+# Main-thread hook: 3-9 us cold, 26 us max warm. No frame waited on the API.
+#
+# Flag off, final binary (Z) and flag off with FE2_NPC_PERSONA=friendly set (Zp):
+# all six shots md5-identical to A (late 7413cc06 d45c9523, msg1 ce71630b 568f164d,
+# msg2 a53dc6b9 53a79ccd).
+#
+# Mock replays of the retry (fake key, local server, mock-messages-api.py):
+# R8  reply "...friend. Settle the {0} fine."           refused twice (new name); 2 requests,
+#     the 2nd carrying [user, assistant: the refused reply, user: the reason]
+# R9  reply "...is barred. Pay the {0} fine."           refused twice (negation lost); 2 requests
+# R10 reply "...is not allowed. Pay the {0} fine."      accepted; 1 request
+# Selftest (FE2_NPC_SELFTEST=1) after the change: all 8 bad rewrites still refused,
+# the original accepted.
