@@ -83,15 +83,40 @@ static void change_vidmode ()
 	const SDL_VideoInfo *info = SDL_GetVideoInfo ();
 
 	assert (info != NULL);
+
+	/* draw_control_panel() writes a whole 320x200 frame into the surface,
+	 * so a smaller one (--size 100 100) would be overrun (S-16). */
+	if (screen_w < 320) screen_w = 320;
+	if (screen_h < 200) screen_h = 200;
 	
 	modes = SDL_HWSURFACE | SDL_DOUBLEBUF | (bInFullScreen ? SDL_FULLSCREEN : 0);
 	
 	if ((sdlscrn = SDL_SetVideoMode (screen_w, screen_h, 16
-				/*info->vfmt->BitsPerPixel*/, modes)) == 0) {
-		fprintf (stderr, "Video mode set failed: %s\n", SDL_GetError ());
-		SDL_Quit ();
-		exit (-1);
+				/*info->vfmt->BitsPerPixel*/, modes)) != 0)
+		return;
+	fprintf (stderr, "Video mode set failed: %s\n", SDL_GetError ());
+
+	/* A failed mode switch must not end the game (S-16).  Fall back to the
+	 * same size in a window (a full-screen switch is the usual failure),
+	 * then to a plain 320x200 software window; quit only if both fail. */
+	if (bInFullScreen) {
+		bInFullScreen = FALSE;
+		if ((sdlscrn = SDL_SetVideoMode (screen_w, screen_h, 16,
+					SDL_HWSURFACE | SDL_DOUBLEBUF)) != 0) {
+			fprintf (stderr, "Video mode: fell back to a %dx%d window\n",
+				 screen_w, screen_h);
+			return;
+		}
 	}
+	screen_w = 320;
+	screen_h = 200;
+	if ((sdlscrn = SDL_SetVideoMode (screen_w, screen_h, 16, SDL_SWSURFACE)) != 0) {
+		fprintf (stderr, "Video mode: fell back to a 320x200 window\n");
+		return;
+	}
+	fprintf (stderr, "Video mode set failed: %s\n", SDL_GetError ());
+	SDL_Quit ();
+	exit (-1);
 }
 
 void Screen_Init(void)
@@ -341,7 +366,7 @@ static void draw_control_panel ()
 	if (SDL_MUSTLOCK(sdlscrn))
 		SDL_LockSurface(sdlscrn);
 
-	pixels = (unsigned int *) sdlscrn->pixels;
+	pixels = (unsigned short *) sdlscrn->pixels;  /* 16 bpp surface (S-20) */
 
 	for (y = 0; y < 168; y++)
 		for (x = 0; x < 320; x++)
