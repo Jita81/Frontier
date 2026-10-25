@@ -868,6 +868,40 @@ static void Call_Freaddir ()
 
 static void not_available() {}
 
+/* Host call 0x28, inserted at l72608 by the hooks patch (tools/fe2s-hooks):
+ * lets the host push the shape detail distances (d1, d2) further out.
+ * Default-off: the boost comes from FRONTIER_DETAIL_BOOST (0..8, default 0)
+ * and at 0 the registers are not touched at all, so the game runs exactly as
+ * the unpatched core. Only the low words the game stores are changed. */
+int detail_boost (void)
+{
+	static int boost = -1;
+	if (boost < 0) {
+		const char *e = getenv ("FRONTIER_DETAIL_BOOST");
+		boost = e ? atoi (e) : 0;
+		if (boost < 0) boost = 0;
+		if (boost > 8) boost = 8;
+	}
+	return boost;
+}
+
+static void Call_DetailBoost ()
+{
+	int b = detail_boost (), r;
+	if (!b) return;
+	r = GetReg (REG_D1);
+	SetReg (REG_D1, (r & 0xffff0000) | ((r + b) & 0xffff));
+	r = GetReg (REG_D2);
+	SetReg (REG_D2, (r & 0xffff0000) | ((r + b) & 0xffff));
+}
+
+#ifdef WITH_GL
+/* host calls 0x7a-0x7c, inserted by the hooks patch (see gl.c) */
+extern void Nu_ComplexAbort ();
+extern void Nu_ZTreePush ();
+extern void Nu_ZTreePop ();
+#endif
+
 HOSTCALL hcalls [] = {
 	&SetExceptionHandler,
 	&Call_Memset,		/* 0x1 */
@@ -913,7 +947,7 @@ HOSTCALL hcalls [] = {
 	&Call_Fopendir,			/* 0x25 */
 	&Call_Freaddir,
 	&Call_Fclosedir,
-	NULL,
+	&Call_DetailBoost,		/* 0x28 */
 	NULL,
 	NULL,
 	NULL,
@@ -995,7 +1029,10 @@ HOSTCALL hcalls [] = {
 	Nu_PutCylinder,
 	Nu_PutBlob,
 	Nu_PutPlanet,
-	Nu_Put2DLine
+	Nu_Put2DLine,
+	Nu_ComplexAbort,		/* 0x7a */
+	Nu_ZTreePush,
+	Nu_ZTreePop
 #else
 	  not_available,
 	  not_available,
@@ -1021,6 +1058,9 @@ HOSTCALL hcalls [] = {
 	  not_available,
 	  not_available,
 	  not_available,
+	  not_available,
+	  not_available,
+	  not_available,		/* 0x7a */
 	  not_available,
 	  not_available,
 #endif

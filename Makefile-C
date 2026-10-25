@@ -56,7 +56,7 @@ LIBS := $(VORBIS_LDFLAGS) -lvorbisfile -lvorbis -logg $(SDL_LIBS)
 
 WITH_GL=y
 ifeq ($(WITH_GL),y)
-	SRCOBJS += gl.o
+	SRCOBJS += gl.o planet.o
 	HOST_CFLAGS += -DWITH_GL
 ifeq ($(TARGET_OS),Darwin)
 	LIBS += -framework OpenGL
@@ -97,9 +97,11 @@ else
 $(error SAN must be empty, ubsan or asan)
 endif
 
-OBJS := fe2.s.o $(HOST_OBJDIR)host.o \
+# the core is built from the hooks-patched copy of fe2.s (docs/05 4.3 #7);
+# the user's fe2.s is only ever read
+OBJS := fe2.s.patched.o $(HOST_OBJDIR)host.o \
 	$(addprefix $(HOST_OBJDIR)src/,$(SRCOBJS))
-HOST_OBJS := $(filter-out fe2.s.o,$(OBJS))
+HOST_OBJS := $(filter-out fe2.s.patched.o,$(OBJS))
 TARGET := $(HOST_OBJDIR)frontier
 
 # Objects record the flags they were built with (S-4).  Each stamp holds a
@@ -115,14 +117,14 @@ HOST_FLAGS_TEXT := $(CC) $(CFLAGS) $(HOST_CFLAGS)
 
 all: $(TARGET)
 
-$(TARGET): fe2.s.c
+$(TARGET): fe2.s.patched.c
 	$(MAKE) -f $(THIS) gen
 	$(CC) $(CFLAGS) $(HOST_CFLAGS) $(LIBS) $(OBJS) gen/*.o -o $@
 	$(SAN_RUN_NOTE)
 
 gen: $(patsubst %.c,%.o,$(wildcard gen/*.c)) $(OBJS)
 
-$(patsubst %.c,%.o,$(wildcard gen/*.c)) fe2.s.o: $(CORE_STAMP)
+$(patsubst %.c,%.o,$(wildcard gen/*.c)) fe2.s.patched.o: $(CORE_STAMP)
 
 $(HOST_OBJS): $(HOST_OBJDIR)%.o: %.c $(HOST_STAMP)
 	@mkdir -p $(@D)
@@ -139,12 +141,17 @@ $(HOST_STAMP): FORCE
 as68k/as68k:
 	$(MAKE) -C as68k/
 
-fe2.s.c: as68k/as68k
+fe2.s.patched: fe2.s tools/fe2s-hooks/fe2s-hooks.py tools/fe2s-hooks/hooks.json
+	python3 tools/fe2s-hooks/fe2s-hooks.py fe2.s $@
+
+# as68k appends to gen/*.c, so start from an empty gen/
+fe2.s.patched.c: fe2.s.patched as68k/as68k
+	rm -rf gen
 	mkdir -p gen
-	as68k/as68k --output-c fe2.s
+	as68k/as68k --output-c fe2.s.patched
 
 clean:
-	rm -rf fe2.s.bin $(OBJS) gen fe2.s.c fixups.h $(TARGET) san
+	rm -rf fe2.s.bin $(OBJS) gen fe2.s.c fe2.s.patched fe2.s.patched.c fe2.s.patched.bin fixups.h $(TARGET) san
 
 allclean: clean
 	$(MAKE) -C as68k/ clean
