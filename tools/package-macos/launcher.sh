@@ -144,7 +144,7 @@ cd "$DATA_DIR" || exit 1
 if [ /dev/fd/2 -ef /dev/null ]; then
 	LOGDIR="$HOME/Library/Logs/Frontier"
 	if mkdir -p "$LOGDIR" 2>/dev/null; then
-		{ printf '--- %s launch\n' "$(date '+%Y-%m-%d %H:%M:%S')"; } >>"$LOGDIR/frontier.log" 2>/dev/null
+		{ printf -- '--- %s launch\n' "$(date '+%Y-%m-%d %H:%M:%S')"; } >>"$LOGDIR/frontier.log" 2>/dev/null
 		exec "$BIN" "$@" 2>>"$LOGDIR/frontier.log"
 	fi
 fi

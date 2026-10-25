@@ -117,8 +117,9 @@ Double-click `dist/Frontier.app`, or:
 open dist/Frontier.app
 ```
 
-The game opens a window and plays its opening sequence. Quit the usual way
-(close the window, or Cmd-Q); a SIGTERM also ends it with exit status 0.
+The game opens a window and plays its opening sequence. Closing the window
+or pressing Cmd-Q goes through SDL's normal quit path; so far only a SIGTERM
+has been exercised, and it ends the game with exit status 0 (see Limits).
 
 A Finder launch has no console, so the game's messages go to
 `~/Library/Logs/Frontier/frontier.log`. When you start the launcher from a
