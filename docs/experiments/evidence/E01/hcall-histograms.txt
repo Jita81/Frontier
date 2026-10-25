@@ -1,0 +1,270 @@
+Host calls per screen, one traced frame window per screen (FE2_TRACE_HCALLS=1, GL build).
+Game text in str= is redacted in this excerpt; full traces are local-only.
+
+== INTRO: 6 frame(s), 1184 calls
+   02 MemsetBlue                4
+   03 BlitCursor                1
+   04 RestoreUnderCursor        1
+   05 BlitBmp                   1
+   06 OldHLine                  10
+   07 HostUpdate                4
+   09 PutPix                    8
+   0c SetMainPalette            4
+   0d SetCtrlPalette            4
+   0e SetScreenBase             4
+   11 MakeExtPalette            1
+   13 GetMouseInput             4
+   14 GetKeyboardEvent          4
+   18 NotifyMousePos            1
+   1b DrawStrShadowed           1
+   60 Nu_PutTriangle            35
+   61 Nu_PutQuad                39
+   62 Nu_PutLine                1
+   65 Nu_PutColoredPoint        8
+   67 Nu_ComplexStart           101
+   68 Nu_ComplexSNext           356
+   69 Nu_ComplexSBegin          40
+   6a Nu_ComplexEnd             101
+   6b Nu_3DViewInit             4
+   6c Nu_InsertZNode            54
+   6d Nu_ComplexStartInner      85
+   6e Nu_ComplexBezier          292
+   6f Nu_DrawScreen             4
+   73 Nu_IsGLRenderer           4
+   76 Nu_PutCylinder            7
+   78 Nu_PutPlanet              1
+   first calls:
+     F41 13 GetMouseInput d0=ffff d1=0 d2=0 d3=0 d4=0 d5=140000 a0=56 a1=3f62 sp+2=[00003a02 000039fc 0000ffff]
+     F41 14 GetKeyboardEvent d0=ffff d1=0 d2=0 d3=0 d4=0 d5=140000 a0=56 a1=3f62 sp+2=[0000ffff 00000000 00000056]
+     F41 02 MemsetBlue d0=ffff d1=0 d2=0 d3=0 d4=0 d5=140000 a0=56 a1=3f62 sp+2=[0000d200 000f0000 00036f76]
+     F41 0e SetScreenBase d0=444 d1=ccc08ac d2=ca60c66 d3=0 d4=0 d5=0 a0=100000 a1=f0000 sp+2=[000f0000 00036f8a 0001ffff]
+     F41 73 Nu_IsGLRenderer d0=444 d1=ccc08ac d2=ca60c66 d3=0 d4=0 d5=0 a0=100000 a1=f0000 sp+2=[00036f8a 0001ffff ffffffff]
+     F41 0d SetCtrlPalette d0=1 d1=ccc08ac d2=ca60c66 d3=0 d4=0 d5=0 a0=3fa2 a1=f0000 sp+2=[00003fa2 00036f8a 0001ffff]
+
+== COCKPIT: 6 frame(s), 2903 calls
+   02 MemsetBlue                4
+   03 BlitCursor                4
+   04 RestoreUnderCursor        4
+   05 BlitBmp                   4
+   06 OldHLine                  40
+   07 HostUpdate                4
+   09 PutPix                    32
+   0c SetMainPalette            4
+   0d SetCtrlPalette            4
+   0e SetScreenBase             4
+   11 MakeExtPalette            4
+   13 GetMouseInput             4
+   14 GetKeyboardEvent          4
+   18 NotifyMousePos            4
+   1b DrawStrShadowed           4
+   60 Nu_PutTriangle            105
+   61 Nu_PutQuad                90
+   62 Nu_PutLine                72
+   65 Nu_PutColoredPoint        24
+   66 Nu_PutBezierLine          4
+   67 Nu_ComplexStart           235
+   68 Nu_ComplexSNext           602
+   69 Nu_ComplexSBegin          76
+   6a Nu_ComplexEnd             235
+   6b Nu_3DViewInit             4
+   6c Nu_InsertZNode            212
+   6d Nu_ComplexStartInner      224
+   6e Nu_ComplexBezier          812
+   6f Nu_DrawScreen             4
+   71 Nu_PutCircle              19
+   73 Nu_IsGLRenderer           4
+   75 Nu_QueueDrawStr           12
+   76 Nu_PutCylinder            21
+   77 Nu_PutBlob                21
+   78 Nu_PutPlanet              3
+   first calls:
+     F315 13 GetMouseInput d0=64 d1=38 d2=f88 d3=0 d4=106 d5=0 a0=56 a1=3f62 sp+2=[00003a02 000039fc 00000064]
+     F315 14 GetKeyboardEvent d0=64 d1=38 d2=f88 d3=0 d4=106 d5=0 a0=56 a1=3f62 sp+2=[00000064 00000038 00000056]
+     F315 18 NotifyMousePos d0=0 d1=0 d2=f8 d3=0 d4=0 d5=0 a0=56 a1=3f62 sp+2=[000366ee 00000064 00000038]
+     F315 04 RestoreUnderCursor d0=0 d1=0 d2=f8 d3=0 d4=0 d5=0 a0=56 a1=3f62 sp+2=[00000000 00000000 000f0000]
+     F315 03 BlitCursor d0=0 d1=0 d2=f8 d3=0 d4=0 d5=0 a0=56 a1=3f62 sp+2=[00000000 00000000 00100000]
+     F315 02 MemsetBlue d0=64 d1=38 d2=f88 d3=0 d4=106 d5=0 a0=56 a1=3f62 sp+2=[0000d200 000f0000 000370ac]
+
+== GALMAP: 6 frame(s), 839 calls
+   02 MemsetBlue                3
+   03 BlitCursor                5
+   04 RestoreUnderCursor        5
+   05 BlitBmp                   4
+   06 OldHLine                  40
+   07 HostUpdate                4
+   08 Memcpy                    1
+   09 PutPix                    32
+   0c SetMainPalette            4
+   0d SetCtrlPalette            4
+   0e SetScreenBase             3
+   11 MakeExtPalette            3
+   13 GetMouseInput             4
+   14 GetKeyboardEvent          4
+   18 NotifyMousePos            4
+   1b DrawStrShadowed           3
+   62 Nu_PutLine                207
+   66 Nu_PutBezierLine          12
+   67 Nu_ComplexStart           12
+   68 Nu_ComplexSNext           87
+   69 Nu_ComplexSBegin          3
+   6a Nu_ComplexEnd             12
+   6b Nu_3DViewInit             4
+   6c Nu_InsertZNode            177
+   6d Nu_ComplexStartInner      15
+   6e Nu_ComplexBezier          24
+   6f Nu_DrawScreen             4
+   71 Nu_PutCircle              57
+   73 Nu_IsGLRenderer           3
+   75 Nu_QueueDrawStr           36
+   77 Nu_PutBlob                63
+   first calls:
+     F384 13 GetMouseInput d0=40 d1=38 d2=e0 d3=0 d4=106 d5=0 a0=56 a1=3f62 sp+2=[00003a02 000039fc 00000040]
+     F384 14 GetKeyboardEvent d0=40 d1=38 d2=e0 d3=0 d4=106 d5=0 a0=56 a1=3f62 sp+2=[00000040 00000038 00000056]
+     F384 18 NotifyMousePos d0=0 d1=0 d2=f8 d3=0 d4=0 d5=0 a0=56 a1=3f62 sp+2=[000366ee 00000040 00000038]
+     F384 04 RestoreUnderCursor d0=0 d1=0 d2=f8 d3=0 d4=0 d5=0 a0=56 a1=3f62 sp+2=[00000000 00000000 00100000]
+     F384 03 BlitCursor d0=0 d1=0 d2=f8 d3=0 d4=0 d5=0 a0=56 a1=3f62 sp+2=[00000000 00000000 000f0000]
+     F384 02 MemsetBlue d0=40 d1=38 d2=e0 d3=0 d4=106 d5=0 a0=56 a1=3f62 sp+2=[0000d200 00100000 000370ac]
+
+== GALAXY: 6 frame(s), 220 calls
+   02 MemsetBlue                1
+   03 BlitCursor                9
+   04 RestoreUnderCursor        9
+   05 BlitBmp                   7
+   06 OldHLine                  42
+   07 HostUpdate                4
+   08 Memcpy                    3
+   09 PutPix                    32
+   0c SetMainPalette            4
+   0d SetCtrlPalette            4
+   0e SetScreenBase             1
+   13 GetMouseInput             4
+   14 GetKeyboardEvent          4
+   18 NotifyMousePos            4
+   1b DrawStrShadowed           3
+   1c DrawStr                   3
+   66 Nu_PutBezierLine          6
+   67 Nu_ComplexStart           6
+   68 Nu_ComplexSNext           12
+   6a Nu_ComplexEnd             6
+   6b Nu_3DViewInit             4
+   6c Nu_InsertZNode            19
+   6d Nu_ComplexStartInner      6
+   6e Nu_ComplexBezier          12
+   6f Nu_DrawScreen             4
+   71 Nu_PutCircle              9
+   73 Nu_IsGLRenderer           1
+   77 Nu_PutBlob                1
+   first calls:
+     F453 13 GetMouseInput d0=90 d1=b1 d2=0 d3=0 d4=106 d5=0 a0=3f62 a1=fd200 sp+2=[00003a02 000039fc 00000090]
+     F453 14 GetKeyboardEvent d0=90 d1=b1 d2=0 d3=0 d4=106 d5=0 a0=3f62 a1=fd200 sp+2=[00000090 000000b1 00003f62]
+     F453 18 NotifyMousePos d0=0 d1=0 d2=f8 d3=0 d4=0 d5=0 a0=3f62 a1=fd200 sp+2=[000366ee 00000090 000000b1]
+     F453 04 RestoreUnderCursor d0=0 d1=0 d2=f8 d3=0 d4=0 d5=0 a0=3f62 a1=fd200 sp+2=[00000000 00000000 000f0000]
+     F453 03 BlitCursor d0=0 d1=0 d2=f8 d3=0 d4=0 d5=0 a0=3f62 a1=fd200 sp+2=[00000000 00000000 000f0000]
+     F453 6b Nu_3DViewInit d0=0 d1=0 d2=0 d3=0 d4=106 d5=0 a0=e0070 a1=fd200 sp+2=[00036fc0 01010203 03010201]
+
+== SYSMAP: 6 frame(s), 380 calls
+   02 MemsetBlue                3
+   03 BlitCursor                5
+   04 RestoreUnderCursor        5
+   05 BlitBmp                   7
+   06 OldHLine                  46
+   07 HostUpdate                4
+   08 Memcpy                    1
+   09 PutPix                    32
+   0c SetMainPalette            4
+   0d SetCtrlPalette            4
+   0e SetScreenBase             3
+   13 GetMouseInput             4
+   14 GetKeyboardEvent          4
+   18 NotifyMousePos            4
+   1b DrawStrShadowed           9
+   1c DrawStr                   3
+   66 Nu_PutBezierLine          18
+   67 Nu_ComplexStart           18
+   68 Nu_ComplexSNext           36
+   6a Nu_ComplexEnd             18
+   6b Nu_3DViewInit             4
+   6c Nu_InsertZNode            57
+   6d Nu_ComplexStartInner      18
+   6e Nu_ComplexBezier          36
+   6f Nu_DrawScreen             4
+   71 Nu_PutCircle              27
+   73 Nu_IsGLRenderer           3
+   77 Nu_PutBlob                3
+   first calls:
+     F562 13 GetMouseInput d0=20ffff d1=240008 d2=680c80 d3=6c0006 d4=700008 d5=1400c0 a0=56 a1=3f62 sp+2=[00003a02 000039fc 0020ffff]
+     F562 14 GetKeyboardEvent d0=20ffff d1=240008 d2=680c80 d3=6c0006 d4=700008 d5=1400c0 a0=56 a1=3f62 sp+2=[0020ffff 00240008 00000056]
+     F562 18 NotifyMousePos d0=0 d1=0 d2=f8 d3=0 d4=0 d5=1400c0 a0=56 a1=3f62 sp+2=[000366ee 0020ffff 00240008]
+     F562 04 RestoreUnderCursor d0=0 d1=0 d2=f8 d3=0 d4=0 d5=1400c0 a0=56 a1=3f62 sp+2=[00000000 00000000 000f0000]
+     F562 03 BlitCursor d0=0 d1=0 d2=f8 d3=0 d4=0 d5=1400c0 a0=56 a1=3f62 sp+2=[00000000 00000000 00100000]
+     F562 02 MemsetBlue d0=20ffff d1=240008 d2=680c80 d3=6c0006 d4=700008 d5=1400c0 a0=56 a1=3f62 sp+2=[0000d200 000f0000 000370ac]
+
+== STOCK: 8 frame(s), 192 calls
+   03 BlitCursor                12
+   04 RestoreUnderCursor        12
+   05 BlitBmp                   6
+   06 OldHLine                  60
+   07 HostUpdate                6
+   08 Memcpy                    6
+   09 PutPix                    48
+   0c SetMainPalette            6
+   0d SetCtrlPalette            6
+   13 GetMouseInput             6
+   14 GetKeyboardEvent          6
+   18 NotifyMousePos            6
+   6b Nu_3DViewInit             6
+   6f Nu_DrawScreen             6
+   first calls:
+     F676 13 GetMouseInput d0=90 d1=3a d2=0 d3=0 d4=106 d5=0 a0=3f62 a1=fd200 sp+2=[00003a02 000039fc 00000090]
+     F676 14 GetKeyboardEvent d0=90 d1=3a d2=0 d3=0 d4=106 d5=0 a0=3f62 a1=fd200 sp+2=[00000090 0000003a 00003f62]
+     F676 18 NotifyMousePos d0=0 d1=0 d2=f8 d3=81 d4=7a d5=0 a0=3f62 a1=fd200 sp+2=[000366ee 00000090 0000003a]
+     F676 04 RestoreUnderCursor d0=81 d1=7a d2=f8 d3=81 d4=7a d5=0 a0=3f62 a1=fd200 sp+2=[00000081 0000007a 000f0000]
+     F676 03 BlitCursor d0=81 d1=7a d2=f8 d3=81 d4=7a d5=0 a0=3f62 a1=fd200 sp+2=[00000081 0000007a 000f0000]
+     F676 6b Nu_3DViewInit d0=0 d1=0 d2=0 d3=0 d4=106 d5=0 a0=e0070 a1=fd200 sp+2=[00036fc0 ffffffff ffffffff]
+
+== OUTFIT: 6 frame(s), 128 calls
+   03 BlitCursor                8
+   04 RestoreUnderCursor        8
+   05 BlitBmp                   4
+   06 OldHLine                  40
+   07 HostUpdate                4
+   08 Memcpy                    4
+   09 PutPix                    32
+   0c SetMainPalette            4
+   0d SetCtrlPalette            4
+   13 GetMouseInput             4
+   14 GetKeyboardEvent          4
+   18 NotifyMousePos            4
+   6b Nu_3DViewInit             4
+   6f Nu_DrawScreen             4
+   first calls:
+     F837 13 GetMouseInput d0=90 d1=3a d2=0 d3=0 d4=106 d5=0 a0=3f62 a1=fd200 sp+2=[00003a02 000039fc 00000090]
+     F837 14 GetKeyboardEvent d0=90 d1=3a d2=0 d3=0 d4=106 d5=0 a0=3f62 a1=fd200 sp+2=[00000090 0000003a 00003f62]
+     F837 18 NotifyMousePos d0=0 d1=0 d2=f8 d3=81 d4=12 d5=0 a0=3f62 a1=fd200 sp+2=[000366ee 00000090 0000003a]
+     F837 04 RestoreUnderCursor d0=81 d1=12 d2=f8 d3=81 d4=12 d5=0 a0=3f62 a1=fd200 sp+2=[00000081 00000012 000f0000]
+     F837 03 BlitCursor d0=81 d1=12 d2=f8 d3=81 d4=12 d5=0 a0=3f62 a1=fd200 sp+2=[00000081 00000012 000f0000]
+     F837 6b Nu_3DViewInit d0=0 d1=0 d2=0 d3=0 d4=106 d5=0 a0=e0070 a1=fd200 sp+2=[00036fc0 ffffffff ffffffff]
+
+== BBS: 4 frame(s), 96 calls
+   03 BlitCursor                6
+   04 RestoreUnderCursor        6
+   05 BlitBmp                   3
+   06 OldHLine                  30
+   07 HostUpdate                3
+   08 Memcpy                    3
+   09 PutPix                    24
+   0c SetMainPalette            3
+   0d SetCtrlPalette            3
+   13 GetMouseInput             3
+   14 GetKeyboardEvent          3
+   18 NotifyMousePos            3
+   6b Nu_3DViewInit             3
+   6f Nu_DrawScreen             3
+   first calls:
+     F951 13 GetMouseInput d0=90 d1=3a d2=0 d3=0 d4=106 d5=0 a0=3f62 a1=fd200 sp+2=[00003a02 000039fc 00000090]
+     F951 14 GetKeyboardEvent d0=90 d1=3a d2=0 d3=0 d4=106 d5=0 a0=3f62 a1=fd200 sp+2=[00000090 0000003a 00003f62]
+     F951 18 NotifyMousePos d0=0 d1=0 d2=f8 d3=81 d4=57 d5=0 a0=3f62 a1=fd200 sp+2=[000366ee 00000090 0000003a]
+     F951 04 RestoreUnderCursor d0=81 d1=57 d2=f8 d3=81 d4=57 d5=0 a0=3f62 a1=fd200 sp+2=[00000081 00000057 000f0000]
+     F951 03 BlitCursor d0=81 d1=57 d2=f8 d3=81 d4=57 d5=0 a0=3f62 a1=fd200 sp+2=[00000081 00000057 000f0000]
+     F951 6b Nu_3DViewInit d0=0 d1=0 d2=0 d3=0 d4=106 d5=0 a0=e0070 a1=fd200 sp+2=[00036fc0 ffffffff ffffffff]
+

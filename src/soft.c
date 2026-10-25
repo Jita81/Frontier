@@ -18,6 +18,7 @@
 #include "screen.h"
 #include "input.h"
 #include "joystick.h"
+#include "exp.h"
 
 unsigned long VideoBase;                        /* Base address in ST Ram for screen(read on each VBL) */
 unsigned char *VideoRaster;                      /* Pointer to Video raster, after VideoBase in PC address space. Use to copy data on HBL */
@@ -388,5 +389,24 @@ void Nu_DrawScreen ()
 		mouse_shown = 0;
 	}
 
+	Exp_EndFrame ();
 	SDL_Flip(sdlscrn);
+}
+
+int Screen_ReadRGB (unsigned char **rgb, int *w, int *h)
+{
+	unsigned char *p;
+	int x, y;
+
+	if (!(p = *rgb = malloc (sdlscrn->w * sdlscrn->h * 3))) return -1;
+	*w = sdlscrn->w;
+	*h = sdlscrn->h;
+	if (SDL_MUSTLOCK(sdlscrn)) SDL_LockSurface(sdlscrn);
+	for (y = 0; y < sdlscrn->h; y++) {
+		unsigned short *row = (unsigned short *)((char *) sdlscrn->pixels + y * sdlscrn->pitch);
+		for (x = 0; x < sdlscrn->w; x++, p += 3)
+			SDL_GetRGB (row[x], sdlscrn->format, p, p+1, p+2);
+	}
+	if (SDL_MUSTLOCK(sdlscrn)) SDL_UnlockSurface(sdlscrn);
+	return 0;
 }

@@ -1,0 +1,1 @@
+frame 43 buffer 0xf0000 visible(non-transparent) 0 of 64000

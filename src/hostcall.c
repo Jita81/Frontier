@@ -31,6 +31,7 @@
 #include "input.h"
 #include "keymap.h"
 #include "shortcut.h"
+#include "exp.h"
 
 /*
   GEMDOS error codes, See 'The Atari Compendium' D.3
@@ -653,6 +654,8 @@ void Call_HostUpdate ()
 	ShortCut_CheckKeys();
 	/* And handle any messages, check for quit message */
 	Main_EventHandler();         /* Process messages, set 'bQuitProgram' if user tries to quit */
+	/* scripted input for the experiment harness (no-op unless FE2_SCRIPT) */
+	Exp_HostUpdate();
 	/* Pass NULL interrupt function to quit cleanly */
 	//if (bQuitProgram) Int_AddAbsoluteInterrupt(4, 0L);
 }
@@ -1025,3 +1028,5 @@ HOSTCALL hcalls [] = {
 	  not_available,
 #endif
 };
+
+const int hcalls_count = sizeof (hcalls) / sizeof (hcalls[0]);

@@ -1,7 +1,7 @@
 THIS=Makefile-C
 VERSION=20060623
 
-SRCOBJS := audio.o hostcall.o keymap.o main.o shortcut.o input.o joystick.o ini.o
+SRCOBJS := audio.o hostcall.o keymap.o main.o shortcut.o input.o joystick.o ini.o exp.o
 
 COMPILER ?= gcc
 CC := $(CROSS_COMPILE)$(COMPILER)
@@ -28,7 +28,7 @@ LIBS := $(VORBIS_LDFLAGS) -lvorbisfile -lvorbis -logg $(SDL_LIBS)
 
 WITH_GL=y
 ifeq ($(WITH_GL),y)
-	SRCOBJS += gl.o
+	SRCOBJS += gl.o exptext.o
 	CFLAGS += -DWITH_GL
 ifeq ($(UNAME_S),Darwin)
 	LIBS += -framework OpenGL

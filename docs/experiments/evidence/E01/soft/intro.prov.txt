@@ -1,0 +1,5 @@
+frame 43 buffer 0xf0000 visible(non-transparent) 64000 of 64000
+host-text(queued)               112    0.2%
+host-span(fe2s-geometry)      10137   15.8%
+host-clear                    43511   68.0%
+initial                       10240   16.0%

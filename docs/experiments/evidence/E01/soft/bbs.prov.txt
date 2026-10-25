@@ -1,0 +1,7 @@
+frame 953 buffer 0xf0000 visible(non-transparent) 64000 of 64000
+host-text                      7967   12.4%
+host-text(queued)               112    0.2%
+host-BlitBmp                  13483   21.1%
+host-span(fe2s-geometry)       8095   12.6%
+host-clear                    32964   51.5%
+initial                        1379    2.2%

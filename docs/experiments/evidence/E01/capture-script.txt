@@ -1,0 +1,54 @@
+0 trace off
+40 trace on
++1 mark INTRO
++2 shot intro
++1 trace off
++20 key 39
++60 key 02
++150 key 3b
++40 trace on
++1 mark COCKPIT
++2 shot cockpit
++1 trace off
++5 key 3c
++60 trace on
++1 mark GALMAP
++2 shot galmap
++1 trace off
++5 key 44
++60 trace on
++1 mark GALAXY
++2 shot galaxy
++1 trace off
++5 key 3c
++40 key 40
++60 trace on
++1 mark SYSMAP
++2 shot sysmap
++1 trace off
++5 key 3e
++40 mouse 129 123
++5 click l
++60 trace on
++1 mark STOCK
++2 shot stock
++1 poke 100 60 15
++1 shot stock_poked
++1 trace off
++5 key 3e
++40 mouse 129 53
++5 click l
++40 mouse 129 19
++5 click l
++60 trace on
++1 mark OUTFIT
++2 shot outfit
++1 trace off
++5 key 3e
++40 mouse 129 88
++5 click l
++60 trace on
++1 mark BBS
++2 shot bbs
++1 trace off
++5 quit

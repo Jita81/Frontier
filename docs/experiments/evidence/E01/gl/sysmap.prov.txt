@@ -1,0 +1,4 @@
+frame 564 buffer 0xf0000 visible(non-transparent) 10860 of 64000
+host-text                       884    8.1%
+host-BlitBmp                   9945   91.6%
+host-span(fe2s-geometry)         31    0.3%

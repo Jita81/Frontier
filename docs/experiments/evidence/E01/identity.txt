@@ -1,0 +1,20 @@
+# FE2_TEXT on vs off: game's 320x200 screen buffer (.st dump) per screen, same script, GL build
+intro: identical 320 200
+cockpit: identical 320 200
+galmap: identical 320 200
+galaxy: identical 320 200
+sysmap: identical 320 200
+stock: identical 320 200
+outfit: identical 320 200
+bbs: identical 320 200
+
+# all hooks compiled in, every flag off except the script driver, vs the run before any E1 display hook existed (e1f, same script)
+intro window: identical 640 480
+cockpit window: identical 640 480
+galmap window: identical 640 480
+galaxy window: 46 px differ, bbox x 50-55 y 408-421 of 640x480
+sysmap window: 126 px differ, bbox x 42-229 y 382-419 of 640x480
+stock window: 60 px differ, bbox x 50-55 y 406-419 of 640x480
+outfit window: 38 px differ, bbox x 50-55 y 406-421 of 640x480
+bbs window: 46 px differ, bbox x 50-55 y 408-421 of 640x480
+(the differing boxes are the on-screen clock seconds at ST x 25-27 y 169-175, window x 50-55 y 406-421, and on the system map the time-point readout; the game clock runs from wall time)

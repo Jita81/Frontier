@@ -1,0 +1,5 @@
+frame 386 buffer 0x100000 visible(non-transparent) 11331 of 64000
+host-text                      1398   12.3%
+host-text(queued)               917    8.1%
+host-BlitBmp                   8993   79.4%
+host-span(fe2s-geometry)         23    0.2%

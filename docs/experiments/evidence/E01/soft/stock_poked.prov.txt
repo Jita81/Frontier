@@ -1,0 +1,8 @@
+frame 680 buffer 0xf0000 visible(non-transparent) 64000 of 64000
+fe2s-direct                      16    0.0%
+host-text                      8194   12.8%
+host-text(queued)               100    0.2%
+host-BlitBmp                  14477   22.6%
+host-span(fe2s-geometry)       8740   13.7%
+host-clear                    31045   48.5%
+initial                        1428    2.2%

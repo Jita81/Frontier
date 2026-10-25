@@ -19,6 +19,7 @@ typedef GLvoid (*_GLUfuncptr) ();
 #include "main.h"
 #include "../m68000.h"
 #include "screen.h"
+#include "exp.h"
 
 unsigned long VideoBase;                        /* Base address in ST Ram for screen(read on each VBL) */
 unsigned char *VideoRaster;                      /* Pointer to Video raster, after VideoBase in PC address space. Use to copy data on HBL */
@@ -346,10 +347,12 @@ set_line:
 		
 		//if (x > 316) continue;
 
+		if (exp_text_on) ExpText_GlyphBegin ((unsigned char *) screen, x, y, chr, col, shadowed);
 		if (shadowed) {
 			DrawChar (0, x+1, screen+SCREENBYTES_LINE, chr-0x20);
 		}
 		x = DrawChar (col, x, screen, chr-0x20);
+		if (exp_text_on) ExpText_GlyphEnd (x);
 	}
 
 	return x;
@@ -408,6 +411,7 @@ static void draw_control_panel ()
 	/****************************************************/
 	
 	scr = VideoRaster;
+	if (exp_text_on) scr = (unsigned char *) ExpText_Peel (VideoRaster);
 	
 	/* intro likes black at the bottom */
 	/* hack hack hack what a pile of shite this is */
@@ -471,6 +475,7 @@ static void draw_control_panel ()
 	}
 	
 	glDisable (GL_TEXTURE_2D);
+	if (exp_text_on) ExpText_Draw (screen_w, screen_h);
 	
 	pop_ortho ();
 }
@@ -1873,6 +1878,7 @@ void Nu_DrawScreen ()
 	draw_control_panel ();
 	glFlush ();
 	
+	Exp_EndFrame ();
 	SDL_GL_SwapBuffers ();
 
 	/* frontier background color... */
@@ -1887,4 +1893,23 @@ void Nu_DrawScreen ()
 	glLoadIdentity ();
 	
 	set_main_viewport ();
+}
+
+/* Read the back buffer (the frame about to be swapped in) for the
+ * experiment harness's screenshots. */
+int Screen_ReadRGB (unsigned char **rgb, int *w, int *h)
+{
+	unsigned char *buf;
+	int y, stride = screen_w * 3;
+
+	if (!(buf = malloc (stride * screen_h))) return -1;
+	if (!(*rgb = malloc (stride * screen_h))) { free (buf); return -1; }
+	glPixelStorei (GL_PACK_ALIGNMENT, 1);
+	glReadPixels (0, 0, screen_w, screen_h, GL_RGB, GL_UNSIGNED_BYTE, buf);
+	for (y = 0; y < screen_h; y++)
+		memcpy (*rgb + y * stride, buf + (screen_h - 1 - y) * stride, stride);
+	free (buf);
+	*w = screen_w;
+	*h = screen_h;
+	return 0;
 }

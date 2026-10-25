@@ -1,0 +1,4 @@
+frame 317 buffer 0xf0000 visible(non-transparent) 11180 of 64000
+host-text                      1304   11.7%
+host-BlitBmp                   9853   88.1%
+host-span(fe2s-geometry)         23    0.2%

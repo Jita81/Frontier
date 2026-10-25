@@ -23,6 +23,7 @@
 #include "joystick.h"
 #include "keymap.h"
 #include "screen.h"
+#include "exp.h"
 #include "shortcut.h"
 
 
@@ -248,6 +249,7 @@ void Main_Init(void)
   Init680x0();                  /* Init CPU emulation */
   Audio_Init();
   Keymap_Init();
+  Exp_Init();                   /* no-op unless an FE2_* experiment flag is set */
 
   if(bQuitProgram)
   {

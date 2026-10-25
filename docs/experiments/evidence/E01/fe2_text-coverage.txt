@@ -1,0 +1,19 @@
+FE2_SCRIPT: shot intro at frame 43
+FE2_TEXT: last frame 0 glyphs hi-res, 0 fresh glyphs left as bitmap; run: 44 frames, 0 hi-res, 0 bitmap, 0 records live
+FE2_SCRIPT: shot cockpit at frame 317
+FE2_TEXT: last frame 78 glyphs hi-res, 0 fresh glyphs left as bitmap; run: 318 frames, 25765 hi-res, 63 bitmap, 1612 records live
+FE2_SCRIPT: shot galmap at frame 386
+FE2_TEXT: last frame 206 glyphs hi-res, 0 fresh glyphs left as bitmap; run: 387 frames, 39211 hi-res, 63 bitmap, 771 records live
+FE2_SCRIPT: shot galaxy at frame 455
+FE2_TEXT: last frame 194 glyphs hi-res, 100 fresh glyphs left as bitmap; run: 456 frames, 52669 hi-res, 5984 bitmap, 2313 records live
+FE2_SCRIPT: shot sysmap at frame 564
+FE2_TEXT: last frame 69 glyphs hi-res, 0 fresh glyphs left as bitmap; run: 565 frames, 60815 hi-res, 6679 bitmap, 1294 records live
+FE2_SCRIPT: shot stock at frame 678
+FE2_TEXT: last frame 447 glyphs hi-res, 270 fresh glyphs left as bitmap; run: 679 frames, 106117 hi-res, 32832 bitmap, 3513 records live
+FE2_SCRIPT: shot stock_poked at frame 680
+FE2_TEXT: last frame 447 glyphs hi-res, 270 fresh glyphs left as bitmap; run: 681 frames, 107011 hi-res, 33372 bitmap, 4179 records live
+FE2_SCRIPT: shot outfit at frame 839
+FE2_TEXT: last frame 501 glyphs hi-res, 397 fresh glyphs left as bitmap; run: 840 frames, 171757 hi-res, 88438 bitmap, 5121 records live
+FE2_SCRIPT: shot bbs at frame 953
+FE2_TEXT: last frame 426 glyphs hi-res, 492 fresh glyphs left as bitmap; run: 954 frames, 218149 hi-res, 140569 bitmap, 16574 records live
+FE2_TEXT: last frame 426 glyphs hi-res, 492 fresh glyphs left as bitmap; run: 959 frames, 220279 hi-res, 143029 bitmap, 19504 records live
