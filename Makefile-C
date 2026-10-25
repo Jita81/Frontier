@@ -80,6 +80,9 @@ endif
 # and keeps its normal objects; the host objects and the binary go to
 # san/$(SAN)/, so a sanitizer build never clobbers the normal one.  Run the
 # binary from the top directory: the game finds its data relative to it.
+# An ASan binary also needs the SDL2 libdir on DYLD_FALLBACK_LIBRARY_PATH:
+# without it sdl12-compat cannot load libSDL2 inside the ASan process and the
+# game hangs before main (O-11).  The link prints the command; soak.sh sets it.
 SAN ?=
 ifeq ($(SAN),)
 HOST_OBJDIR :=
@@ -89,6 +92,7 @@ HOST_CFLAGS += -fsanitize=undefined -fno-omit-frame-pointer -g -O1
 else ifeq ($(SAN),asan)
 HOST_OBJDIR := san/asan/
 HOST_CFLAGS += -fsanitize=address -fno-omit-frame-pointer -g -O1
+SAN_RUN_NOTE = @echo 'run: DYLD_FALLBACK_LIBRARY_PATH="$$(pkg-config --variable=libdir sdl2):/usr/local/lib:/usr/lib" ASAN_OPTIONS=detect_leaks=0 $@'
 else
 $(error SAN must be empty, ubsan or asan)
 endif
@@ -114,6 +118,7 @@ all: $(TARGET)
 $(TARGET): fe2.s.c
 	$(MAKE) -f $(THIS) gen
 	$(CC) $(CFLAGS) $(HOST_CFLAGS) $(LIBS) $(OBJS) gen/*.o -o $@
+	$(SAN_RUN_NOTE)
 
 gen: $(patsubst %.c,%.o,$(wildcard gen/*.c)) $(OBJS)
 
