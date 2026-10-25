@@ -1025,3 +1025,7 @@ HOSTCALL hcalls [] = {
 	  not_available,
 #endif
 };
+
+/* For the oracle's trampolines (src/oracle.c): the table's length. */
+const int hcalls_len = sizeof hcalls / sizeof hcalls[0];
+_Static_assert (sizeof hcalls / sizeof hcalls[0] <= 128, "oracle trampolines cover 128 hcalls");

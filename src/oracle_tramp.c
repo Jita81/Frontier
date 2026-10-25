@@ -1,0 +1,157 @@
+/*
+ * The 128 hcall trampolines of 07 section 2 / T-0.2.  Each one forwards its
+ * fixed index to oracle_call(), which hashes the boundary state on entry and
+ * exit and calls the saved original.  Generated list: one function per
+ * possible hcall index, so a trampoline never has to guess who called it.
+ */
+#include "../m68000.h"
+
+void oracle_call (int n);
+
+static void t00 (void) { oracle_call (0x00); }
+static void t01 (void) { oracle_call (0x01); }
+static void t02 (void) { oracle_call (0x02); }
+static void t03 (void) { oracle_call (0x03); }
+static void t04 (void) { oracle_call (0x04); }
+static void t05 (void) { oracle_call (0x05); }
+static void t06 (void) { oracle_call (0x06); }
+static void t07 (void) { oracle_call (0x07); }
+static void t08 (void) { oracle_call (0x08); }
+static void t09 (void) { oracle_call (0x09); }
+static void t0a (void) { oracle_call (0x0a); }
+static void t0b (void) { oracle_call (0x0b); }
+static void t0c (void) { oracle_call (0x0c); }
+static void t0d (void) { oracle_call (0x0d); }
+static void t0e (void) { oracle_call (0x0e); }
+static void t0f (void) { oracle_call (0x0f); }
+static void t10 (void) { oracle_call (0x10); }
+static void t11 (void) { oracle_call (0x11); }
+static void t12 (void) { oracle_call (0x12); }
+static void t13 (void) { oracle_call (0x13); }
+static void t14 (void) { oracle_call (0x14); }
+static void t15 (void) { oracle_call (0x15); }
+static void t16 (void) { oracle_call (0x16); }
+static void t17 (void) { oracle_call (0x17); }
+static void t18 (void) { oracle_call (0x18); }
+static void t19 (void) { oracle_call (0x19); }
+static void t1a (void) { oracle_call (0x1a); }
+static void t1b (void) { oracle_call (0x1b); }
+static void t1c (void) { oracle_call (0x1c); }
+static void t1d (void) { oracle_call (0x1d); }
+static void t1e (void) { oracle_call (0x1e); }
+static void t1f (void) { oracle_call (0x1f); }
+static void t20 (void) { oracle_call (0x20); }
+static void t21 (void) { oracle_call (0x21); }
+static void t22 (void) { oracle_call (0x22); }
+static void t23 (void) { oracle_call (0x23); }
+static void t24 (void) { oracle_call (0x24); }
+static void t25 (void) { oracle_call (0x25); }
+static void t26 (void) { oracle_call (0x26); }
+static void t27 (void) { oracle_call (0x27); }
+static void t28 (void) { oracle_call (0x28); }
+static void t29 (void) { oracle_call (0x29); }
+static void t2a (void) { oracle_call (0x2a); }
+static void t2b (void) { oracle_call (0x2b); }
+static void t2c (void) { oracle_call (0x2c); }
+static void t2d (void) { oracle_call (0x2d); }
+static void t2e (void) { oracle_call (0x2e); }
+static void t2f (void) { oracle_call (0x2f); }
+static void t30 (void) { oracle_call (0x30); }
+static void t31 (void) { oracle_call (0x31); }
+static void t32 (void) { oracle_call (0x32); }
+static void t33 (void) { oracle_call (0x33); }
+static void t34 (void) { oracle_call (0x34); }
+static void t35 (void) { oracle_call (0x35); }
+static void t36 (void) { oracle_call (0x36); }
+static void t37 (void) { oracle_call (0x37); }
+static void t38 (void) { oracle_call (0x38); }
+static void t39 (void) { oracle_call (0x39); }
+static void t3a (void) { oracle_call (0x3a); }
+static void t3b (void) { oracle_call (0x3b); }
+static void t3c (void) { oracle_call (0x3c); }
+static void t3d (void) { oracle_call (0x3d); }
+static void t3e (void) { oracle_call (0x3e); }
+static void t3f (void) { oracle_call (0x3f); }
+static void t40 (void) { oracle_call (0x40); }
+static void t41 (void) { oracle_call (0x41); }
+static void t42 (void) { oracle_call (0x42); }
+static void t43 (void) { oracle_call (0x43); }
+static void t44 (void) { oracle_call (0x44); }
+static void t45 (void) { oracle_call (0x45); }
+static void t46 (void) { oracle_call (0x46); }
+static void t47 (void) { oracle_call (0x47); }
+static void t48 (void) { oracle_call (0x48); }
+static void t49 (void) { oracle_call (0x49); }
+static void t4a (void) { oracle_call (0x4a); }
+static void t4b (void) { oracle_call (0x4b); }
+static void t4c (void) { oracle_call (0x4c); }
+static void t4d (void) { oracle_call (0x4d); }
+static void t4e (void) { oracle_call (0x4e); }
+static void t4f (void) { oracle_call (0x4f); }
+static void t50 (void) { oracle_call (0x50); }
+static void t51 (void) { oracle_call (0x51); }
+static void t52 (void) { oracle_call (0x52); }
+static void t53 (void) { oracle_call (0x53); }
+static void t54 (void) { oracle_call (0x54); }
+static void t55 (void) { oracle_call (0x55); }
+static void t56 (void) { oracle_call (0x56); }
+static void t57 (void) { oracle_call (0x57); }
+static void t58 (void) { oracle_call (0x58); }
+static void t59 (void) { oracle_call (0x59); }
+static void t5a (void) { oracle_call (0x5a); }
+static void t5b (void) { oracle_call (0x5b); }
+static void t5c (void) { oracle_call (0x5c); }
+static void t5d (void) { oracle_call (0x5d); }
+static void t5e (void) { oracle_call (0x5e); }
+static void t5f (void) { oracle_call (0x5f); }
+static void t60 (void) { oracle_call (0x60); }
+static void t61 (void) { oracle_call (0x61); }
+static void t62 (void) { oracle_call (0x62); }
+static void t63 (void) { oracle_call (0x63); }
+static void t64 (void) { oracle_call (0x64); }
+static void t65 (void) { oracle_call (0x65); }
+static void t66 (void) { oracle_call (0x66); }
+static void t67 (void) { oracle_call (0x67); }
+static void t68 (void) { oracle_call (0x68); }
+static void t69 (void) { oracle_call (0x69); }
+static void t6a (void) { oracle_call (0x6a); }
+static void t6b (void) { oracle_call (0x6b); }
+static void t6c (void) { oracle_call (0x6c); }
+static void t6d (void) { oracle_call (0x6d); }
+static void t6e (void) { oracle_call (0x6e); }
+static void t6f (void) { oracle_call (0x6f); }
+static void t70 (void) { oracle_call (0x70); }
+static void t71 (void) { oracle_call (0x71); }
+static void t72 (void) { oracle_call (0x72); }
+static void t73 (void) { oracle_call (0x73); }
+static void t74 (void) { oracle_call (0x74); }
+static void t75 (void) { oracle_call (0x75); }
+static void t76 (void) { oracle_call (0x76); }
+static void t77 (void) { oracle_call (0x77); }
+static void t78 (void) { oracle_call (0x78); }
+static void t79 (void) { oracle_call (0x79); }
+static void t7a (void) { oracle_call (0x7a); }
+static void t7b (void) { oracle_call (0x7b); }
+static void t7c (void) { oracle_call (0x7c); }
+static void t7d (void) { oracle_call (0x7d); }
+static void t7e (void) { oracle_call (0x7e); }
+static void t7f (void) { oracle_call (0x7f); }
+
+const HOSTCALL oracle_tramps[128] = {
+	t00, t01, t02, t03, t04, t05, t06, t07,
+	t08, t09, t0a, t0b, t0c, t0d, t0e, t0f,
+	t10, t11, t12, t13, t14, t15, t16, t17,
+	t18, t19, t1a, t1b, t1c, t1d, t1e, t1f,
+	t20, t21, t22, t23, t24, t25, t26, t27,
+	t28, t29, t2a, t2b, t2c, t2d, t2e, t2f,
+	t30, t31, t32, t33, t34, t35, t36, t37,
+	t38, t39, t3a, t3b, t3c, t3d, t3e, t3f,
+	t40, t41, t42, t43, t44, t45, t46, t47,
+	t48, t49, t4a, t4b, t4c, t4d, t4e, t4f,
+	t50, t51, t52, t53, t54, t55, t56, t57,
+	t58, t59, t5a, t5b, t5c, t5d, t5e, t5f,
+	t60, t61, t62, t63, t64, t65, t66, t67,
+	t68, t69, t6a, t6b, t6c, t6d, t6e, t6f,
+	t70, t71, t72, t73, t74, t75, t76, t77,
+	t78, t79, t7a, t7b, t7c, t7d, t7e, t7f,
+};

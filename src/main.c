@@ -24,6 +24,7 @@
 #include "keymap.h"
 #include "screen.h"
 #include "shortcut.h"
+#include "oracle.h"
 
 
 #define FORCE_WORKING_DIR                 /* Set default directory to cwd */
@@ -297,6 +298,9 @@ int main(int argc, char *argv[])
   /* Generate random seed */
   srand( time(NULL) );
 
+  /* Oracle flags (docs/07); strips them, does nothing when none given */
+  oracle_parse_args(&argc, argv);
+
   /* Check for any passed parameters */
   Main_ReadParameters(argc, argv);
 
@@ -307,7 +311,10 @@ int main(int argc, char *argv[])
   if( bUseFullscreen )
     Screen_ToggleFullScreen();
 
-  SDL_AddTimer (20, &vbl_callback, NULL);
+  oracle_install();             /* no-op unless an oracle flag was given */
+
+  if (!oracle_lockstep())
+    SDL_AddTimer (20, &vbl_callback, NULL);
   
   /* Run emulation */
   Main_UnPauseEmulation();
