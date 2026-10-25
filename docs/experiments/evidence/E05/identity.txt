@@ -1,0 +1,74 @@
+# E5 identity and difference evidence. md5 = first 8 hex of the PNG-converted shot.
+# .st = the 320x200 buffer fe2.s drew; full = the 640x480 window as shown.
+
+## 1. Unrelated systems, selected on the galactic map: hook on, hook off, E4 binary (20a9aab), first harness binary
+# shots: g = galactic map with the system selected, f6 = system diagram, f7 = trade, f8 = government/economy/allegiance/population,
+#        o1/o2 = orrery (always the CURRENT system, Ross 154; see section 3)
+barn  on    st   g=ea83253c f6=fb191eaf f7=d91e97da f8=ca809708 o1=6ba075d5 o2=f0e4cee8 
+barn  off   st   g=ea83253c f6=fb191eaf f7=d91e97da f8=ca809708 o1=6a01dbbc o2=17da42ae 
+barn  e4    st   g=ea83253c f6=fb191eaf f7=d91e97da f8=ca809708 o1=6a01dbbc o2=17da42ae 
+barn  base0 st   g=ea83253c f6=fb191eaf f7=d91e97da f8=ca809708 o1=6a01dbbc o2=17da42ae 
+barn  on    full g=f7578726 f6=bc5ba307 f7=977a7949 f8=826c014b o1=8d624023 o2=3c5e216e 
+barn  off   full g=f7578726 f6=bc5ba307 f7=977a7949 f8=826c014b o1=ae90de1f o2=6f9e6909 
+barn  e4    full g=f7578726 f6=bc5ba307 f7=977a7949 f8=826c014b o1=ae90de1f o2=6f9e6909 
+barn  base0 full g=f7578726 f6=bc5ba307 f7=977a7949 f8=826c014b o1=ae90de1f o2=6f9e6909 
+gic   on    st   g=9a6b2274 f6=6158143e f7=dc0435e3 f8=6f14ca5b o1=8aee5e6c o2=57fe50d1 
+gic   off   st   g=9a6b2274 f6=6158143e f7=dc0435e3 f8=6f14ca5b o1=89eb1858 o2=2fb6a46a 
+gic   e4    st   g=9a6b2274 f6=6158143e f7=dc0435e3 f8=6f14ca5b o1=89eb1858 o2=2fb6a46a 
+gic   base0 st   g=9a6b2274 f6=6158143e f7=dc0435e3 f8=6f14ca5b o1=89eb1858 o2=2fb6a46a 
+gic   on    full g=6b56e965 f6=4c645f36 f7=a8461e41 f8=8fdd5536 o1=49671ca2 o2=2102ee34 
+gic   off   full g=6b56e965 f6=4c645f36 f7=a8461e41 f8=8fdd5536 o1=223179df o2=114474f0 
+gic   e4    full g=6b56e965 f6=4c645f36 f7=a8461e41 f8=8fdd5536 o1=223179df o2=114474f0 
+gic   base0 full g=6b56e965 f6=4c645f36 f7=a8461e41 f8=8fdd5536 o1=223179df o2=114474f0 
+# barn = Barnards Star (mining and industrial), gic = Giclas 158-27 (mining and some ore refinement)
+# g, f6, f7, f8 are identical in all four builds/flags for both systems, as drawn and as shown.
+# o1/o2 on vs off:
+  barn o1: 32 px differ, bbox x 286-293 y 430-433 of 640x480
+  barn o2: 32 px differ, bbox x 286-293 y 430-433 of 640x480
+  gic o1: 32 px differ, bbox x 286-293 y 430-433 of 640x480
+  gic o2: 32 px differ, bbox x 286-293 y 430-433 of 640x480
+# = the scanner blip of the new station (ST x 143-146 y 179-180 in section 3), Ross 154 is still the current system
+
+## 2. RAM at frame 1 (after ExpBase_Init, before the game has drawn a frame), hook on vs off
+# whole-RAM dumps of two identical off runs differ by ~64-76 KB (the game clock runs from wall time),
+# so the signal is bytes that agree across all runs with the same flag and differ between on and off:
+early noise bytes 64271 consistent on/off difference bytes 235
+  0x03babd-0x03babf (3) 048578 001fce
+  Ross 154 entry (0x3bab8: id, offset): off a925c5c100001fce  on a925c5c100048578
+  0x84000-0x842ff with hook off: all zero = True
+  0x84000-0x842ff with hook on: last non-zero byte at 0x8422f (7 copied + 1 new + 1 terminator = 9 x 64 bytes)
+  every other consistent difference lies at 0x84000 or above (the overlay)
+
+## 3. Ross 154 itself, hook on vs off (.st buffers)
+  e5b f2: identical 320 200
+  e5b f2f5: identical 320 200
+  e5b f2f6: 80 px differ, bbox x 73-88 y 30-34 of 320x200
+  e5b f2f7: 80 px differ, bbox x 73-88 y 30-34 of 320x200
+  e5b f2f8: 80 px differ, bbox x 73-88 y 30-34 of 320x200
+  e5b f2f9: 80 px differ, bbox x 73-88 y 30-34 of 320x200
+  # f2 = galactic map, f2f5 = F5; F6-F9 share the system diagram at the top: the 80 px are the new station icon under Merlin
+  # the economy/allegiance/population lines (F8) are pixel-identical
+  e5d map0: 8 px differ, bbox x 143-146 y 179-180 of 320x200
+  e5d map_sel: 8 px differ, bbox x 143-146 y 179-180 of 320x200
+  e5d map_z1: 8 px differ, bbox x 143-146 y 179-180 of 320x200
+  e5d map_z4: 8 px differ, bbox x 143-146 y 179-180 of 320x200
+  e5d map_z8: 211 px differ, bbox x 120-157 y 58-180 of 320x200
+  # map0-z4: the scanner blip only; map_z8 (fully zoomed on Merlin): the orbit and label 'Merlin High'
+
+## 4. Run logs (hook on)
+FE2_NEW_STARPORT: Ross 154 entry at 0x3bab8 now -> 0x84000 (7+1 records, parent 4)
+FE2_SCRIPT: shot tgt at frame 915
+FE2_SCRIPT: shot ap1 at frame 1405
+FE2_SCRIPT: shot ap2 at frame 1715
+FE2_SCRIPT: shot ap3 at frame 2315
+FE2_SCRIPT: shot ap7 at frame 5615
+FE2_SCRIPT: shot ap9 at frame 6815
+FE2_SCRIPT: shot ap10 at frame 7415
+FE2_SCRIPT: shot svc0 at frame 7480
+FE2_SCRIPT: shot svc1 at frame 7545
+FE2_SCRIPT: shot svc at frame 7610
+FE2_SCRIPT: shot bbs at frame 7680
+FE2_SCRIPT: shot equip at frame 7745
+FE2_SCRIPT: quit at frame 7750
+FE2_SCRIPT: shot stock at frame 7680
+FE2_SCRIPT: quit at frame 7685

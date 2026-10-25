@@ -22,6 +22,7 @@
  *                         (see expnpc.c)
  *   FE2_FRAME_STATS=1     measurement only: at exit, print the wall-clock
  *                         interval between frames (mean, p99, max)
+ *   FE2_NEW_STARPORT=1    add one orbital station to Ross 154 (see expbase.c)
  *
  * With none of them set, Exp_Init returns without touching hcalls[] and the
  * other entry points return on their first test, so the game runs exactly
@@ -32,13 +33,14 @@
  *   key <hex>            press and release an ST scancode
  *   keydown/keyup <hex>
  *   mouse <x> <y>        absolute pointer position in 320x200 ST coordinates
- *   click l|r            press a button, released 3 frames later
+ *   click l|r [n]        press a button, released n (default 3) frames later
  *   shot <name>          write <name>.ppm (frame as shown) and <name>.st.ppm
  *                        (the 320x200 8-bit UI buffer fe2.s drew, index 255
  *                        shown as magenta in GL builds)
  *   wait <text>          hold the script until a drawn string contains text
  *   trace on|off         switch the hcall log (needs FE2_TRACE_HCALLS)
  *   mark <text>          write a marker line into the trace
+ *   memdump <name>       measurement only: write the 68k RAM as <name>.ram
  *   quit
  */
 #include <SDL.h>
@@ -49,6 +51,7 @@
 
 #include "main.h"
 #include "../m68000.h"
+#include "../host.h"
 #include "screen.h"
 #include "input.h"
 #include "exp.h"
@@ -547,13 +550,25 @@ static void run_cmd (struct cmd *c)
 	} else if (!strcmp (c->op, "click")) {
 		click_mask = (c->arg[0] == 'r') ? 1 : 2;
 		input.cur_mousebut_state |= click_mask;
-		click_release_at = frame_no + 3;
+		{
+			int hold = 0;
+			sscanf (c->arg + 1, "%d", &hold);
+			click_release_at = frame_no + (hold > 0 ? hold : 3);
+		}
 	} else if (!strcmp (c->op, "shot")) {
 		strncpy (shot_pending, c->arg, sizeof (shot_pending) - 1);
 	} else if (!strcmp (c->op, "trace")) {
 		trace_on = (trace_fp && !strcmp (c->arg, "on"));
 	} else if (!strcmp (c->op, "mark")) {
 		if (trace_fp) fprintf (trace_fp, "MARK F%lu %s\n", frame_no, c->arg);
+	} else if (!strcmp (c->op, "memdump")) {
+		char path[640];
+		FILE *f;
+		snprintf (path, sizeof (path), "%s/%s.ram", shot_dir, c->arg);
+		if ((f = fopen (path, "wb"))) {
+			fwrite (STRam, 1, MEM_SIZE, f);
+			fclose (f);
+		}
 	} else if (!strcmp (c->op, "poke")) {
 		/* provenance positive control: write one row of 16 pixels into the
 		 * displayed buffer outside any screen-writing host call, the way
@@ -682,6 +697,8 @@ void Exp_Init (void)
 #endif
 	ExpNpc_Init ();
 	if (expnpc_on) exp_any = 1;
+	ExpBase_Init ();
+	if (expbase_on) exp_any = 1;
 	if ((s = getenv ("FE2_FRAME_STATS")) && *s && strcmp (s, "0") &&
 	    (fs_ms = malloc (FS_MAX * sizeof (float)))) {
 		frame_stats_on = 1;

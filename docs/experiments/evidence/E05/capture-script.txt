@@ -1,0 +1,158 @@
+# Ross 154 screens with the hook on and off: system data (e5b.txt) and orrery zoom (e5d.txt)
+40 mark INTRO
++20 key 39
++60 key 02
++150 key 3c
++60 shot f2
++5 key 3f
++60 shot f2f5
++5 key 40
++60 shot f2f6
++5 key 41
++60 shot f2f7
++5 key 42
++60 shot f2f8
++5 key 43
++60 shot f2f9
++5 quit
+
+40 mark INTRO
++20 key 39
++60 key 02
++150 key 3c
++40 key 3c
++60 shot map0
++5 mouse 159 84
++5 click l
++40 shot map_sel
++5 mouse 264 193
++5 click l
++40 shot map_z1
++5 click l
++40 shot map_z2
++5 click l
++40 shot map_z3
++5 click l
++40 shot map_z4
++5 click l
++40 shot map_z5
++5 click l
++40 shot map_z6
++5 click l
++40 shot map_z7
++5 click l
++40 shot map_z8
++5 quit
+
+# fly to Merlin High, dock, services, bulletin board, equipment (e5k.txt)
+# the first 26 lines are e5d.txt without its quit: the orrery zoomed in on Merlin
+40 mark INTRO
++20 key 39
++60 key 02
++150 key 3c
++40 key 3c
++60 shot map0
++5 mouse 159 84
++5 click l
++40 shot map_sel
++5 mouse 264 193
++5 click l
++40 shot map_z1
++5 click l
++40 shot map_z2
++5 click l
++40 shot map_z3
++5 click l
++40 shot map_z4
++5 click l
++40 shot map_z5
++5 click l
++40 shot map_z6
++5 click l
++40 shot map_z7
++5 click l
++40 shot map_z8
++5 mouse 117 62
++5 click l
++40 key 44
++30 shot f10
++5 mouse 160 84
++5 click l
++40 shot tgt
++5 key 3b
++40 mouse 262 194
++5 click l
++400 key 41
++10 key 41
++30 shot ap1
++5 mouse 40 182
++5 click l
++300 shot ap2
++600 shot ap3
++900 shot ap4
++900 shot ap5
++900 shot ap6
++600 shot ap7
++600 shot ap8
++600 shot ap9
++600 shot ap10
++5 key 3e
++60 shot svc0
++5 key 19
++60 shot svc1
++5 key 3e
++60 shot svc
++5 mouse 129 88
++5 click l
++60 shot bbs
++5 key 3d
++60 shot equip
++5 quit
+
+# Merlin High stock market (e5m.txt): e5k.txt to line 56 (services), then:
++5 mouse 130 124
++5 click l
++60 shot stock
++5 quit
+
+# Sirocco Station stock market, flag off (e5s.txt)
+40 mark INTRO
++20 key 39
++60 key 02
++150 key 3e
++60 shot svc
++5 mouse 130 124
++5 click l
++60 shot stock
++5 quit
+
+# unrelated systems (e5u_barn.txt; e5u_gic.txt repeats the 4-line step 4 times instead of 2); _base.txt drops the memdump lines for older binaries
+1 memdump early
+40 mark INTRO
++20 key 39
++60 key 02
++150 key 3c
++60 keydown 48
++8 keyup 48
++5 keydown 4d
++6 keyup 4d
++60 keydown 48
++8 keyup 48
++5 keydown 4d
++6 keyup 4d
++60 shot g
++5 key 40
++60 shot f6
++5 key 41
++60 shot f7
++5 key 42
++60 shot f8
++5 key 3c
++60 shot o1
++5 mouse 264 193
++5 click l
++40 click l
++40 click l
++40 shot o2
++5 memdump late
++5 quit

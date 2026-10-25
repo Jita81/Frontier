@@ -24,6 +24,10 @@ int ExpNpc_DrawStr (HOSTCALL orig, int shadowed);
 void ExpNpc_Stats (FILE *f);
 int Font_CharWidth (int chr);	/* gl.c / soft.c */
 
+/* E5 FE2_NEW_STARPORT (expbase.c, both renderers) */
+extern int expbase_on;
+void ExpBase_Init (void);
+
 /* E1 FE2_TEXT=hires (exptext.c, GL build only) */
 extern int exp_text_on;
 #ifdef WITH_GL
