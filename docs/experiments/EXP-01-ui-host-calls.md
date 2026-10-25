@@ -129,6 +129,11 @@ FE2_PROVENANCE=1 FE2_TRACE_HCALLS=1 FE2_TRACE_FILE=out/t.trace \
 - The provenance tracker is an oracle in its own right: "fe2.s writes zero screen bytes outside host calls" is a cheap invariant to assert in CI on any scripted run. If a Phase 1 change to the CPU core or host calls breaks it, the run fails loudly with the frame and rows.
 - Golden screenshots are not deterministic, because the in-game clock (and `srand(time)` for the 3D scenes) follows wall time. Golden images either need the clock area masked (ST x 25–27, y 169–175, plus the system-map time readout) or a fixed-time hook. The game's `.st` buffer dump plus the host-call trace is the better oracle: it does not depend on the renderer, and on static screens it matches exactly apart from the clock.
 - A host-side UI layer like `FE2_TEXT` can be checked with the same oracle: with the flag on, the game buffer must stay byte-identical to the flag-off run.
+- **Fidelity check** (standing rule, 2026-10-25, added after E1 was committed):
+  - **Derived from game data.** `FE2_TEXT=hires` draws only the strings `fe2.s` passed to `DrawStr`, at the positions and in the colours the game gave them. It adds no text of its own and never reflows, so every word, number and layout on screen is the game's.
+  - **Never contradicts the game.** A glyph is redrawn only while its bytes in the buffer still hold exactly what `DrawStr` wrote. If anything has overdrawn it, the game's own bitmap is shown instead, so the layer can lose resolution but cannot show a stale or wrong character. The game buffer is byte-identical with the flag on and off ([`identity.txt`](evidence/E01/identity.txt)).
+  - **Check for production.** For each shot, map every redrawn glyph back to its source character and position and compare with the `DrawStr` calls in the trace for that frame: any glyph without a matching call, or any call whose glyphs are still intact but not redrawn, fails. A redesigned UI (new layouts, the **L** route) must keep the same rule: every value it shows is read from the host-call stream or game memory, never computed separately.
+  - **Known gap.** The stroke font's letterforms are new, so this checks content and placement, not appearance. Special glyphs ≥ 0x7f stay bitmaps today, so they are unchanged rather than checked.
 
 ## Legal flags
 
