@@ -15,6 +15,15 @@ void Exp_EndFrame (void);	/* in Nu_DrawScreen just before the flip/swap */
  * shown as packed RGB24, top row first. Returns 0 on success. */
 int Screen_ReadRGB (unsigned char **rgb, int *w, int *h);
 
+/* E4 FE2_NPC_LLM (expnpc.c, both renderers) */
+#include <stdio.h>
+#include "../m68000.h"
+extern int expnpc_on;
+void ExpNpc_Init (void);
+int ExpNpc_DrawStr (HOSTCALL orig, int shadowed);
+void ExpNpc_Stats (FILE *f);
+int Font_CharWidth (int chr);	/* gl.c / soft.c */
+
 /* E1 FE2_TEXT=hires (exptext.c, GL build only) */
 extern int exp_text_on;
 #ifdef WITH_GL

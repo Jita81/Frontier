@@ -195,6 +195,12 @@ static const unsigned char font_bmp[] = {
 	0xe0,0x80,0x80,0xe0,0x80,0x80,0x80,0x0,0x0,0x4
 };
 
+/* E4 (expnpc.c): advance width of a character as DrawStr draws it */
+int Font_CharWidth (int chr)
+{
+	return font_bmp[((chr - 0x20) & 0xff) * 10 + 9];
+}
+
 static int DrawChar (int col, int xoffset, char *scrline, int chr)
 {
 	const char *font_pos;

@@ -1,7 +1,7 @@
 THIS=Makefile-C
 VERSION=20060623
 
-SRCOBJS := audio.o hostcall.o keymap.o main.o shortcut.o input.o joystick.o ini.o exp.o
+SRCOBJS := audio.o hostcall.o keymap.o main.o shortcut.o input.o joystick.o ini.o exp.o expnpc.o
 
 COMPILER ?= gcc
 CC := $(CROSS_COMPILE)$(COMPILER)
@@ -24,7 +24,14 @@ VORBIS_LDFLAGS := $(shell pkg-config --libs-only-L vorbisfile vorbis ogg 2>/dev/
 # flag); without it optimised clang builds hang on planets
 CFLAGS := -O3 -fomit-frame-pointer -fwrapv -Wall -Wno-unused $(SDL_CFLAGS) $(VORBIS_CFLAGS) -DOGG_MUSIC
 
-LIBS := $(VORBIS_LDFLAGS) -lvorbisfile -lvorbis -logg $(SDL_LIBS)
+LIBS := $(VORBIS_LDFLAGS) -lvorbisfile -lvorbis -logg $(SDL_LIBS) -lpthread
+
+# E4 (src/expnpc.c): libcurl for the optional Anthropic API rewriter
+WITH_CURL ?= y
+ifeq ($(WITH_CURL),y)
+	CFLAGS += -DWITH_CURL
+	LIBS += -lcurl
+endif
 
 WITH_GL=y
 ifeq ($(WITH_GL),y)

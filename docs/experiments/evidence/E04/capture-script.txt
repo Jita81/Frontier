@@ -1,0 +1,11 @@
+40 mark INTRO
++20 key 39
++60 key 02
++150 key 3b
++40 mark CLICK7
++5 mouse 262 194
++5 click l
++3 shot msg1
++60 shot msg2
++600 shot late
++5 quit

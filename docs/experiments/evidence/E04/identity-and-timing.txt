@@ -1,0 +1,30 @@
+# md5 (first 8 hex) of the PNG-converted shots; e4.txt script; msg1 = frame 323, 2 frames after the message is drawn
+# columns: msg1.png msg1.st.png msg2.png late.png
+e4A ce71630b 568f164d a53dc6b9 7413cc06 
+e4B ce71630b 568f164d a53dc6b9 7413cc06 
+e4Bf ce71630b 568f164d a53dc6b9 7413cc06 
+e4C ce71630b 568f164d a53dc6b9 7413cc06 
+e4D 07ed0955 359fedb4 1e65f20f 7413cc06 
+e4F1 ce71630b 568f164d a53dc6b9 7413cc06 
+e4N1 07ed0955 359fedb4 1e65f20f 7413cc06 
+e4S ce71630b 568f164d a53dc6b9 7413cc06 
+e4Mfit2 83c80107 552e056a a1d16e71 7413cc06 
+
+# frame intervals (FE2_FRAME_STATS=1)
+e4F1 FE2_FRAME_STATS: 987 frame intervals: mean 23.877 ms, median 24.652, p99 26.892, max 48.805
+e4F2 FE2_FRAME_STATS: 987 frame intervals: mean 23.810 ms, median 24.632, p99 25.767, max 39.484
+e4N1 FE2_FRAME_STATS: 987 frame intervals: mean 23.983 ms, median 24.785, p99 25.641, max 40.263
+e4N1 FE2_NPC: messages 2: rewritten 2, first sight (queued) 0, still pending 0, rejected 0, cached but no fit 0; worker 0 done 0 accepted, slowest 0.0 ms; hook on main thread: total 23 us, max 15 us
+e4N2 FE2_FRAME_STATS: 987 frame intervals: mean 23.874 ms, median 24.583, p99 27.097, max 108.077
+e4N2 FE2_NPC: messages 2: rewritten 2, first sight (queued) 0, still pending 0, rejected 0, cached but no fit 0; worker 0 done 0 accepted, slowest 0.0 ms; hook on main thread: total 23 us, max 15 us
+e4S FE2_FRAME_STATS: 987 frame intervals: mean 23.480 ms, median 24.162, p99 25.881, max 41.818
+e4S FE2_NPC: messages 2: rewritten 0, first sight (queued) 1, still pending 1, rejected 0, cached but no fit 0; worker 1 done 1 accepted, slowest 2018.4 ms; hook on main thread: total 6 us, max 5 us
+
+# cold cache (C) and warm cache (D)
+e4C FE2_NPC: messages 2: rewritten 0, first sight (queued) 1, still pending 1, rejected 0, cached but no fit 0; worker 1 done 1 accepted, slowest 16.0 ms; hook on main thread: total 4 us, max 3 us
+e4D FE2_NPC: messages 2: rewritten 2, first sight (queued) 0, still pending 0, rejected 0, cached but no fit 0; worker 0 done 0 accepted, slowest 0.0 ms; hook on main thread: total 25 us, max 16 us
+
+# all six shots, flag off (columns: late late.st msg1 msg1.st msg2 msg2.st)
+e4A 7413cc06 d45c9523 ce71630b 568f164d a53dc6b9 53a79ccd 
+e4B 7413cc06 d45c9523 ce71630b 568f164d a53dc6b9 53a79ccd 
+e4Bf 7413cc06 d45c9523 ce71630b 568f164d a53dc6b9 53a79ccd 

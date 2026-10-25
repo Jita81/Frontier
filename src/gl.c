@@ -292,6 +292,12 @@ static int DrawChar (int col, int xoffset, char *scrline, int chr)
 	return xoffset + i;
 }
 
+/* E4 (expnpc.c): advance width of a character as DrawStr draws it */
+int Font_CharWidth (int chr)
+{
+	return font_bmp[((chr - 0x20) & 0xff) * 10 + 9];
+}
+
 #define MAX_QUEUED_STRINGS	200
 struct QueuedString {
 	int x, y, col;

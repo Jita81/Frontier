@@ -18,6 +18,10 @@
  *   FE2_MESH_LOG=<file>   GL only: log every projected 3D model instance
  *   FE2_SHIP_MESH=<index> GL only: draw a generated placeholder mesh for that
  *                         model index (see expmesh.c)
+ *   FE2_NPC_LLM=1         rewrite comms messages in a per-speaker personality
+ *                         (see expnpc.c)
+ *   FE2_FRAME_STATS=1     measurement only: at exit, print the wall-clock
+ *                         interval between frames (mean, p99, max)
  *
  * With none of them set, Exp_Init returns without touching hcalls[] and the
  * other entry points return on their first test, so the game runs exactly
@@ -41,6 +45,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "main.h"
 #include "../m68000.h"
@@ -362,6 +367,9 @@ static void trace_call (int n)
 	/* E3: primitives of the replaced model are not recorded */
 	if (expmesh_on && n >= 0x60 && n <= 0x79 && ExpMesh_Prim (n)) return;
 #endif
+	/* E4: a rewritten comms message is drawn instead of the original */
+	if (expnpc_on && (n == HC_DRAWSTR || n == HC_DRAWSTRSHADOWED) &&
+	    ExpNpc_DrawStr (orig_hcalls[n], n == HC_DRAWSTRSHADOWED)) return;
 	if (prov_on && may_write_screen (n)) {
 		u32 sp = GetReg (REG_A7);
 		prov_before (n);
@@ -596,6 +604,40 @@ static void step_script (void)
 	}
 }
 
+/* --------------------------------------------------------- frame stats */
+
+#define FS_MAX	100000
+static int frame_stats_on;
+static float *fs_ms;
+static unsigned long fs_n;
+static double fs_last;
+
+static double wall_ms (void)
+{
+	struct timespec ts;
+	clock_gettime (CLOCK_MONOTONIC, &ts);
+	return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
+}
+
+static int cmp_float (const void *a, const void *b)
+{
+	float x = *(const float *) a, y = *(const float *) b;
+	return (x > y) - (x < y);
+}
+
+static void at_exit (void)
+{
+	if (expnpc_on) ExpNpc_Stats (stderr);
+	if (frame_stats_on && fs_n > 1) {
+		double sum = 0;
+		unsigned long i;
+		for (i = 0; i < fs_n; i++) sum += fs_ms[i];
+		qsort (fs_ms, fs_n, sizeof (float), cmp_float);
+		fprintf (stderr, "FE2_FRAME_STATS: %lu frame intervals: mean %.3f ms, median %.3f, p99 %.3f, max %.3f\n",
+			 fs_n, sum / fs_n, fs_ms[fs_n / 2], fs_ms[fs_n * 99 / 100], fs_ms[fs_n - 1]);
+	}
+}
+
 /* ------------------------------------------------------------- entries */
 
 void Exp_Init (void)
@@ -638,6 +680,14 @@ void Exp_Init (void)
 	ExpMesh_Init ();
 	if (expmesh_on) exp_any = 1;
 #endif
+	ExpNpc_Init ();
+	if (expnpc_on) exp_any = 1;
+	if ((s = getenv ("FE2_FRAME_STATS")) && *s && strcmp (s, "0") &&
+	    (fs_ms = malloc (FS_MAX * sizeof (float)))) {
+		frame_stats_on = 1;
+		exp_any = 1;
+	}
+	if (exp_any) atexit (at_exit);
 	/* the script's 'wait' reads strings from the trace wrappers */
 	if (exp_any) install_trace ();
 }
@@ -661,6 +711,11 @@ void Exp_EndFrame (void)
 		fputc ('\n', trace_fp);
 	}
 	memset (calls_this_frame, 0, sizeof (calls_this_frame));
+	if (frame_stats_on) {
+		double t = wall_ms ();
+		if (fs_last && fs_n < FS_MAX) fs_ms[fs_n++] = t - fs_last;
+		fs_last = t;
+	}
 #ifdef WITH_GL
 	if (expmesh_on) ExpMesh_EndFrame ();
 #endif
