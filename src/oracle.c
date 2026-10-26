@@ -219,6 +219,7 @@ static void tape_load (const char *path)
 			if (!strcmp (tok, "h"))
 				die2 ("tape lint: line %d: h action not supported by this build", lineno);
 			if (!strcmp (tok, "end")) {
+				if (v == 0) die2 ("tape lint: line %d: end 0 replays nothing", lineno);
 				tape_end_v = v;
 				continue;
 			}
