@@ -15,8 +15,9 @@
 # What goes in the bundle, and what does not
 #   in:      the frontier binary, the Homebrew dylibs it needs (re-pointed so no
 #            /opt/homebrew or /usr/local path remains), Info.plist, a generated
-#            icon, a launcher script, cursor.png and joystick.ini (both are
-#            tracked in this repository), and the SHA-256 of fe2.s.bin
+#            icon, a launcher script, cursor.png, joystick.ini and the hull
+#            plating tile art/hull/plating.lum (all tracked in this
+#            repository, the tile new art), and the SHA-256 of fe2.s.bin
 #   NOT in:  fe2.s.bin, sfx/, music/, savs/. The launcher reads them from the
 #            user's data folder (see launcher.sh).
 #   NOTE:    the frontier binary itself is the translation of fe2.s to C, so the
@@ -234,6 +235,11 @@ chmod 755 "$APP/Contents/MacOS/Frontier"
 for f in cursor.png joystick.ini; do
 	[ -f "$f" ] && cp "$f" "$APP/Contents/Resources/$f"
 done
+# the hull plating tile; the launcher points the game at it
+if [ -f art/hull/plating.lum ]; then
+	mkdir -p "$APP/Contents/Resources/art/hull"
+	cp art/hull/plating.lum "$APP/Contents/Resources/art/hull/"
+fi
 shasum -a 256 fe2.s.bin | cut -d' ' -f1 >"$APP/Contents/Resources/fe2.s.bin.sha256"
 
 say "drawing the icon"
