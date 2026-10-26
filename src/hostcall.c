@@ -31,6 +31,10 @@
 #include "input.h"
 #include "keymap.h"
 #include "shortcut.h"
+#ifdef WITH_GL
+#include "hdstill.h"
+#include "hdface.h"
+#endif
 
 /*
   GEMDOS error codes, See 'The Atari Compendium' D.3
@@ -410,6 +414,11 @@ void Call_BlitBmp ()
 	if (width > 320) return;
 	
 	plane_incr = 2*height*width;
+#ifdef WITH_GL
+	/* the HD layers note what is drawn where (they never change it) */
+	hdstill_blit ((const unsigned char *) bmp_pix, width, height, org_x, org_y, bmp, scr);
+	hdface_blit ((const unsigned char *) bmp_pix, width, height, org_x, org_y, bmp, scr);
+#endif
 	
 	ypoo = height;
 	while (ypoo--) {

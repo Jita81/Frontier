@@ -28,6 +28,9 @@ enum RENDERERS {
 extern enum RENDERERS use_renderer;
 extern int flat_hulls;
 extern int pixel_text;
+extern int pixel_art;
+extern int pixel_faces;
+extern int classic_ui;
 
 /* palette length changes as dynamic colours change */
 extern int len_main_palette;

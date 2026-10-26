@@ -73,6 +73,10 @@ int flat_hulls = 0;
 int mouse_shown = 0;
 /* --pixel-text: the GL renderer's HD text; this one only has pixels */
 int pixel_text = 1;
+/* --pixel-art, --pixel-faces, --classic-ui: the GL renderer's too */
+int pixel_art = 1;
+int pixel_faces = 1;
+int classic_ui = 1;
 
 /*-----------------------------------------------------------------------*/
 /*

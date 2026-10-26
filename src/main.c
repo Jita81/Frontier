@@ -201,6 +201,9 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --flat-hulls          Flat ship faces, no hull plating.\n"
                "  --pixel-text          Keep the original bitmap font (no HD text;\n"
                "                        FE2_HD_FONT=<PostScript name> picks the font).\n"
+               "  --pixel-art           Keep the game's own bitmaps (no HD stills).\n"
+               "  --pixel-faces         Keep the game's own faces (no HD portraits).\n"
+               "  --classic-ui          Keep the game's own flat 2D screens.\n"
               );
         exit(0);
       }
@@ -218,6 +221,12 @@ void Main_ReadParameters(int argc, char *argv[])
 		flat_hulls = 1;
 	  else if (!strcmp(argv[i], "--pixel-text"))
 		pixel_text = 1;
+	  else if (!strcmp(argv[i], "--pixel-art"))
+		pixel_art = 1;
+	  else if (!strcmp(argv[i], "--pixel-faces"))
+		pixel_faces = 1;
+	  else if (!strcmp(argv[i], "--classic-ui"))
+		classic_ui = 1;
       else if ( !strcmp(argv[i],"--size") )
       {
 	screen_h = 0;

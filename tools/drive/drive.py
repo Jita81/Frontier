@@ -34,7 +34,7 @@ import threading
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-MAX_PNG = 150 * 1024
+MAX_PNG = 150 * 1024  # --max-png-kb
 
 
 def sha256(path):
@@ -153,7 +153,7 @@ def capture(wid, size, raw, dest):
     if r.returncode:
         return "ffmpeg failed: %s" % r.stderr.strip()
     if os.path.getsize(dest) > MAX_PNG:
-        return "PNG still over 150 KB (%d bytes)" % os.path.getsize(dest)
+        return "PNG still over %d KB (%d bytes)" % (MAX_PNG // 1024, os.path.getsize(dest))
     return None
 
 
@@ -393,9 +393,13 @@ def main():
     p.add_argument("--compare", nargs=2, metavar=("RUN_A", "RUN_B"),
                    help="compare the shots of two run directories and exit")
     p.add_argument("--ssim", type=float, default=0.90, help="--compare threshold")
+    p.add_argument("--max-png-kb", type=int, default=150,
+                   help="a shot over this many KB is palettised, then reported (status 125)")
     p.add_argument("--ikbd", metavar="RUN_DIR",
                    help="summarise the ST scancodes that sdlkey steps produced in a run, and exit")
     a = p.parse_args()
+    global MAX_PNG
+    MAX_PNG = a.max_png_kb * 1024
     if a.ikbd:
         sys.exit(ikbd(a.ikbd))
     if a.compare:
