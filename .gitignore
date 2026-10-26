@@ -1,12 +1,23 @@
 *.o
-frontier
+# Frontier Developments game data and everything built from it.  Never commit
+# them: tools/check-no-game-data.sh refuses them (see .githooks/README.md).
+fe2.s
+fe2.s.c
+fe2.s.bin
 fe2.s.*
 fixups.h
 gen
-/fe2.s
-/sfx/
-/music/
-/savs/
+frontier
+sfx
+music
+savs
+*.wav
+*.ogg
+*.sav
+*.fstr
+captures/
+oracle-out/
+docs/screenshots/
 /san/
 /dist/
 /build/
