@@ -78,6 +78,7 @@ int pixel_text = 1;
 */
 int screen_w = 320;
 int screen_h = 200;
+int view_x = 0, view_y = 0, view_w = 0, view_h = 0;
 
 /* Largest window side change_vidmode() asks SDL for (S-16); Metal's texture
  * limit is 16384 on Apple silicon, and a ST picture gains nothing past this. */
