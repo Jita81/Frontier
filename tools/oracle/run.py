@@ -354,7 +354,9 @@ def verdict(baseline, run1, run2):
 
 def make_rundir(path, binfile, saves=None):
     os.makedirs(path, exist_ok=True)
-    link = os.path.join(path, "fe2.s.bin")
+    # linked under its own name: a build from a hook-patched fe2.s
+    # (tools/fe2s-hooks) loads fe2.s.patched.bin, not fe2.s.bin
+    link = os.path.join(path, os.path.basename(binfile))
     if os.path.lexists(link):
         os.unlink(link)
     os.symlink(os.path.abspath(binfile), link)
@@ -388,7 +390,10 @@ def replay(binary, tape, out, args=(), detail=None, timeout=300, keep=False, sav
     bindir = os.path.dirname(os.path.abspath(binary))
     work = tempfile.mkdtemp(prefix="fe2oracle-")
     try:
-        make_rundir(work, os.path.join(bindir, "fe2.s.bin"), saves)
+        images = [n for n in ("fe2.s.bin", "fe2.s.patched.bin")
+                  if os.path.exists(os.path.join(bindir, n))]
+        for n in images or ["fe2.s.bin"]:
+            make_rundir(work, os.path.join(bindir, n), saves)
         a = ["--nosound", "--oracle-replay", os.path.abspath(tape),
              "--oracle-out", os.path.abspath(out), "--oracle-timeout", str(int(timeout))]
         if detail:

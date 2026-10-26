@@ -107,7 +107,8 @@ python3 tools/oracle/test_run.py
 
 How the commands run:
 
-- `replay` makes a fresh run directory. It holds a symlinked `fe2.s.bin`, an empty or
+- `replay` makes a fresh run directory. It holds a symlinked `fe2.s.bin` (or
+  `fe2.s.patched.bin`, for a build from a hook-patched `fe2.s`), an empty or
   copied `savs/`, and no `sfx/` or `music/`.
 - `replay` sets `SDL_VIDEO_WINDOW_POS` (default `1500,800`), so several agents can
   share a desktop.
