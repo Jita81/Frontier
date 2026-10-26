@@ -35,6 +35,7 @@ typedef void (*_GLUfuncptr)();
 #include "../m68000.h"
 #include "screen.h"
 #include "planet.h"
+#include "hdtext.h"
 /* MEM_SIZE, and the engine's variables by label address (__D<label>) */
 #include "../host.h"
 #include "../fixups.h"
@@ -63,6 +64,8 @@ enum RENDERERS use_renderer = R_GL;
 int flat_hulls = 0;
 /* mouse shown this frame? */
 int mouse_shown = 0;
+/* --pixel-text: no HD text, see hdtext.c */
+int pixel_text = 0;
 /* fe2 UI blits are done to old screen memory and copied to this texture. */
 static unsigned int screen_tex;
 
@@ -174,6 +177,7 @@ static void change_vidmode ()
 	 * needed. */
 	planet_forget_textures ();
 	hull_forget_texture ();
+	hdtext_forget ();
 	if (screen_tex) {
 		glDeleteTextures (1, &screen_tex);
 		screen_tex = 0;
@@ -481,6 +485,7 @@ set_line:
 		
 		//if (x > 316) continue;
 
+		hdtext_glyph (font_bmp, x, y, col, chr-0x20, shadowed);
 		if (shadowed) {
 			DrawChar (0, x+1, screen+SCREENBYTES_LINE, chr-0x20);
 		}
@@ -523,6 +528,7 @@ static void draw_control_panel ()
 	unsigned char *scr;
 	unsigned int line[320];
 	unsigned int *pal;
+	static unsigned char hd_screen[320*200];
 
 	set_ctrl_viewport ();
 	
@@ -542,7 +548,12 @@ static void draw_control_panel ()
 	logscreen2 = y;
 	/****************************************************/
 	
+	/* the screen with the glyphs hdtext redraws taken out */
 	scr = VideoRaster;
+	if (!pixel_text) {
+		hdtext_frame (font_bmp, VideoRaster, hd_screen);
+		scr = hd_screen;
+	}
 	
 	/* intro likes black at the bottom */
 	/* hack hack hack what a pile of shite this is */
@@ -604,6 +615,7 @@ static void draw_control_panel ()
 		glEnd ();
 		glDisable (GL_BLEND);
 	}
+	hdtext_draw (font_bmp, MainRGBPalette, CtrlRGBPalette);
 	
 	glDisable (GL_TEXTURE_2D);
 	
