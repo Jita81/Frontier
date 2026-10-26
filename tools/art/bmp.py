@@ -56,7 +56,11 @@ def load(path, size=None):
         cmd = ["sips", "-s", "format", "bmp"]
         if size:
             cmd += ["-z", str(size), str(size)]
-        subprocess.run(cmd + [path, "--out", tmp], check=True, capture_output=True)
+        p = subprocess.run(cmd + [path, "--out", tmp], check=True, capture_output=True)
+        # sips can exit 0 having written nothing (a sandboxed temp dir:
+        # set TMPDIR somewhere writable)
+        if not os.path.exists(tmp):
+            raise RuntimeError(f"sips wrote nothing for {path}: {p.stderr.decode().strip()}")
         return read(tmp)
 
 

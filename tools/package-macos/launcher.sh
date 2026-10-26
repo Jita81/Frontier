@@ -137,6 +137,10 @@ for f in cursor.png joystick.ini; do
 	[ -f "$DATA_DIR/$f" ] || [ ! -f "$RES/$f" ] || cp "$RES/$f" "$DATA_DIR/$f" 2>/dev/null
 done
 
+# The hull plating tile stays in the app; FE2_HULL_TILE, if set, wins.
+[ -n "${FE2_HULL_TILE+set}" ] || [ ! -f "$RES/art/hull/plating.lum" ] ||
+	export FE2_HULL_TILE="$RES/art/hull/plating.lum"
+
 cd "$DATA_DIR" || exit 1
 
 # A Finder launch has no console (stderr is /dev/null), so keep the game's

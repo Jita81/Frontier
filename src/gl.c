@@ -1731,22 +1731,25 @@ static unsigned int hull_hash (unsigned int x)
 	return x;
 }
 
-/* A tile from the file FE2_HULL_TEX names, HULL_TEX_N squared bytes of
- * grey (tools/art/hull_tile.py makes them), to try other plating without a
- * rebuild. Its sum into *sum; 0 if unset or not a tile. */
+/* The plating tile, HULL_TEX_N squared bytes of grey (tools/art/hull_tile.py
+ * makes them): HULL_TILE, or the file FE2_HULL_TILE names to try another
+ * without a rebuild (FE2_HULL_TILE set empty: the built-in plating). Its sum
+ * into *sum; 0 if there is no tile. */
+#define HULL_TILE "art/hull/plating.lum"
 static int hull_load_tile (float *v, double *sum)
 {
 	static unsigned char buf[HULL_TEX_N * HULL_TEX_N + 1];
-	const char *path = getenv ("FE2_HULL_TEX");
+	const char *path = getenv ("FE2_HULL_TILE");
 	FILE *f;
 	size_t got;
 	int i;
 
-	if (!path || !*path || !(f = fopen (path, "rb"))) return 0;
+	if (!path) path = HULL_TILE;
+	if (!*path || !(f = fopen (path, "rb"))) return 0;
 	got = fread (buf, 1, sizeof buf, f);
 	fclose (f);
 	if (got != HULL_TEX_N * HULL_TEX_N) {
-		fprintf (stderr, "FE2_HULL_TEX: %s is not a %dx%d tile, using the built-in plating\n",
+		fprintf (stderr, "hull plating: %s is not a %dx%d tile, using the built-in plating\n",
 			 path, HULL_TEX_N, HULL_TEX_N);
 		return 0;
 	}

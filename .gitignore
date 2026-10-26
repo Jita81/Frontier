@@ -21,3 +21,4 @@ docs/screenshots/
 /san/
 /dist/
 /build/
+__pycache__/

@@ -3,7 +3,7 @@
 
     python3 -I tools/art/hull_tile.py IN.jpg OUT [--std 0.09]
 
-writes OUT.lum (512x512 bytes, the format FE2_HULL_TEX loads) and
+writes OUT.lum (512x512 bytes, the format FE2_HULL_TILE loads) and
 OUT.png and OUT-2x2.png to look at.  The game multiplies each ship face's
 flat colour by the tile (texel 128 = x1.0), so the tile must:
 
