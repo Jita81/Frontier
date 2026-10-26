@@ -198,6 +198,7 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --nosound             Disable sound (faster!).\n"
                "  --size w h            Start at specified window size.\n"
 			   "  --old-renderer        Start with the old renderer.\n"
+               "  --flat-hulls          Flat ship faces, no hull plating.\n"
               );
         exit(0);
       }
@@ -211,6 +212,8 @@ void Main_ReadParameters(int argc, char *argv[])
       }
 	  else if (!strcmp(argv[i], "--old-renderer"))
 		use_renderer = R_OLD;
+	  else if (!strcmp(argv[i], "--flat-hulls"))
+		flat_hulls = 1;
       else if ( !strcmp(argv[i],"--size") )
       {
 	screen_h = 0;
