@@ -73,7 +73,8 @@ A script that ends without `quit` leaves the game running, so the run ends
 at the timeout with 124.
 
 `--compare RUN_A RUN_B` computes the SSIM of each pair of same-named shots
-and exits 0 if the worst pair is at or above `--ssim` (0.90). `--ikbd RUN_DIR`
+and exits 0 only if both runs have the same shot names and the worst pair is
+at or above `--ssim` (0.90). `--ikbd RUN_DIR`
 lists the ST scancodes that each `sdlkey` step produced, from `game.log`.
 
 ## Script grammar

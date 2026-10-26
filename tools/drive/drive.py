@@ -307,6 +307,15 @@ def compare(dir_a, dir_b, threshold):
         v = float(m.group(1)) if m else 0.0
         rows.append((s["name"], v))
         worst = min(worst, v)
+    # a shot only run B has, or no shots at all, is not "the same screens"
+    names_a = {s["name"] for s in ma["shots"]}
+    for t in mb["shots"]:
+        if t["name"] not in names_a:
+            rows.append((t["name"], None))
+            worst = 0.0
+    if not rows:
+        print("no shots in either run")
+        worst = 0.0
     for name, v in rows:
         print("%-32s %s" % (name, "missing" if v is None else "SSIM %.4f %s" %
                             (v, "same" if v >= threshold else "DIFFERENT")))
