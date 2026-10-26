@@ -36,6 +36,9 @@ typedef void (*_GLUfuncptr)();
 #include "screen.h"
 #include "planet.h"
 #include "hdtext.h"
+#include "hdstill.h"
+#include "hdface.h"
+#include "hdui.h"
 /* MEM_SIZE, and the engine's variables by label address (__D<label>) */
 #include "../host.h"
 #include "../fixups.h"
@@ -66,6 +69,11 @@ int flat_hulls = 0;
 int mouse_shown = 0;
 /* --pixel-text: no HD text, see hdtext.c */
 int pixel_text = 0;
+/* --pixel-art, --pixel-faces, --classic-ui: no HD stills, faces or
+ * restyled screens, see hdstill.c, hdface.c, hdui.c */
+int pixel_art = 0;
+int pixel_faces = 0;
+int classic_ui = 0;
 /* fe2 UI blits are done to old screen memory and copied to this texture. */
 static unsigned int screen_tex;
 
@@ -178,6 +186,9 @@ static void change_vidmode ()
 	planet_forget_textures ();
 	hull_forget_texture ();
 	hdtext_forget ();
+	hdstill_forget ();
+	hdface_forget ();
+	hdui_forget ();
 	if (screen_tex) {
 		glDeleteTextures (1, &screen_tex);
 		screen_tex = 0;
@@ -548,10 +559,13 @@ static void draw_control_panel ()
 	logscreen2 = y;
 	/****************************************************/
 	
-	/* the screen with the glyphs hdtext redraws taken out */
+	/* the screen with what the HD layers redraw taken out */
 	scr = VideoRaster;
-	if (!pixel_text) {
+	if (!pixel_text || !pixel_art || !pixel_faces || !classic_ui) {
 		hdtext_frame (font_bmp, VideoRaster, hd_screen);
+		hdui_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
+		hdstill_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
+		hdface_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
 		scr = hd_screen;
 	}
 	
@@ -565,6 +579,8 @@ static void draw_control_panel ()
 		glVertex3f (0, 0, 0);
 		glVertex3f (319, 0, 0);
 	glEnd ();
+	
+	hdui_draw_under (MainRGBPalette, CtrlRGBPalette);
 	
 	glEnable (GL_TEXTURE_2D);
 	
@@ -615,7 +631,10 @@ static void draw_control_panel ()
 		glEnd ();
 		glDisable (GL_BLEND);
 	}
+	hdstill_draw (MainRGBPalette, CtrlRGBPalette);
+	hdface_draw (MainRGBPalette, CtrlRGBPalette);
 	hdtext_draw (font_bmp, MainRGBPalette, CtrlRGBPalette);
+	hdui_draw_over (MainRGBPalette, CtrlRGBPalette);
 	
 	glDisable (GL_TEXTURE_2D);
 	

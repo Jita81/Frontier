@@ -140,6 +140,8 @@ done
 # The hull plating tile stays in the app; FE2_HULL_TILE, if set, wins.
 [ -n "${FE2_HULL_TILE+set}" ] || [ ! -f "$RES/art/hull/plating.lum" ] ||
 	export FE2_HULL_TILE="$RES/art/hull/plating.lum"
+# The rest of the new art too; FE2_ART_DIR, if set, wins.
+[ -n "${FE2_ART_DIR+set}" ] || [ ! -d "$RES/art" ] || export FE2_ART_DIR="$RES/art"
 
 cd "$DATA_DIR" || exit 1
 
