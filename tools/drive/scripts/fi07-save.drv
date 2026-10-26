@@ -1,0 +1,49 @@
+# fi07-save.drv - save a commander from the docked start, under a chosen name.
+#
+# Verifies: FI-07 (the save dialog opens from Preferences with F8, the name can
+#           be edited, OK writes ./savs/<name> through the Fwrite hcall).
+# Writes:   savs/drvsave (git-excluded; s16-fixtures.sh clean removes it).
+# Screen positions are ST coordinates (320x200): the name field is at (155,9),
+#           the OK box at (245,8). Clicking the name opens the edit; typing
+#           without that click does nothing.
+# Run:  python3 tools/drive/drive.py --script tools/drive/scripts/fi07-save.drv \
+#           --out RUN_DIR --timeout 60
+#       ls -l savs/drvsave
+# Expect: exit 0; 02 shows the name "drvsave"; savs/drvsave exists afterwards.
+
+wait 6000
+key space
+wait 2000
+key 3
+wait 11000
+key esc           # first Esc: pause
+wait 800
+key esc           # second Esc: Preferences
+wait 1500
+key f8            # F8 in Preferences: save
+wait 1500
+shot 01-save-dialog
+mouse 155 9       # the name field
+click
+wait 500
+key backspace
+key backspace
+key backspace
+key backspace
+key backspace
+key backspace
+key backspace
+key backspace
+key backspace
+key backspace
+text "drvsave"
+key return        # ends the name edit; nothing is written yet
+wait 800
+shot 02-name-entered
+mouse 245 8       # OK
+click
+wait 2000
+shot 03-after-ok
+key esc
+wait 1000
+quit
