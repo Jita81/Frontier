@@ -27,6 +27,7 @@ enum RENDERERS {
 };
 extern enum RENDERERS use_renderer;
 extern int flat_hulls;
+extern int hull_style;
 
 /* palette length changes as dynamic colours change */
 extern int len_main_palette;

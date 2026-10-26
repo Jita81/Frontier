@@ -154,6 +154,13 @@ void Main_EventHandler()
        Input_MouseRelease (event.button.button);
        break;
     case SDL_KEYDOWN:
+       if (event.key.keysym.sym == SDLK_h && (event.key.keysym.mod & KMOD_CTRL)
+           && (event.key.keysym.mod & KMOD_SHIFT)) {
+          /* hull look, 0 to 4 and round again (see --hull-style) */
+          hull_style = (hull_style + 1) % 5;
+          fprintf (stderr, "hull style %d\n", hull_style);
+          break;
+       }
        Keymap_KeyDown(&event.key.keysym);
        break;
     case SDL_KEYUP:
@@ -199,6 +206,9 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --size w h            Start at specified window size.\n"
 			   "  --old-renderer        Start with the old renderer.\n"
                "  --flat-hulls          Flat ship faces, no hull plating.\n"
+               "  --hull-style N        Hull look, 0 plating (default), 1 big texture,\n"
+               "                        2 panels, 3 bump and weathering, 4 per model.\n"
+               "                        Ctrl+Shift+H steps through them.\n"
               );
         exit(0);
       }
@@ -214,6 +224,10 @@ void Main_ReadParameters(int argc, char *argv[])
 		use_renderer = R_OLD;
 	  else if (!strcmp(argv[i], "--flat-hulls"))
 		flat_hulls = 1;
+	  else if (!strcmp(argv[i], "--hull-style") && i + 1 < argc) {
+		hull_style = atoi (argv[++i]);
+		if (hull_style < 0 || hull_style > 4) hull_style = 0;
+	  }
       else if ( !strcmp(argv[i],"--size") )
       {
 	screen_h = 0;

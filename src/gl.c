@@ -27,14 +27,21 @@
  * Linux/Mesa's GL/glu.h does; declare a compatible one here. */
 typedef void (*_GLUfuncptr)();
 #else
+#define GL_GLEXT_PROTOTYPES 1
 #include <GL/gl.h>
 #include <GL/glu.h>
+#endif
+
+/* the shader tiers of --hull-style need GL 2.0 */
+#if defined (__APPLE__) || defined (GL_VERSION_2_0)
+#define HULL_SHADERS 1
 #endif
 
 #include "main.h"
 #include "../m68000.h"
 #include "screen.h"
 #include "planet.h"
+#include "hull.h"
 /* MEM_SIZE, and the engine's variables by label address (__D<label>) */
 #include "../host.h"
 #include "../fixups.h"
@@ -61,6 +68,20 @@ BOOL bInFullScreen = FALSE;
 enum RENDERERS use_renderer = R_GL;
 /* --flat-hulls: no hull texture on ship faces (see hull_begin) */
 int flat_hulls = 0;
+/* --hull-style N, how a ship face is painted (every style keeps the face's
+ * own colour and brightness; the textures are made at run time by hull.c):
+ *	0 the fixed-function plating below (the default)
+ *	1 a 1024 plating texture, two scales blended, no visible tiling,
+ *	  anisotropic filtering
+ *	2 + irregular recessed panels, hatches, vents, hazard stripes,
+ *	  greebles and edge occlusion taken from the face's own edges
+ *	3 + bump map, specular and weathering (grime, chips), lit from the
+ *	  game's own light direction
+ *	4 + a material profile per model (hull.c, hull_models)
+ * Styles 1 to 4 need GLSL 1.20; without it they fall back to 0. A face that
+ * hosts decals (a sign, a registration) keeps the quiet plating, or is flat
+ * for the station's own signs. Ctrl+Shift+H steps through the styles. */
+int hull_style = 0;
 /* mouse shown this frame? */
 int mouse_shown = 0;
 /* fe2 UI blits are done to old screen memory and copied to this texture. */
@@ -676,6 +697,7 @@ static int scene_overflow;
 static unsigned int scene_overflows;
 
 static void ztree_sync (void);
+static void hull_latch (void);
 
 static inline int znode_room (int n)
 {
@@ -1058,6 +1080,7 @@ void Nu_3DViewInit ()
 	/* L385ea_Clear3DView has just set it to the base */
 	ztree_heads[0] = STMemory_ReadLong (__DL385d0_3dview_thing2);
 	scene_overflow = 0;
+	hull_latch ();
 }
 
 static void lighting_on (float light_vec[4], int rgb444_light_col, int rgb444_extra_col, int rgb444_obj_col)
@@ -1789,10 +1812,13 @@ static void hull_make_texture (void)
 			   GL_LUMINANCE, GL_UNSIGNED_BYTE, lum);
 }
 
+static void hull_forget_shader (void);
+
 static void hull_forget_texture (void)
 {
 	if (hull_tex) glDeleteTextures (1, &hull_tex);
 	hull_tex = 0;
+	hull_forget_shader ();
 	hull_on = 0;
 }
 
@@ -1866,6 +1892,13 @@ static void hull_begin (void)
 static void hull_end (void)
 {
 	if (!hull_on) return;
+#ifdef HULL_SHADERS
+	if (hull_on == 2) {
+		glUseProgram (0);
+		hull_on = 0;
+		return;
+	}
+#endif
 	glTexEnvf (GL_TEXTURE_ENV, GL_RGB_SCALE, 1.0f);
 	glTexEnvi (GL_TEXTURE_ENV, GL_SOURCE0_ALPHA, GL_TEXTURE);
 	glTexEnvi (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
@@ -1884,6 +1917,394 @@ static int hull_use (double p[][3], int n, float st[][2])
 	return 1;
 }
 
+/*
+ * --hull-style 1..4: the same flat faces, painted by a fragment shader.
+ *
+ * Style 0 (above) is the fixed-function plating. The four tiers build on
+ * each other and all keep the game's own colour and brightness for a face
+ * (the shader multiplies it, never replaces it):
+ *	1  a bigger texture (1024, FE2_HULL_TEX=2048), a second, blurred
+ *	   scale at an unrelated ratio so the tile never shows, and
+ *	   anisotropic filtering;
+ *	2  irregular panels, hatches, vents, greebles, hazard stripes and
+ *	   edge occlusion that runs along each polygon's own edges;
+ *	3  a normal map lit by the game's own light direction (bump and
+ *	   specular), grime, chipped paint and scratches;
+ *	4  a material profile per model (hull_models in hull.c).
+ * All of it is made at run time (hull.c); nothing is read from the game's
+ * data. Faces that carry decals (the engine opens a complex shape right
+ * after them) stay flat, so signs and logos are as the game drew them.
+ *
+ * The 68k side only adds a few bytes to each triangle and quad in the
+ * stream, when a style is on: the model's key, the face's own seed and the
+ * light. The key is found as in hull_model_key. FE2_HULL_LOG=1 prints each
+ * model number the first time it is seen, how long each texture took to make, and
+ * the time the 3D view takes to draw, every 300 frames.
+ */
+struct HullCtx {
+	unsigned int key, seed;
+	short light[3];
+};
+
+static int hull_ctx;		/* this frame's triangles and quads carry a HullCtx */
+static int hull_logging = -1;
+
+static int hull_log_on (void)
+{
+	if (hull_logging < 0) hull_logging = getenv ("FE2_HULL_LOG") != NULL;
+	return hull_logging;
+}
+
+/* Latched when the engine starts a frame: the stream of one frame is all
+ * with the context or all without, whatever the keyboard does meanwhile. */
+static void hull_latch (void)
+{
+	hull_ctx = hull_style > 0 && !flat_hulls && use_renderer != R_OLD;
+}
+
+static inline int st_readable (unsigned int addr, unsigned int len);
+
+/*
+ * The model of the object being drawn, from the 68k's state: a6 is the
+ * object's frame and -212(a6) its record, whose word at +90 is the model's
+ * offset into the game data table (twice the model's number). The key is
+ * that word with the top bit set; 0 when the state is not what that expects
+ * (every read is checked: the 68k's memory has no guard).
+ */
+static unsigned int hull_model_key (void)
+{
+	unsigned int a6 = GetReg (REG_A6), rec;
+
+	if (a6 > MEM_SIZE || !st_readable (a6 - 212, 4)) return 0;
+	rec = STMemory_ReadLong (a6 - 212);
+	if (rec > MEM_SIZE || !st_readable (rec + 90, 2)) return 0;
+	return 0x80000000u | (STMemory_ReadWord (rec + 90) & 255);
+}
+
+#define HULL_SEEN	64
+static void hull_log_model (unsigned int key)
+{
+	static unsigned int seen[HULL_SEEN];
+	static int nseen;
+	int i;
+
+	for (i = 0; i < nseen; i++)
+		if (seen[i] == key) return;
+	if (nseen < HULL_SEEN) seen[nseen++] = key;
+	fprintf (stderr, "hull: model %u -> %s\n", key & 255,
+		 hull_profiles[hull_profile_of_key (key)].name);
+}
+
+/* what the draw side needs to know about the triangle or quad just put:
+ * n vertices, in a0 to a(n-1) */
+static void hull_put_ctx (int n)
+{
+	unsigned int a0 = GetReg (REG_A0), a1 = GetReg (REG_A1), a2 = GetReg (REG_A2);
+	unsigned int a3 = GetReg (REG_A3), a6 = GetReg (REG_A6);
+	unsigned int key = hull_model_key (), seed;
+	short lt[3] = { 0, 0, 1 };
+	int k;
+
+	if (st_readable (a6 - 198, 6)) {
+		/* the light, the way znode_wrlightsource gives it to GL: towards
+		 * the light in view space */
+		lt[0] = -(short) STMemory_ReadWord (a6 - 198);
+		lt[1] = -(short) STMemory_ReadWord (a6 - 196);
+		lt[2] = (short) STMemory_ReadWord (a6 - 194);
+	}
+	/* the face's own number: the ST's polygon is told by which of the
+	 * object's vertices it uses, which does not change as it turns */
+	seed = hull_mix ((key & 255) + 0x5bd1e995u);
+	seed = hull_mix (seed ^ (a0 - a6));
+	seed = hull_mix (seed ^ (a1 - a0));
+	seed = hull_mix (seed ^ (a2 - a0));
+	if (n == 4) seed = hull_mix (seed ^ (a3 - a0));
+	if (HULL_KEY_OK (key) && hull_log_on ()) hull_log_model (key);
+	znode_wrlong (key);
+	znode_wrlong (seed);
+	for (k = 0; k < 3; k++) znode_wrword (lt[k]);
+}
+
+static void hull_rdctx (void **data, struct HullCtx *cx)
+{
+	int k;
+
+	cx->key = znode_rdlong (data);
+	cx->seed = znode_rdlong (data);
+	for (k = 0; k < 3; k++) cx->light[k] = znode_rdword (data);
+}
+
+/* FE2_HULL_LOG: the time the 3D view takes to draw, over 300 frames. The
+ * glFinish makes it the GPU's time too, which is why it is only on then. */
+static void hull_log_frame (Uint32 t0)
+{
+	static Uint32 total;
+	static int frames;
+
+	glFinish ();
+	total += SDL_GetTicks () - t0;
+	if (++frames == 300) {
+		fprintf (stderr, "hull: style %d, 3D view draws in %.3f ms a frame (%d frames)\n",
+			 hull_style, total / 300.0, frames);
+		total = 0;
+		frames = 0;
+	}
+}
+
+/* does the engine open a complex shape (a sign, a logo) on the polygon
+ * just read? Then it is a host of decals. A known ship's get the quiet
+ * plating, so a decal does not sit on busy panels; anything else (the
+ * station's signs) is drawn flat. */
+static int hull_decal_host (void **data)
+{
+	return *(int *) *data == NU_COMPLEX_START;
+}
+
+#ifdef HULL_SHADERS
+
+static const char hull_vs[] =
+	"#version 120\n"
+	"varying vec4 vUV, vEd, vVT, vLT, vCol;\n"
+	"void main ()\n"
+	"{\n"
+	"	gl_Position = ftransform ();\n"
+	"	vUV = gl_MultiTexCoord0; vEd = gl_MultiTexCoord1;\n"
+	"	vVT = gl_MultiTexCoord2; vLT = gl_MultiTexCoord3;\n"
+	"	vCol = gl_Color;\n"
+	"}\n";
+
+/* uP: bump, gloss, shine, edge occlusion; uQ: warmth of grime, mean grime;
+ * uT: edge occlusion, bump and specular, weathering, hazard colour (0/1) */
+static const char hull_fs[] =
+	"#version 120\n"
+	"uniform sampler2D tA, tB;\n"
+	"uniform vec4 uP, uQ, uT;\n"
+	"varying vec4 vUV, vEd, vVT, vLT, vCol;\n"
+	"void main ()\n"
+	"{\n"
+	"	vec2 uv = vUV.xy, uv2 = uv * 0.4142 + vUV.zw;\n"
+	"	vec4 a = texture2D (tA, uv), b = texture2D (tB, uv);\n"
+	"	vec4 a2 = texture2D (tA, uv2, 5.0), b2 = texture2D (tB, uv2, 5.0);\n"
+	"	float tone = a.b * a.a * 2.0 * mix (1.0, a2.b * a2.a * 2.0, 0.6);\n"
+	"	float ratio = 1.0, sp = 0.0, ao = 1.0;\n"
+	"	vec3 L = normalize (vLT.xyz), V = normalize (vVT.xyz);\n"
+	"	float lum = dot (vCol.rgb, vec3 (0.3, 0.59, 0.11));\n"
+	"	if (uT.y > 0.5) {\n"
+	"		vec3 n = normalize (vec3 ((a.xy - 0.5) * 2.0 * uP.x, 1.0));\n"
+	"		float d0 = max (L.z, 0.0), d1 = max (dot (n, L), 0.0);\n"
+	"		ratio = clamp ((0.35 + 0.65 * d1) / (0.35 + 0.65 * d0), 0.4, 1.8);\n"
+	"		sp = pow (max (dot (n, normalize (L + V)), 0.0), uP.z)\n"
+	"		   * b.g * uP.y * smoothstep (0.0, 0.3, L.z);\n"
+	"	}\n"
+	"	if (uT.x > 0.5) {\n"
+	"		float d = min (min (vEd.x, vEd.y), min (vEd.z, vEd.w));\n"
+	"		ao = 1.0 - uP.w * 0.6 * (1.0 - smoothstep (0.0, 0.045, d));\n"
+	"	}\n"
+	"	vec3 col = vCol.rgb * tone * ratio * ao;\n"
+	"	if (uT.z > 0.5) {\n"
+	"		float g = clamp (b.b * (0.5 + 0.5 * b2.b / max (uQ.y, 0.02)), 0.0, 1.0);\n"
+	"		col *= (1.0 - 0.6 * g) / (1.0 - 0.6 * uQ.y);\n"
+	"		col *= mix (vec3 (1.0), vec3 (1.12, 0.97, 0.78), uQ.x * g);\n"
+	"		col = mix (col, vec3 (lum * 1.1 * tone * ratio), 0.75 * b.a);\n"
+	"	}\n"
+	"	if (uT.w > 0.5)\n"
+	"		col = mix (col, vec3 (1.0, 0.72, 0.1) * lum * 1.6 * tone * ratio * ao, 0.6 * b.r);\n"
+	"	col += sp * (0.5 + 0.5 * vCol.rgb / max (max (vCol.r, vCol.g), max (vCol.b, 0.05)));\n"
+	"	gl_FragColor = vec4 (col, vCol.a);\n"
+	"}\n";
+
+static GLuint hull_prog;
+static GLint hull_uloc[3];	/* uP, uQ, uT */
+static int hull_prog_failed;
+/* one set of textures per profile and level (1: plating, 2: full panels) */
+static struct { GLuint t[2]; float grime; } hull_set[HP_N][2];
+static int hull_cur;		/* the set bound now, in hull_on == 2 */
+
+static GLuint hull_compile (GLenum type, const char *src)
+{
+	GLuint sh = glCreateShader (type);
+	GLint ok = 0;
+
+	glShaderSource (sh, 1, &src, NULL);
+	glCompileShader (sh);
+	glGetShaderiv (sh, GL_COMPILE_STATUS, &ok);
+	if (!ok) {
+		char log[512];
+		glGetShaderInfoLog (sh, sizeof log, NULL, log);
+		fprintf (stderr, "GL: hull shader does not compile: %s\n", log);
+		glDeleteShader (sh);
+		return 0;
+	}
+	return sh;
+}
+
+/* the shader program, 0 (and the style falls back to 0) if it is not there */
+static GLuint hull_program (void)
+{
+	GLuint vs, fs;
+	GLint ok = 0;
+
+	if (hull_prog || hull_prog_failed) return hull_prog;
+	vs = hull_compile (GL_VERTEX_SHADER, hull_vs);
+	fs = vs ? hull_compile (GL_FRAGMENT_SHADER, hull_fs) : 0;
+	if (fs) {
+		hull_prog = glCreateProgram ();
+		glAttachShader (hull_prog, vs);
+		glAttachShader (hull_prog, fs);
+		glLinkProgram (hull_prog);
+		glGetProgramiv (hull_prog, GL_LINK_STATUS, &ok);
+		if (!ok) {
+			glDeleteProgram (hull_prog);
+			hull_prog = 0;
+		}
+	}
+	if (vs) glDeleteShader (vs);
+	if (fs) glDeleteShader (fs);
+	if (!hull_prog) {
+		fprintf (stderr, "GL: --hull-style %d needs GLSL 1.20, using the plain plating\n", hull_style);
+		hull_prog_failed = 1;
+		return 0;
+	}
+	glUseProgram (hull_prog);
+	glUniform1i (glGetUniformLocation (hull_prog, "tA"), 0);
+	glUniform1i (glGetUniformLocation (hull_prog, "tB"), 1);
+	glUseProgram (0);
+	hull_uloc[0] = glGetUniformLocation (hull_prog, "uP");
+	hull_uloc[1] = glGetUniformLocation (hull_prog, "uQ");
+	hull_uloc[2] = glGetUniformLocation (hull_prog, "uT");
+	return hull_prog;
+}
+
+static int hull_tex_n (void)
+{
+	const char *e = getenv ("FE2_HULL_TEX");
+	return e && atoi (e) == 2048 ? 2048 : 1024;
+}
+
+static void hull_make_set (int prof, int level)
+{
+	int n = hull_tex_n (), i;
+	unsigned char *buf = malloc ((size_t) n * n * 8);
+	Uint32 t = SDL_GetTicks ();
+
+	if (!buf) {
+		hull_prog_failed = 1;
+		return;
+	}
+	hull_bake (prof, level, n, buf, buf + (size_t) n * n * 4, &hull_set[prof][level-1].grime);
+	glActiveTexture (GL_TEXTURE0);
+	glGenTextures (2, hull_set[prof][level-1].t);
+	for (i = 0; i < 2; i++) {
+		glBindTexture (GL_TEXTURE_2D, hull_set[prof][level-1].t[i]);
+		glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+		glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+		glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+#ifdef GL_TEXTURE_MAX_ANISOTROPY_EXT
+		{
+			const char *ext = (const char *) glGetString (GL_EXTENSIONS);
+			if (ext && strstr (ext, "GL_EXT_texture_filter_anisotropic")) {
+				GLfloat a = 1;
+				glGetFloatv (GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &a);
+				glTexParameterf (GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, a < 8 ? a : 8);
+			}
+		}
+#endif
+		gluBuild2DMipmaps (GL_TEXTURE_2D, GL_RGBA8, n, n, GL_RGBA, GL_UNSIGNED_BYTE,
+				   buf + (size_t) i * n * n * 4);
+	}
+	free (buf);
+	if (hull_log_on ())
+		fprintf (stderr, "hull: %s level %d textures %dx%d made in %u ms\n",
+			 hull_profiles[prof].name, level, n, n, (unsigned) (SDL_GetTicks () - t));
+}
+
+static void hull_forget_shader (void)
+{
+	int p, l;
+
+	for (p = 0; p < HP_N; p++)
+		for (l = 0; l < 2; l++) {
+			if (hull_set[p][l].t[0]) glDeleteTextures (2, hull_set[p][l].t);
+			hull_set[p][l].t[0] = hull_set[p][l].t[1] = 0;
+		}
+	if (hull_prog) glDeleteProgram (hull_prog);
+	hull_prog = 0;
+	hull_cur = -1;
+}
+
+/* Shader on for this profile and level, the texture sets are made the
+ * first time. hull_on is 2 while it is. */
+static void hull_begin_shader (int prof, int level, int calm)
+{
+	int tier = hull_style > 4 ? 4 : hull_style;
+	const struct HullProfile *pr = &hull_profiles[prof];
+
+	if (hull_on == 2 && hull_cur == (prof * 2 + level - 1) * 2 + calm) return;
+	if (!hull_set[prof][level-1].t[0]) hull_make_set (prof, level);
+	if (hull_prog_failed) return;
+	if (hull_on == 1) hull_end ();
+	glUseProgram (hull_prog);
+	glActiveTexture (GL_TEXTURE1);
+	glBindTexture (GL_TEXTURE_2D, hull_set[prof][level-1].t[1]);
+	glActiveTexture (GL_TEXTURE0);
+	glBindTexture (GL_TEXTURE_2D, hull_set[prof][level-1].t[0]);
+	glUniform4f (hull_uloc[0], pr->bump, pr->gloss, pr->shine, pr->ao);
+	glUniform4f (hull_uloc[1], pr->tint, hull_set[prof][level-1].grime, 0, 0);
+	if (calm) tier = 1;
+	glUniform4f (hull_uloc[2], tier >= 2, tier >= 3, tier >= 3, tier >= 2);
+	hull_on = 2;
+	hull_cur = (prof * 2 + level - 1) * 2 + calm;
+}
+
+/* the shader's per-vertex data: see hull_vs */
+static void hull_attr (const struct HullFrame *f, int i)
+{
+	glMultiTexCoord4f (GL_TEXTURE0, f->uv[i][0], f->uv[i][1], f->seed[0], f->seed[1]);
+	glMultiTexCoord4f (GL_TEXTURE1, f->ed[i][0], f->ed[i][1], f->ed[i][2], f->ed[i][3]);
+	glMultiTexCoord4f (GL_TEXTURE2, f->vt[i][0], f->vt[i][1], f->vt[i][2], f->inr);
+	glMultiTexCoord4f (GL_TEXTURE3, f->lt[0], f->lt[1], f->lt[2], 0);
+}
+
+/* Shader for this polygon: 1 with hf filled in, 0 to draw it flat */
+static int hull_shade (double p[][3], int n, const struct HullCtx *cx, int host, struct HullFrame *hf)
+{
+	double light[3];
+	int prof = hull_style >= 4 ? hull_profile_of_key (cx->key) : HP_GENERIC;
+	int pk = hull_profile_of_key (cx->key);
+	int calm = host && pk != HP_STATION && pk != HP_GENERIC;
+
+	if (calm) prof = HP_GENERIC;
+	light[0] = cx->light[0]; light[1] = cx->light[1]; light[2] = cx->light[2];
+	if ((host && !calm) || !hull_program () || !hull_frame (p, n, light, cx->seed, hf)) {
+		hull_end ();
+		return 0;
+	}
+	hull_begin_shader (prof, calm || hull_style == 1 ? 1 : 2, calm);
+	return hull_prog && !hull_prog_failed;
+}
+#else
+static int hull_shade (double p[][3], int n, const struct HullCtx *cx, int host, struct HullFrame *hf)
+{
+	return 0;
+}
+static void hull_forget_shader (void) { }
+static void hull_attr (const struct HullFrame *f, int i) { }
+#endif
+
+/* How to paint a polygon: 2 with the shader (hf filled in), 1 with the
+ * fixed plating (st filled in), 0 flat */
+static int hull_paint (double p[][3], int n, int have_ctx, const struct HullCtx *cx, int host,
+		       float st[][2], struct HullFrame *hf)
+{
+	if (hull_style > 0 && have_ctx && !flat_hulls) {
+#ifdef HULL_SHADERS
+		if (!hull_prog_failed) return hull_shade (p, n, cx, host, hf) ? 2 : 0;
+#endif
+	}
+	return hull_use (p, n, st);
+}
+
 void Nu_PutTriangle ()
 {
 	if (use_renderer == R_OLD) return;
@@ -1892,16 +2313,19 @@ void Nu_PutTriangle ()
 	znode_wrvertex (GetReg (REG_A1)+4);
 	znode_wrvertex (GetReg (REG_A2)+4);
 	znode_wrcolor (GetReg (REG_D6));
+	if (hull_ctx) hull_put_ctx (3);
 }
 void Nu_DrawTriangle (void **data)
 {
 	float v1[3], v2[3], v3[3];
 	int rgb[3];
+	struct HullCtx cx = { 0 };
 	
 	znode_rdvertexf (data, v1);
 	znode_rdvertexf (data, v2);
 	znode_rdvertexf (data, v3);
 	znode_rdcolorv (data, rgb);
+	if (hull_ctx) hull_rdctx (data, &cx);
 	glColor3ub (rgb[0], rgb[1], rgb[2]);
 	if (use_renderer == R_GLWIRE) {
 		glBegin (GL_LINE_STRIP);
@@ -1914,13 +2338,14 @@ void Nu_DrawTriangle (void **data)
 		double p[3][3] = { { v1[0], v1[1], v1[2] }, { v2[0], v2[1], v2[2] },
 				   { v3[0], v3[1], v3[2] } };
 		float st[3][2];
-		int tex = hull_use (p, 3, st);
+		struct HullFrame hf;
+		int tex = hull_paint (p, 3, hull_ctx, &cx, hull_ctx && hull_decal_host (data), st, &hf);
 		glBegin (GL_TRIANGLES);
-			if (tex) glTexCoord2fv (st[0]);
+			if (tex == 1) glTexCoord2fv (st[0]); else if (tex == 2) hull_attr (&hf, 0);
 			glVertex3fv (v1);
-			if (tex) glTexCoord2fv (st[1]);
+			if (tex == 1) glTexCoord2fv (st[1]); else if (tex == 2) hull_attr (&hf, 1);
 			glVertex3fv (v2);
-			if (tex) glTexCoord2fv (st[2]);
+			if (tex == 1) glTexCoord2fv (st[2]); else if (tex == 2) hull_attr (&hf, 2);
 			glVertex3fv (v3);
 		glEnd ();
 	}
@@ -1935,17 +2360,20 @@ void Nu_PutQuad ()
 	znode_wrvertex (GetReg (REG_A2)+4);
 	znode_wrvertex (GetReg (REG_A3)+4);
 	znode_wrcolor (GetReg (REG_D6));
+	if (hull_ctx) hull_put_ctx (4);
 }
 void Nu_DrawQuad (void **data)
 {
 	int v1[3], v2[3], v3[3], v4[3];
 	int r, g, b;
+	struct HullCtx cx = { 0 };
 	
 	znode_rdvertex (data, v1);
 	znode_rdvertex (data, v2);
 	znode_rdvertex (data, v3);
 	znode_rdvertex (data, v4);
 	znode_rdcolor (data, &r, &g, &b);
+	if (hull_ctx) hull_rdctx (data, &cx);
 	
 	glColor3ub (r, g, b);
 	if (use_renderer == R_GLWIRE) {
@@ -1960,15 +2388,16 @@ void Nu_DrawQuad (void **data)
 		double p[4][3] = { { v1[0], v1[1], v1[2] }, { v2[0], v2[1], v2[2] },
 				   { v3[0], v3[1], v3[2] }, { v4[0], v4[1], v4[2] } };
 		float st[4][2];
-		int tex = hull_use (p, 4, st);
+		struct HullFrame hf;
+		int tex = hull_paint (p, 4, hull_ctx, &cx, hull_ctx && hull_decal_host (data), st, &hf);
 		glBegin (GL_TRIANGLE_STRIP);
-			if (tex) glTexCoord2fv (st[0]);
+			if (tex == 1) glTexCoord2fv (st[0]); else if (tex == 2) hull_attr (&hf, 0);
 			glVertex3iv (v1);
-			if (tex) glTexCoord2fv (st[1]);
+			if (tex == 1) glTexCoord2fv (st[1]); else if (tex == 2) hull_attr (&hf, 1);
 			glVertex3iv (v2);
-			if (tex) glTexCoord2fv (st[3]);
+			if (tex == 1) glTexCoord2fv (st[3]); else if (tex == 2) hull_attr (&hf, 3);
 			glVertex3iv (v4);
-			if (tex) glTexCoord2fv (st[2]);
+			if (tex == 1) glTexCoord2fv (st[2]); else if (tex == 2) hull_attr (&hf, 2);
 			glVertex3iv (v3);
 		glEnd ();
 	}
@@ -3577,7 +4006,9 @@ void Nu_DrawScreen ()
 			fprintf (stderr, "GL: 3D scene too big for the scene buffers, frame dropped (%u so far)\n",
 				 scene_overflows);
 	} else {
+		Uint32 t = hull_log_on () ? SDL_GetTicks () : 0;
 		draw_3dview (znode_start);
+		if (t) hull_log_frame (t);
 	}
 	hull_end ();
 	//fprintf (stderr, "\n");
