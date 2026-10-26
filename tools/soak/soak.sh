@@ -11,7 +11,7 @@
 #   --cwd DIR        directory the game runs in, holding fe2.s.bin (default: repo top)
 #   --out DIR        run directory (default: a new $TMPDIR/fe2-soak.XXXXXX)
 #   --tape FILE      replay an oracle tape as the scripted route; needs a build with
-#                    --oracle-replay (available once wave/gbt-oracle lands), else exit 2
+#                    --oracle-replay (src/oracle.c), else exit 2
 #   --keep-frames    keep the window captures in DIR/frames (they show game screens)
 #   --no-frames      skip the frame watchdog (item 3), e.g. with SDL_VIDEODRIVER=dummy
 #   --no-leaks       skip the codesign and `leaks` step of item 4
@@ -28,12 +28,23 @@
 #              That is diagnostic only and never changes the verdict: a covered window
 #              has not been shown to stop drawing, and an uncovered UBSan build has
 #              been seen static for 100 s.
+#              On a sanitizer build (UBSan or ASan) item 3 is INFO, not a gate: the
+#              line still says what the 60 s rule would give (watchdog=PASS|FAIL),
+#              but instrumented builds hold one picture for over 60 s and then move
+#              on (tools/soak/README), so the rule cannot tell a freeze from slow
+#              code there.  A plain build is the item-3 gate.
 #   4 memory   RSS and phys_footprint every 10 s; the least-squares slope of each over
 #              the last 20 min, skipping the first 60 s of start-up, must be < 1 MB/min.
 #              (RSS alone is blind on macOS: compression shrank it 5 MB/min in a run
 #              that leaked 4 MB, so the footprint slope gates too.)  `leaks <pid>` before SIGTERM
 #              must report 0 blocks whose allocation stack touches the game binary
 #              (conservative: an SDL leak reached from host code counts as host).
+#              The leak half FAILs when leaks reports leaks but no allocation stacks
+#              (host and library leaks cannot then be told apart), prints no leak
+#              count, times out, or cannot run because codesign failed; it is SKIP
+#              only with --no-leaks or on an ASan build.  On an ASan build item 4 is
+#              INFO: the line still says slope=PASS|FAIL, but ASan's allocator moves
+#              the slope by tens of MB/min with no leak (tools/soak/README).
 #   5 sanitizer  UBSan build: 0 "runtime error" lines on stderr.  ASan build: 0
 #              "ERROR: AddressSanitizer" reports.  Any other build: SKIP.
 #              An ASan build runs with ASAN_OPTIONS=detect_leaks=0 unless set (LSan is
@@ -90,7 +101,7 @@ if [ -n "$tape" ]; then
 	tape=$(cd "$(dirname "$tape")" && pwd)/$(basename "$tape")
 	# Static check: running the game with an unknown flag would open a window.
 	grep -q -a -e '--oracle-replay' "$binary" ||
-		die "$binary has no --oracle-replay (available once wave/gbt-oracle lands)"
+		die "$binary has no --oracle-replay; build from a tree with src/oracle.c"
 fi
 
 if [ -z "$out" ]; then
@@ -104,7 +115,7 @@ out=$(cd "$out" && pwd)
 ubsan=0 asan=0
 otool -L "$binary" 2>/dev/null | grep -q 'libclang_rt\.ubsan' && ubsan=1
 otool -L "$binary" 2>/dev/null | grep -q 'libclang_rt\.asan' && asan=1
-leaks_note=
+leaks_note='' leaks_failed=0
 if [ "$asan" = 1 ] && [ "$leaks_check" = 1 ]; then
 	leaks_check=0 leaks_note="ASan build: leaks and MallocStackLogging clash with ASan's allocator"
 fi
@@ -133,7 +144,7 @@ if [ "$leaks_check" = 1 ]; then
 PLIST
 	if ! codesign -s - -f --entitlements "$out/get-task-allow.plist" "$out/fe2soak" \
 		>"$out/codesign.log" 2>&1; then
-		leaks_check=0 leaks_note="codesign failed, see codesign.log"
+		leaks_check=0 leaks_failed=1 leaks_note="codesign failed, see codesign.log"
 	fi
 fi
 if [ "$frames" = 1 ]; then
@@ -220,7 +231,7 @@ done
 ran=$(($(date +%s) - start))
 
 # Item 4: leaks, while the process is still alive, before SIGTERM.
-leaks_total='' leaks_host=''
+leaks_total='' leaks_host='' leaks_stacks=0
 if [ -z "$died_at" ] && [ "$leaks_check" = 1 ]; then
 	leaks "$pid" >"$out/leaks.txt" 2>&1 &
 	lpid=$!
@@ -233,11 +244,16 @@ if [ -z "$died_at" ] && [ "$leaks_check" = 1 ]; then
 		wait "$lpid"
 		leaks_total=$(sed -n 's/^Process [0-9]*: \([0-9]*\) leaks\{0,1\} for .*/\1/p' "$out/leaks.txt" | head -1)
 		[ -n "$leaks_total" ] || leaks_note="no leak count in leaks.txt"
-		leaks_host=$(awk '
-			/^STACK OF [0-9]+ INSTANCES? OF/ { n = $3; host = 0; inside = 1; next }
+		# shellcheck disable=SC2046  # split the two fields
+		set -- $(awk '
+			/^STACK OF [0-9]+ INSTANCES? OF/ { n = $3; host = 0; inside = 1; stacks++; next }
 			inside && $2 == "fe2soak" { host = 1 }
 			inside && /^====/ { if (host) sum += n; inside = 0 }
-			END { print sum + 0 }' "$out/leaks.txt")
+			END { print sum + 0, stacks + 0 }' "$out/leaks.txt")
+		leaks_host=$1 leaks_stacks=$2
+		if [ -n "$leaks_total" ] && [ "$leaks_total" -gt 0 ] && [ "$leaks_stacks" -eq 0 ]; then
+			leaks_note="$leaks_total leaks but no allocation stacks, so host and game leaks cannot be told apart"
+		fi
 	fi
 fi
 
@@ -280,7 +296,12 @@ else
 	[ "$captures" -gt 1 ] && [ "$distinct" -le 1 ] &&
 		note=" note=\"every frame identical: frozen, or a blank capture (Screen Recording permission?)\""
 	if [ "$captures" -eq 0 ]; then v=FAIL; elif [ "$max_static" -ge 60 ]; then v=FAIL; else v=PASS; fi
-	result 3 $v "captures=$captures distinct=$distinct max_static_s=$max_static covered_captures=$covered no_window=$nowin failed=$cap_fail$note"
+	fields="captures=$captures distinct=$distinct max_static_s=$max_static covered_captures=$covered no_window=$nowin failed=$cap_fail$note"
+	if [ "$ubsan" = 1 ] || [ "$asan" = 1 ]; then
+		result 3 INFO "$fields watchdog=$v why=\"sanitizer build: instrumented code holds one picture for over 60 s and then moves on, so the 60 s rule gates plain builds only\""
+	else
+		result 3 $v "$fields"
+	fi
 fi
 
 slope_of() { # FILE of "seconds<TAB>KB" -> "MB_per_min window_s samples", or "na ..."
@@ -304,14 +325,34 @@ fp_mb=$1
 slope_v=PASS
 under_1mb "$rss_mb" || slope_v=FAIL
 under_1mb "$fp_mb" || slope_v=FAIL
-if [ "$leaks_check" = 0 ] || [ -z "$leaks_total" ]; then
-	leaks_v=SKIP; [ "$leaks_check" = 1 ] && leaks_v=FAIL
+# The leak half is SKIP only when it was not wanted (--no-leaks) or cannot apply
+# (ASan).  Wanted but not run (codesign failed, leaks timed out), no leak count,
+# or leaks reported without allocation stacks is FAIL: a report with no stacks
+# cannot show that no leak is the game's.
+if [ "$leaks_failed" = 1 ]; then
+	leaks_v=FAIL
+elif [ "$leaks_check" = 0 ]; then
+	leaks_v=SKIP
+elif [ -z "$leaks_total" ]; then
+	leaks_v=FAIL
+elif [ "$leaks_total" -gt 0 ] && [ "$leaks_stacks" -eq 0 ]; then
+	leaks_v=FAIL
+elif [ "${leaks_host:-0}" -eq 0 ]; then
+	leaks_v=PASS
 else
-	if [ "${leaks_host:-0}" -eq 0 ]; then leaks_v=PASS; else leaks_v=FAIL; fi
+	leaks_v=FAIL
 fi
 v=PASS; [ "$slope_v" = FAIL ] && v=FAIL; [ "$leaks_v" = FAIL ] && v=FAIL
+why=
+# ASan's own allocator (quarantine, shadow memory) moves both slopes by tens of
+# MB/min with no game leak (tools/soak/README), and the leak half is SKIP there,
+# so on ASan item 4 says what the slope rule would give but does not gate.
+if [ "$asan" = 1 ]; then
+	v=INFO
+	why=' why="ASan build: allocator churn swamps the 1 MB/min rule; plain and UBSan builds gate item 4"'
+fi
 result 4 $v "rss_slope_mb_per_min=$rss_mb footprint_slope_mb_per_min=$fp_mb window_s=$window samples=$samples slope=$slope_v" \
-	"leaks_total=${leaks_total:-na} leaks_host=${leaks_host:-na} leaks=$leaks_v${leaks_note:+ note=\"$leaks_note\"}"
+	"leaks_total=${leaks_total:-na} leaks_host=${leaks_host:-na} leaks=$leaks_v${leaks_note:+ note=\"$leaks_note\"}$why"
 
 if [ "$ubsan" = 1 ] || [ "$asan" = 1 ]; then
 	n=0 a=0
