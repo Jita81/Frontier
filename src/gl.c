@@ -5,12 +5,27 @@
   option any later version. Read the file gpl.txt for details.
 */
 
+/*
+ * Provenance (docs/05 section 4.3). This stream was assigned picks #7, #8,
+ * #10, #11 and #12, but B's 5e5c602 (#8) is written against B's own gl.c
+ * and does not apply to the base's: git apply --check of its gl.c diff
+ * fails (at the hunk for line 1535). So this file is B's gl.c at the tip,
+ * which also carries the gl.c parts of #1-#3 (981d304, b53521f, 03a5942)
+ * and #9 (756647f), with these differences:
+ *  - not taken: #6's SDL_RESIZABLE window (84b737b) and #1's in_atmosphere;
+ *  - the projection is the base's 1.9 aspect, not #1's window aspect;
+ *  - the S-2 S-6 S-7 S-9 S-11 S-23 fixes and V-1 of this stream.
+ * The hostcall.c, screen.h and main.c parts of #1-#6 and #9 were not
+ * taken.
+ */
+
 #include <SDL.h>
 #ifdef __APPLE__
 #include <OpenGL/gl.h>
 #include <OpenGL/glu.h>
-/* macOS' glu.h has no _GLUfuncptr: gluTessCallback takes a GLvoid (*)() */
-typedef GLvoid (*_GLUfuncptr) ();
+/* macOS's glu.h doesn't provide the "_GLUfuncptr" callback typedef that
+ * Linux/Mesa's GL/glu.h does; declare a compatible one here. */
+typedef void (*_GLUfuncptr)();
 #else
 #include <GL/gl.h>
 #include <GL/glu.h>
@@ -19,6 +34,10 @@ typedef GLvoid (*_GLUfuncptr) ();
 #include "main.h"
 #include "../m68000.h"
 #include "screen.h"
+#include "planet.h"
+/* MEM_SIZE, and the engine's variables by label address (__D<label>) */
+#include "../host.h"
+#include "../fixups.h"
 
 unsigned long VideoBase;                        /* Base address in ST Ram for screen(read on each VBL) */
 unsigned char *VideoRaster;                      /* Pointer to Video raster, after VideoBase in PC address space. Use to copy data on HBL */
@@ -32,6 +51,7 @@ unsigned int MainRGBPalette[256];
 unsigned int CtrlRGBPalette[16];
 
 unsigned long logscreen, logscreen2, physcreen, physcreen2;
+
 
 static SDL_Surface *sdlscrn;                             /* The SDL screen surface */
 BOOL bGrabMouse = FALSE;                          /* Grab the mouse cursor in the window */
@@ -89,10 +109,41 @@ static void set_ctrl_viewport ()
 	glViewport (0, 0, screen_w, screen_h);
 }
 
+/*
+ * The near plane is what actually does the near clipping in the GL path,
+ * because the engine skips its own: in L3aef8_ProjectTriangle and its
+ * siblings in fe2.s, a set gl_renderer_on jumps over the whole
+ * clip/reject stage and hands us the primitive raw. Their near test does
+ * not clip anything either: l398c8 only stamps a sentinel over the *2D*
+ * coords at (a0), while the *3D* viewing coords at 4(a0) - exactly what
+ * znode_wrvertex reads - were already stored and stay valid.
+ *
+ * So primitives with z < 64, and even z < 0 (behind the camera), do reach
+ * us. Keep the near plane small or near geometry (station docking bay
+ * walls, a ship right alongside) gets sliced off. There is no depth
+ * buffer to trade precision against, so there is nothing to gain by
+ * pushing it out.
+ */
+#define GL_NEAR_PLANE	1.0f
+#define GL_FAR_PLANE	10000000000.0f
+
+static void planet_forget_textures (void);
+
 static void change_vidmode ()
 {
 	const SDL_VideoInfo *info = NULL;
 	int modes;
+
+	/* On some platforms (Windows, macOS) SDL 1.2 creates a new GL context
+	 * on every SDL_SetVideoMode - when the window goes fullscreen or
+	 * back - and every texture of the old one is gone. Release ours
+	 * while that context is still current, they get made again when
+	 * needed. */
+	planet_forget_textures ();
+	if (screen_tex) {
+		glDeleteTextures (1, &screen_tex);
+		screen_tex = 0;
+	}
 
 	info = SDL_GetVideoInfo ();
 	if (info == NULL) {
@@ -102,6 +153,9 @@ static void change_vidmode ()
 	}
 
 	SDL_GL_SetAttribute (SDL_GL_DOUBLEBUFFER, 1);
+	/* No depth buffer is requested: the 3D view is drawn with a pure
+	 * painter's algorithm, exactly like the software renderer. See
+	 * draw_3dview. */
 	
 	modes = SDL_OPENGL | SDL_ANYFORMAT | (bInFullScreen ? SDL_FULLSCREEN : 0);
 	
@@ -119,8 +173,17 @@ static void change_vidmode ()
 
 	glMatrixMode (GL_PROJECTION);
 	glLoadIdentity ();
-	/* aspect ratio of frontier's 3d view is 320/168 = 1.90 */
-	gluPerspective (36.5f, 1.9f, 1.0f, 10000000000.0f);
+	/* Aspect ratio of frontier's 3d view is 320/168 = 1.90, in ST
+	 * pixels, whatever the window's shape: the software renderer
+	 * stretches its 320x200 frame over the whole window, so the GL view
+	 * has to stretch the same way or the two renderers frame different
+	 * parts of the sky. With the window's own aspect instead (screen_w /
+	 * (screen_h - ctrl_h), taken over with B's 981d304), a 640x480 window
+	 * sees about 32 degrees either side in the software renderer but only
+	 * 28 in GL, so a planet near the edge - Lave from Lave Station - is on
+	 * the screen in one and off it in the other. This is the base's
+	 * projection again. */
+	gluPerspective (36.5f, 1.9f, GL_NEAR_PLANE, GL_FAR_PLANE);
 
 	glEnable (GL_TEXTURE_2D);
 	glGenTextures (1, &screen_tex);
@@ -137,13 +200,18 @@ static void change_vidmode ()
 	glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	glMatrixMode (GL_MODELVIEW);
 	glLoadIdentity ();
-	glDisable (GL_DEPTH_TEST);
+	/* GL_DEPTH_TEST stays off for good: the 3D view is a painter's
+	 * algorithm, see draw_3dview. */
 }
 
 void Screen_Init(void)
 {
 	change_vidmode ();
-	
+
+	/* called again on a video mode change: the GLU objects do not depend
+	 * on the GL context, keep them */
+	if (qobj) return;
+
 	qobj = gluNewQuadric ();
 
 	tobj = gluNewTess ();
@@ -521,10 +589,10 @@ struct ZNode {
 	void *data;
 };
 
-#define MAX_OBJ_DATA	(2<<17)
+#define MAX_OBJ_DATA	(4<<20)
 static unsigned char obj_data_area[MAX_OBJ_DATA];
 static int obj_data_pos;
-#define MAX_ZNODES	1000
+#define MAX_ZNODES	16384
 static struct ZNode znode_buf[MAX_ZNODES];
 static int znode_buf_pos;
 static struct ZNode *znode_start;
@@ -545,8 +613,12 @@ static inline void znode_databegin ()
 static int scene_overflow;
 static unsigned int scene_overflows;
 
+static void ztree_sync (void);
+
 static inline int znode_room (int n)
 {
+	/* a sub-tree the engine opened goes in before anything is written */
+	ztree_sync ();
 	if (scene_overflow) return 0;
 	if (n > MAX_OBJ_DATA - obj_data_pos) {
 		scene_overflow = 1;
@@ -572,6 +644,12 @@ static inline void znode_wrbyte (char val)
 	if (!znode_room (1)) return;
 	*((char*)(obj_data_area+obj_data_pos)) = val;
 	obj_data_pos++;
+}
+static inline void znode_wrblock (const void *data, int n)
+{
+	if (!znode_room (n)) return;
+	memcpy (obj_data_area + obj_data_pos, data, n);
+	obj_data_pos += n;
 }
 
 static inline void znode_wrnormal (p68K loc)
@@ -733,6 +811,8 @@ enum NuPrimitive {
 	NU_OVALTHINGY,
 	NU_POINT,
 	NU_2DLINE,
+	NU_SUBTREE,
+	NU_ATMOSPHERE,
 	NU_MAX
 };
 
@@ -780,17 +860,120 @@ static void znode_insert (struct ZNode *node, unsigned int zval)
 	}
 }
 
+/*
+ * Detached znodes: a node whose data does not go into the obj_data_area
+ * stream, so that it can be added to the tree in the middle of another
+ * primitive without cutting the current node's data short (add_node ends
+ * the current node). Their data is written in one go.
+ */
+#define MAX_DETACHED_DATA	(1<<16)
+static unsigned char detached_data[MAX_DETACHED_DATA];
+static int detached_pos;
+
+static void *add_detached_node (struct ZNode **root, unsigned int zval, int size)
+{
+	struct ZNode *n, **link = root;
+	void *data;
+
+	if (znode_buf_pos >= MAX_ZNODES || detached_pos + size + 4 > MAX_DETACHED_DATA)
+		return NULL;
+	n = &znode_buf[znode_buf_pos++];
+	n->z = zval;
+	n->less = n->more = NULL;
+	n->data = data = &detached_data[detached_pos];
+	detached_pos += size + 4;
+	/* the list end */
+	*(int *) ((unsigned char *) data + size) = 0;
+	/* same ordering as znode_insert */
+	while (*link) link = zval > (*link)->z ? &(*link)->more : &(*link)->less;
+	*link = n;
+	return data;
+}
+
 static bool no_znodes_kthx;
+
+/*
+ * Nested z-trees.
+ *
+ * The engine does not sort everything in one tree: object command $15
+ * (fe2.s L3a4b4) inserts a node and makes it the root of a new tree, into
+ * which everything that follows is sorted, until the matching pop
+ * (l3a494). The whole sub-tree is then painted as one block, at the place
+ * of that node in the parent tree. Starports rely on it: their ground
+ * decals (runways, roads, lakes) and the big terrain polygons around them
+ * only come out in the right order that way.
+ *
+ * The engine pushes and pops with no hcall. It keeps the heads of its trees
+ * in L385d0_3dview_thing2, the current one first: l3a50a pushes right after
+ * its Nu_InsertZNode, l3a494 pops. The host follows that head before every
+ * insert and every write (ztree_sync): a head it has on its stack means
+ * pops back to it, a new one a push. So a push is seen before anything is
+ * written into the node that holds the new tree.
+ */
+#define MAX_SUBTREES		256
+#define MAX_ZTREE_DEPTH		16
+static struct ZNode *subtree_root[MAX_SUBTREES];
+static int num_subtrees;
+/* the tree Nu_InsertZNode sorts into */
+static struct ZNode **cur_ztree = &znode_start;
+static struct ZNode **ztree_stack[MAX_ZTREE_DEPTH];
+static int ztree_depth;
+/* the engine's head for each level; ztree_heads[ztree_depth] is the current */
+static unsigned int ztree_heads[MAX_ZTREE_DEPTH + 1];
+static bool ztree_syncing;
+
+/* counted for FE2_PLANET_STATS */
+static unsigned int ztree_pushes, complex_starts, complex_aborts;
+
+static void ztree_push (unsigned int head)
+{
+	ztree_pushes++;
+	ztree_stack[ztree_depth++] = cur_ztree;
+	ztree_heads[ztree_depth] = head;
+	/* out of sub-trees, or nothing to hang it on: keep sorting flat */
+	if (num_subtrees == MAX_SUBTREES || !znode_cur) return;
+	subtree_root[num_subtrees] = NULL;
+	/* the node the engine just inserted draws the sub-tree */
+	znode_wrlong (NU_SUBTREE);
+	znode_wrlong (num_subtrees);
+	cur_ztree = &subtree_root[num_subtrees++];
+}
+
+static void ztree_sync (void)
+{
+	unsigned int head;
+	int d;
+
+	if (use_renderer == R_OLD || ztree_syncing) return;
+	head = STMemory_ReadLong (__DL385d0_3dview_thing2);
+	if (head == ztree_heads[ztree_depth]) return;
+	for (d = ztree_depth - 1; d >= 0; d--) {
+		if (ztree_heads[d] == head) {
+			ztree_depth = d;
+			cur_ztree = ztree_stack[d];
+			return;
+		}
+	}
+	/* deeper than the engine's own stack (4) can go: keep sorting here */
+	if (ztree_depth == MAX_ZTREE_DEPTH) {
+		ztree_heads[ztree_depth] = head;
+		return;
+	}
+	ztree_syncing = TRUE;
+	ztree_push (head);
+	ztree_syncing = FALSE;
+}
 
 void Nu_InsertZNode ()
 {
 	unsigned int zval = GetReg (4);
 	if (use_renderer == R_OLD) return;
+	ztree_sync ();
 	if (no_znodes_kthx) return;
-	if (znode_start == NULL) {
-		add_node (&znode_start, zval);
+	if (*cur_ztree == NULL) {
+		add_node (cur_ztree, zval);
 	} else {
-		znode_insert (znode_start, zval);
+		znode_insert (*cur_ztree, zval);
 	}
 }
 
@@ -801,11 +984,17 @@ void Nu_3DViewInit ()
 	znode_buf_pos = 0;
 	//printf ("%d bytes object data\n", obj_data_pos);
 	obj_data_pos = 0;
+	detached_pos = 0;
 
 	//add_node (&znode_start, 0);
 	znode_start = NULL;
 	znode_cur = NULL;
 	no_znodes_kthx = FALSE;
+	num_subtrees = 0;
+	cur_ztree = &znode_start;
+	ztree_depth = 0;
+	/* L385ea_Clear3DView has just set it to the base */
+	ztree_heads[0] = STMemory_ReadLong (__DL385d0_3dview_thing2);
 	scene_overflow = 0;
 }
 
@@ -854,6 +1043,64 @@ static void lighting_off ()
 {
 	glDisable (GL_LIGHTING);
 	glDisable (GL_LIGHT0);
+}
+
+/*
+ * Billboard helpers: several 2D "sprite-like" primitives (twinkly
+ * circles/stars, distant planet dots, glow blobs...) are just a
+ * gluDisk() translated to a world position, with no attempt to keep
+ * them facing the camera. Viewed close to edge-on they degenerate to a
+ * near-invisible line, which is one of the main things making the GL
+ * renderer look incomplete compared to the ST software renderer (where
+ * these were always flat, screen-aligned sprites).
+ *
+ * billboard_begin() pushes a modelview matrix translated to (x,y,z)
+ * with the camera's rotation cancelled out, so that anything drawn in
+ * the local XY plane (e.g. gluDisk, which faces local +Z) ends up
+ * facing the viewer regardless of the current camera orientation.
+ */
+static void billboard_begin (float x, float y, float z)
+{
+	GLfloat m[16];
+
+	glPushMatrix ();
+	glTranslatef (x, y, z);
+	glGetFloatv (GL_MODELVIEW_MATRIX, m);
+
+	/* Cancel the rotation (and any scale) part of the matrix, keep the
+	 * translation: this leaves the local axes aligned with the camera's
+	 * eye-space axes, i.e. always facing the viewer. */
+	m[0] = 1.0f; m[1] = 0.0f; m[2] = 0.0f;
+	m[4] = 0.0f; m[5] = 1.0f; m[6] = 0.0f;
+	m[8] = 0.0f; m[9] = 0.0f; m[10] = 1.0f;
+
+	glLoadMatrixf (m);
+}
+
+static void billboard_end ()
+{
+	glPopMatrix ();
+}
+
+/* Object-space direction that corresponds to the camera's eye-space Z
+ * axis (roughly "towards the viewer"). Cheap approximation of a full
+ * look-at billboard, good enough to keep a thin axis-aligned ribbon
+ * (teardrop engine flares) from turning edge-on to the camera. */
+static void get_view_axis (float axis[3])
+{
+	GLfloat m[16];
+
+	glGetFloatv (GL_MODELVIEW_MATRIX, m);
+	axis[0] = m[2];
+	axis[1] = m[6];
+	axis[2] = m[10];
+}
+
+static void cross3 (const float a[3], const float b[3], float out[3])
+{
+	out[0] = a[1]*b[2] - a[2]*b[1];
+	out[1] = a[2]*b[0] - a[0]*b[2];
+	out[2] = a[0]*b[1] - a[1]*b[0];
 }
 
 void CALLBACK beginCallback(GLenum which)
@@ -924,43 +1171,144 @@ static GLint tessViewport[4];
 
 static bool do_start_complex;
 static int complex_col_rgb444;
+/* where the current complex shape starts in obj_data_area, -1 if nothing
+ * written yet; and whether the engine dropped it (complex_check_abort) */
+static int complex_data_start = -1;
+static bool complex_aborted;
+/* where the engine's own primitive for the shape starts (primitives_end at
+ * Nu_ComplexStart), 0 if there is no shape */
+static unsigned int complex_st_start;
 
 static void put_complex_start_4real ()
 {
+	complex_data_start = obj_data_pos;
 	znode_wrlong (NU_COMPLEX_START);
 	znode_wrcolor (complex_col_rgb444);
 	no_znodes_kthx = TRUE;
 }
 
-/* well it works */
-static inline void push_tess_vertex (GLdouble v[3])
+/*
+ * Some complex shapes are flagged in their model to be dropped altogether
+ * when they cross the near plane (fe2.s l3b87e -> L3b78e -> L3b7ba): the
+ * engine then throws away the 2D primitives it had already pushed for the
+ * shape, with no hcall. It sets primitives_end back to where the shape
+ * started and writes $065e there, over the $2a the shape began with, so
+ * each complex hcall after the start checks that word. Forget whatever we
+ * were given for the shape as well: nothing else can have been written
+ * since it started, as no_znodes_kthx keeps it in the current znode.
+ * Nu_ComplexEnd still follows.
+ */
+static void complex_check_abort (void)
 {
-	static double prev[3];
+	if (!complex_st_start || complex_aborted) return;
+	if (complex_st_start <= MEM_SIZE - 2 &&
+	    (STMemory_ReadWord (complex_st_start) & 0xffff) == 0x2a) return;
+	if (complex_data_start >= 0) obj_data_pos = complex_data_start;
+	complex_data_start = -1;
+	do_start_complex = FALSE;
+	complex_aborted = TRUE;
+	complex_aborts++;
+}
 
-	if ((v[0]==prev[0]) && (v[1]==prev[1]) && (v[2]==prev[2])) return;
-	prev[0] = v[0];
-	prev[1] = v[1];
-	prev[2] = v[2];
+/*
+ * Complex shapes are tessellated in SCREEN space: every contour vertex is
+ * pushed through gluProject and the resulting triangles are drawn under an
+ * ortho projection (see Nu_DrawComplexStart).
+ *
+ * That only works for vertices actually in front of the camera. A vertex at
+ * or behind the eye plane (eye z >= 0 - znode_wrvertex negates z, so eye z is
+ * negative in front) has no meaningful projection.
+ *
+ * This code used to simply `return` on those vertices, dropping them from the
+ * contour. Dropping a vertex does NOT clip a polygon, it corrupts its outline:
+ * the shape collapses into whatever the remaining points happen to describe.
+ * That is why the player ship's own hull vanished in rear view (its contour
+ * wraps around the camera) while the decals on it - separate triangles/quads -
+ * still drew. The software renderer gets this right because fe2.s clips those
+ * polygons properly in 2D (L3b276/L3b30a, handling the $80028002 sentinels),
+ * a stage the GL path deliberately skips.
+ *
+ * So do the clipping for real: accumulate the contour in eye space, clip it
+ * against the near plane (Sutherland-Hodgman), and only then project.
+ */
+static GLdouble contour_v[MAX_TESS_VERTICES][3];
+static int contour_n;
 
-	if (!gluProject (v[0],v[1],v[2], tessModelMatrix, tessProjMatrix, tessViewport,
-			&v[0], &v[1], &v[2])) {
-		//printf ("fuck %f,%f,%f\n", prev[0], prev[1], prev[2]);
-		tess_vpos--;
-	} else {
-		/* bad return.. */
-		if (prev[2] >= 0.0f) {
-			/*printf ("(%.2f,%.2f,%.2f) -> (%.2f,%.2f,%.2f)\n",
-					prev[0], prev[1], prev[2],
-					v[0], v[1], v[2]);
-			*/return;
+static inline void push_contour_vertex (GLdouble v[3])
+{
+	if (contour_n > 0) {
+		const GLdouble *p = contour_v[contour_n-1];
+		if ((p[0]==v[0]) && (p[1]==v[1]) && (p[2]==v[2])) return;
+	}
+	if (contour_n >= MAX_TESS_VERTICES) return;
+
+	contour_v[contour_n][0] = v[0];
+	contour_v[contour_n][1] = v[1];
+	contour_v[contour_n][2] = v[2];
+	contour_n++;
+}
+
+/* Clip polygon `in` (n vertices) to the half space in front of the near
+ * plane, i.e. eye z <= -GL_NEAR_PLANE. Returns the vertex count written to
+ * `out`, which needs room for n+1. */
+static int clip_contour_near (GLdouble in[][3], int n, GLdouble out[][3], int maxout)
+{
+	const double zlim = -(double) GL_NEAR_PLANE;
+	int i, k, m = 0;
+
+	for (i = 0; i < n; i++) {
+		const GLdouble *a = in[i];
+		const GLdouble *b = in[(i+1) % n];
+		int a_in = (a[2] <= zlim);
+		int b_in = (b[2] <= zlim);
+
+		if (a_in && m < maxout) {
+			for (k = 0; k < 3; k++) out[m][k] = a[k];
+			m++;
 		}
-		gluTessVertex (tobj, v, v);
+		if ((a_in != b_in) && m < maxout) {
+			double t = (zlim - a[2]) / (b[2] - a[2]);
+			for (k = 0; k < 3; k++) out[m][k] = a[k] + t*(b[k] - a[k]);
+			m++;
+		}
+	}
+
+	return m;
+}
+
+/* Clip, project and hand the current contour to the tessellator. The
+ * projected coordinates must stay alive until gluTessEndPolygon, which is
+ * why they go into the persistent tess_vertices[] pool. */
+static void flush_contour ()
+{
+	static GLdouble clipped[MAX_TESS_VERTICES+1][3];
+	int n, i;
+
+	n = clip_contour_near (contour_v, contour_n, clipped, MAX_TESS_VERTICES+1);
+	contour_n = 0;
+	if (n < 3) return;
+
+	for (i = 0; i < n; i++) {
+		GLdouble *d;
+
+		if (tess_vpos >= MAX_TESS_VERTICES) break;
+		d = tess_vertices[tess_vpos];
+
+		if (!gluProject (clipped[i][0], clipped[i][1], clipped[i][2],
+				 tessModelMatrix, tessProjMatrix, tessViewport,
+				 &d[0], &d[1], &d[2]))
+			continue;
+
+		tess_vpos++;
+		gluTessVertex (tobj, d, d);
 	}
 }
 
 void Nu_ComplexSNext ()
 {
 	if (use_renderer == R_OLD) return;
+	complex_check_abort ();
+	if (complex_aborted) return;
 	if (do_start_complex) { put_complex_start_4real (); do_start_complex = FALSE; }
 	znode_wrlong (NU_COMPLEX_SNEXT);
 	znode_wrvertex (GetReg (REG_A0)+4);
@@ -973,10 +1321,9 @@ void Nu_DrawComplexSNext (void **data)
 		znode_rdvertexd (data, v);
 		glVertex3dv (v);
 	} else {
-		assert (tess_vpos < MAX_TESS_VERTICES);
-		znode_rdvertexd (data, tess_vertices[tess_vpos]);
-		push_tess_vertex (tess_vertices[tess_vpos]);
-		tess_vpos++;
+		GLdouble v[3];
+		znode_rdvertexd (data, v);
+		push_contour_vertex (v);
 	}
 }
 void Nu_ComplexSBegin ()
@@ -989,6 +1336,10 @@ void Nu_ComplexStart ()
 	if (use_renderer == R_OLD) return;
 	do_start_complex = TRUE;
 	complex_col_rgb444 = GetReg (REG_D6);
+	complex_data_start = -1;
+	complex_aborted = FALSE;
+	complex_st_start = STMemory_ReadLong (__DL385c8_primitives_end);
+	complex_starts++;
 }
 void Nu_DrawComplexStart (void **data)
 {
@@ -1013,6 +1364,7 @@ void Nu_DrawComplexStart (void **data)
 		gluTessProperty(tobj, GLU_TESS_WINDING_RULE, GLU_TESS_WINDING_ODD);
 		gluTessBeginPolygon (tobj, NULL);
 		gluTessBeginContour (tobj);
+		contour_n = 0;
 	} else {
 		glBegin (GL_LINE_STRIP);
 	}
@@ -1024,6 +1376,15 @@ void Nu_DrawComplexStart (void **data)
 void Nu_ComplexEnd ()
 {
 	if (use_renderer == R_OLD) return;
+	complex_check_abort ();
+	complex_st_start = 0;
+	if (complex_aborted) {
+		/* already forgotten, see complex_check_abort */
+		complex_aborted = FALSE;
+		do_start_complex = FALSE;
+		no_znodes_kthx = FALSE;
+		return;
+	}
 	if (do_start_complex) { put_complex_start_4real (); do_start_complex = FALSE; }
 	znode_wrlong (NU_COMPLEX_END);
 	do_start_complex = FALSE;
@@ -1032,6 +1393,7 @@ void Nu_ComplexEnd ()
 void Nu_DrawComplexEnd (void **data)
 {
 	if (use_renderer == R_GL) {
+		flush_contour ();
 		gluTessEndContour (tobj);
 		gluTessEndPolygon (tobj);
 		
@@ -1048,12 +1410,15 @@ void Nu_DrawComplexEnd (void **data)
 void Nu_ComplexStartInner ()
 {
 	if (use_renderer == R_OLD) return;
+	complex_check_abort ();
+	if (complex_aborted) return;
 	if (do_start_complex) { put_complex_start_4real (); do_start_complex = FALSE; }
 	znode_wrlong (NU_COMPLEX_INNER);
 }
 void Nu_DrawComplexStartInner (void **data)
 {
 	if (use_renderer == R_GL) {
+		flush_contour ();
 		gluTessEndContour (tobj);
 		gluTessBeginContour (tobj);
 	} else if (use_renderer == R_GLWIRE) {
@@ -1097,6 +1462,8 @@ static void eval_bezier (GLdouble *out, float _t, float ctrlpoints[4][3])
 void Nu_ComplexBezier ()
 {
 	if (use_renderer == R_OLD) return;
+	complex_check_abort ();
+	if (complex_aborted) return;
 	if (do_start_complex) { put_complex_start_4real (); do_start_complex = FALSE; }
 	znode_wrlong (NU_COMPLEX_BEZIER);
 	znode_wrvertex (GetReg (REG_A0)+4);
@@ -1139,9 +1506,8 @@ void Nu_DrawComplexBezier (void **data)
 		return;
 	}
 	for (i=0; i<=bezier_steps; i++) {
-		eval_bezier (&tess_vertices[tess_vpos][0], i*delta, ctrlpoints);
-		push_tess_vertex (tess_vertices[tess_vpos]);
-		tess_vpos++;
+		eval_bezier (v, i*delta, ctrlpoints);
+		push_contour_vertex (v);
 	}
 }
 
@@ -1178,9 +1544,30 @@ void Nu_DrawTeardrop (void **data)
 	dir[1] -= ctrlpoints[0][1];
 	dir[2] -= ctrlpoints[0][2];
 	
-	ppd[0] = -dir[1];
-	ppd[1] = dir[0];
-	ppd[2] = dir[2];
+	/* Broaden the flare perpendicular to both its own axis (dir) and the
+	 * camera's viewing direction, so it stays roughly face-on to the
+	 * viewer instead of being pancake-thin from some angles (the "bit of
+	 * crap" the original author warned about). Falls back to the old
+	 * fixed in-plane perpendicular if degenerate (dir parallel to the
+	 * view axis). */
+	{
+		float view_axis[3], len_dir, len_ppd;
+
+		get_view_axis (view_axis);
+		cross3 (dir, view_axis, ppd);
+		len_ppd = sqrt (ppd[0]*ppd[0] + ppd[1]*ppd[1] + ppd[2]*ppd[2]);
+		len_dir = sqrt (dir[0]*dir[0] + dir[1]*dir[1] + dir[2]*dir[2]);
+		if (len_ppd > 0.0001f * (len_dir + 1.0f)) {
+			float scale = len_dir / len_ppd;
+			ppd[0] *= scale;
+			ppd[1] *= scale;
+			ppd[2] *= scale;
+		} else {
+			ppd[0] = -dir[1];
+			ppd[1] = dir[0];
+			ppd[2] = dir[2];
+		}
+	}
 
 	//h = sqrt (dir[0]*dir[0] + dir[1]*dir[1] + dir[2]*dir[2]);
 	
@@ -1341,8 +1728,9 @@ void Nu_DrawTwinklyCircle (void **data)
 	
 	size = -0.002*((short)dreg2)*v1[2];
 	
-	glPushMatrix ();
-	glTranslatef (v1[0], v1[1], v1[2]);
+	/* billboard: always face the camera, otherwise this twinkle/star
+	 * dot degenerates to an invisible line when viewed edge-on. */
+	billboard_begin (v1[0], v1[1], v1[2]);
 	
 	if (size > 0.0f) gluDisk (qobj, 0.0, size, 32, 1);
 	
@@ -1357,7 +1745,7 @@ void Nu_DrawTwinklyCircle (void **data)
 			glVertex3f (0.0f, +size, 0.0f);
 		glEnd ();
 	}
-	glPopMatrix ();
+	billboard_end ();
 }
 
 void Nu_Put2DLine ()
@@ -1403,164 +1791,1093 @@ void Nu_Draw2DLine (void **data)
 	pop_ortho ();
 }
 
-#define NUS_X	0.525731112119133606
-#define NUS_Z	0.850650808352039932
+/*
+ * Planets.
+ *
+ * fe2.s L3cd9c_ProjectPlanet always ends up in fuck_planet -> hcall
+ * Nu_PutPlanet, both when the planet is a distant disc and when we are
+ * flying in its atmosphere, and hands us everything the ST renderer uses:
+ * position, radius, orientation, lighting vector, the 16 colour table at
+ * 0-30(a3) and the planet's surface feature list (continents, seas, ice
+ * caps...). planet.c turns the features into maps of the very same XOR'ed
+ * colour codes the ST scan converter produces, and we paint them onto the
+ * sphere as textures:
+ *
+ * - seen from afar, the planet is a cube sphere with one texture per face;
+ * - close to the surface, a single mesh cannot do (see draw_horizon_cap),
+ *   so the ground is the cone of directions in which the surface is
+ *   visible, textured with a local high resolution patch centred under
+ *   the camera. The patch is rasterized from the same outlines, just
+ *   subdivided further, so seas and continents are exactly where they
+ *   are when seen from space - only with more coast line detail.
+ *
+ * Lighting is done the way the ST does it: the day/night terminator and
+ * the twilight bands are more XOR codes (psurf_light_code), so every point
+ * of the surface shows one of the 16 colours of the table - see the light
+ * zones below.
+ *
+ * The atmosphere layers of the model are drawn too, see
+ * draw_planet_atmosphere.
+ */
 
-static float nus_vdata[12][3] = {
-	{-NUS_X, 0.0, NUS_Z}, {NUS_X, 0.0, NUS_Z}, {-NUS_X, 0.0, -NUS_Z}, {NUS_X, 0.0, -NUS_Z},
-	{0.0, NUS_Z, NUS_X}, {0.0, NUS_Z, -NUS_X}, {0.0, -NUS_Z, NUS_X}, {0.0, -NUS_Z, -NUS_X},
-	{NUS_Z, NUS_X, 0.0}, {-NUS_Z, NUS_X, 0.0}, {NUS_Z, -NUS_X, 0.0}, {-NUS_Z, -NUS_X, 0.0}
+/* ==== PLANET BEGIN ==== (tests/planet build this block on its own) */
+struct PlanetPrim {
+	/* viewing coordinates of the 68k engine (z forward) */
+	double centre[3];
+	double R;
+	double light[3];
+	/* model -> viewing rotation, A[row][model axis] */
+	double A[3][3];
+	unsigned int feat_addr, seed;
+	int radius_word, detail, flags;
+	unsigned short table[16];
+	/* atmosphere layers, innermost first: scale and colour, and the
+	 * half angle of the cone of directions about the planet centre that
+	 * the layer covers (planet_atmosphere_band) */
+	int natm;
+	double atm_scale[8];
+	unsigned short atm_col[8];
+	double atm_th[8];
 };
 
-static int nus_tindices[20][3] = {
-	{0,4,1}, {0,9,4}, {9,5,4}, {4,5,8}, {4,8,1},
-	{8,10,1}, {8,3,10},{5,3,8}, {5,2,3}, {2,7,3},
-	{7,10,3}, {7,6,10}, {7,11,6}, {11,0,6}, {0,1,6},
-	{6,1,10}, {9,0,11}, {9,11,2}, {9,2,5}, {7,2,11}
+#define PLANET_FACE_RES		512
+#define PLANET_PATCH_RES	1024
+#define PLANET_FACE_GRID	48
+/* planets whose textures are kept: up to 6*4 face textures each, baked
+ * lazily for the faces and light zones actually seen. S-9: sized together
+ * with PSURF_CACHE in planet.c, which must stay at least this big so that
+ * the surfaces of the cached planets are not parsed again and again. */
+#define PLANET_TEX_CACHE	6
+
+/* Use the textured sphere down to this distance/radius ratio, the ground
+ * cone with a local patch below it (horizon 37 degrees away).
+ * Host constant, not ST data (docs/09 §3). */
+#define PLANET_CAP_RATIO	1.25
+/* Beyond this ratio we are not in the planet's sky any more: sets
+ * planet_ground_seen. Host constant, not ST data (docs/09 §3). */
+#define PLANET_SKY_RATIO	2.0
+
+static const double planet_faces[6][3][3] = {
+	/* c, u, v */
+	{ { 1, 0, 0}, { 0, 1, 0}, { 0, 0, 1} },
+	{ {-1, 0, 0}, { 0,-1, 0}, { 0, 0, 1} },
+	{ { 0, 1, 0}, {-1, 0, 0}, { 0, 0, 1} },
+	{ { 0,-1, 0}, { 1, 0, 0}, { 0, 0, 1} },
+	{ { 0, 0, 1}, { 0, 1, 0}, {-1, 0, 0} },
+	{ { 0, 0,-1}, { 0, 1, 0}, { 1, 0, 0} },
 };
 
-static void Normalise (float v[3])
+/*
+ * Light zones.
+ *
+ * The ST XORs a light code over the feature codes according to the angle
+ * to the sun (psurf_light_code): night, the terminator band(s), day. The
+ * zone boundaries are small circles of constant cos(sun), i.e. the
+ * intersections of the sphere with planes, so rather than baking the
+ * lighting into the textures (and baking them again whenever the planet
+ * turns) every zone gets its own set of textures, baked once, and is cut
+ * out of the geometry exactly (emit_zone_quad).
+ */
+#define PLANET_MAX_ZONES	4
+
+struct LightZone {
+	int code;
+	/* cos(sun) range */
+	double lo, hi;
+};
+
+static int planet_zones (int flags, struct LightZone z[PLANET_MAX_ZONES])
 {
-	float d = sqrt (v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
-	d = 1.0f / d;
-	v[0] *= d;
-	v[1] *= d;
-	v[2] *= d;
+	/* every boundary psurf_light_code may use */
+	static const double b[] = { -2.0, 0.0, 0.125, 0.25, 2.0 };
+	int i, n = 0;
+
+	for (i = 0; i < 4; i++) {
+		int code = psurf_light_code (flags, 0.5 * (b[i] + b[i+1]));
+		if (n && z[n-1].code == code) {
+			z[n-1].hi = b[i+1];
+			continue;
+		}
+		z[n].code = code;
+		z[n].lo = b[i];
+		z[n].hi = b[i+1];
+		n++;
+	}
+	return n;
 }
 
-static void nuSubdivide (float v1[3], float v2[3], float v3[3], int depth)
+struct PlanetTex {
+	int used;
+	unsigned int lru;
+	/* key */
+	unsigned int feat_addr, seed;
+	int radius_word, detail;
+	/* S-9: no struct PSurf * here - planet.c may free it at any time;
+	 * ask psurf_get by the key above whenever it is needed */
+	/* colours all the textures below were baked with */
+	unsigned short table[16];
+
+	unsigned char *face_codes[6];
+	GLuint face_tex[6][PLANET_MAX_ZONES];
+	/* light code each texture holds, -1 if none yet */
+	int face_code[6][PLANET_MAX_ZONES];
+
+	unsigned char *patch_codes;
+	struct PPatch patch;
+	int patch_valid;
+	GLuint patch_tex[PLANET_MAX_ZONES];
+	int patch_code[PLANET_MAX_ZONES];
+};
+
+static struct PlanetTex planet_tex[PLANET_TEX_CACHE];
+static unsigned int planet_tex_clock;
+
+/* Set while drawing a frame whenever a planet surface is close enough to
+ * be the ground under us (cleared in Nu_DrawScreen). This is the sky
+ * state of docs/09; nothing consumes it yet. */
+static int planet_ground_seen;
+
+static inline double pdot (const double a[3], const double b[3])
 {
-	float v12[3], v23[3], v31[3];
+	return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+}
+
+/* viewing -> model: A is a rotation, so its inverse is its transpose */
+static void to_model (const struct PlanetPrim *p, const double v[3], double m[3])
+{
+	int i;
+	for (i = 0; i < 3; i++)
+		m[i] = p->A[0][i]*v[0] + p->A[1][i]*v[1] + p->A[2][i]*v[2];
+}
+
+static void to_view (const struct PlanetPrim *p, const double m[3], double v[3])
+{
+	int i;
+	for (i = 0; i < 3; i++)
+		v[i] = p->A[i][0]*m[0] + p->A[i][1]*m[1] + p->A[i][2]*m[2];
+}
+
+/* Direction of the sun, in viewing coordinates. The ST lights the side of
+ * the planet facing away from -198(a6): its terminator circles (L3dcbc)
+ * are centred on minus the lighting vector. */
+static void planet_sun (const struct PlanetPrim *p, double sun[3])
+{
+	double len = sqrt (pdot (p->light, p->light));
 	int i;
 
-	if (depth == 0) {
-		glBegin (GL_POLYGON);
-			glNormal3fv (v1); glVertex3fv (v1);
-			glNormal3fv (v2); glVertex3fv (v2);
-			glNormal3fv (v3); glVertex3fv (v3);
-		glEnd ();
+	if (len <= 0.0) {
+		sun[0] = 0.0; sun[1] = 0.0; sun[2] = -1.0;
 		return;
 	}
+	for (i = 0; i < 3; i++) sun[i] = -p->light[i] / len;
+}
 
-	for (i=0; i<3; i++) {
-		v12[i] = v1[i]+v2[i];
-		v23[i] = v2[i]+v3[i];
-		v31[i] = v3[i]+v1[i];
+/* Turn a patch of feature codes into an RGB texture, for one light zone. */
+static void planet_bake (GLuint tex, const unsigned char *codes, int n, int light_code,
+			 const unsigned short table[16])
+{
+	static unsigned char *rgb;
+	static int rgb_size;
+	unsigned char pal[16][3];
+	unsigned char *o;
+	int i;
+
+	for (i = 0; i < 16; i++) {
+		int r, g, b, idx = ((i << 2) ^ light_code) >> 2;
+		split_rgb444b (table[idx & 15] & 0xfff, &r, &g, &b);
+		pal[i][0] = r; pal[i][1] = g; pal[i][2] = b;
 	}
-	Normalise (v12);
-	Normalise (v23);
-	Normalise (v31);
-	nuSubdivide(v1, v12, v31, depth-1);
-	nuSubdivide(v2, v23, v12, depth-1);
-	nuSubdivide(v3, v31, v23, depth-1);
-	nuSubdivide(v12, v23, v31, depth-1);
+	if (rgb_size < n*n*3) {
+		/* S-11: keep the old buffer if this fails, and the texture as
+		 * it was */
+		unsigned char *nrgb = realloc (rgb, n*n*3);
+		if (!nrgb) return;
+		rgb = nrgb;
+		rgb_size = n*n*3;
+	}
+	o = rgb;
+	for (i = 0; i < n*n; i++) {
+		const unsigned char *c = pal[(*codes++ >> 2) & 15];
+		*o++ = c[0];
+		*o++ = c[1];
+		*o++ = c[2];
+	}
+
+	glBindTexture (GL_TEXTURE_2D, tex);
+	glPixelStorei (GL_UNPACK_ALIGNMENT, 1);
+	glTexImage2D (GL_TEXTURE_2D, 0, GL_RGB, n, n, 0, GL_RGB, GL_UNSIGNED_BYTE, rgb);
+	glPixelStorei (GL_UNPACK_ALIGNMENT, 4);
+}
+
+static void planet_new_texture (GLuint *tex)
+{
+	glGenTextures (1, tex);
+	glBindTexture (GL_TEXTURE_2D, *tex);
+	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+#ifdef GL_GENERATE_MIPMAP
+	glTexParameteri (GL_TEXTURE_2D, GL_GENERATE_MIPMAP, GL_TRUE);
+	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+#else
+	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+#endif
+}
+
+/* Drop every planet texture (see change_vidmode). The parsed surfaces,
+ * which live in planet.c, stay. */
+static void planet_forget_textures (void)
+{
+	int i, f;
+
+	for (i = 0; i < PLANET_TEX_CACHE; i++) {
+		struct PlanetTex *t = &planet_tex[i];
+		if (!t->used) continue;
+		for (f = 0; f < 6; f++) {
+			glDeleteTextures (PLANET_MAX_ZONES, t->face_tex[f]);
+			free (t->face_codes[f]);
+		}
+		glDeleteTextures (PLANET_MAX_ZONES, t->patch_tex);
+		free (t->patch_codes);
+		memset (t, 0, sizeof (*t));
+	}
+}
+
+static void planet_face_patch (int f, struct PPatch *pt)
+{
+	memcpy (pt->c, planet_faces[f][0], sizeof (pt->c));
+	memcpy (pt->u, planet_faces[f][1], sizeof (pt->u));
+	memcpy (pt->v, planet_faces[f][2], sizeof (pt->v));
+	pt->half = 1.0;
+	pt->n = PLANET_FACE_RES;
+}
+
+static void planet_forget_colours (struct PlanetTex *t)
+{
+	int f, z;
+	for (z = 0; z < PLANET_MAX_ZONES; z++) {
+		for (f = 0; f < 6; f++) t->face_code[f][z] = -1;
+		t->patch_code[z] = -1;
+	}
+}
+
+static struct PlanetTex *planet_get_tex (const struct PlanetPrim *p)
+{
+	struct PlanetTex *t, *victim = NULL;
+	int i, z;
+
+	for (i = 0; i < PLANET_TEX_CACHE; i++) {
+		t = &planet_tex[i];
+		if (t->used && t->feat_addr == p->feat_addr && t->seed == p->seed &&
+		    t->radius_word == p->radius_word && t->detail == p->detail) {
+			t->lru = ++planet_tex_clock;
+			if (memcmp (t->table, p->table, sizeof (t->table))) {
+				memcpy (t->table, p->table, sizeof (t->table));
+				planet_forget_colours (t);
+			}
+			return t;
+		}
+		if (!victim || !t->used || (victim->used && t->lru < victim->lru))
+			victim = t;
+	}
+
+	t = victim;
+	if (!t->used) {
+		int ok;
+		/* S-11: no planet rather than a crash when memory runs out */
+		t->patch_codes = malloc (PLANET_PATCH_RES * PLANET_PATCH_RES);
+		ok = t->patch_codes != NULL;
+		for (i = 0; i < 6; i++) {
+			t->face_codes[i] = malloc (PLANET_FACE_RES * PLANET_FACE_RES);
+			if (!t->face_codes[i]) ok = 0;
+		}
+		if (!ok) {
+			for (i = 0; i < 6; i++) free (t->face_codes[i]);
+			free (t->patch_codes);
+			memset (t, 0, sizeof (*t));
+			return NULL;
+		}
+		for (i = 0; i < 6; i++)
+			for (z = 0; z < PLANET_MAX_ZONES; z++)
+				planet_new_texture (&t->face_tex[i][z]);
+		for (z = 0; z < PLANET_MAX_ZONES; z++)
+			planet_new_texture (&t->patch_tex[z]);
+		t->used = 1;
+	}
+	t->lru = ++planet_tex_clock;
+	t->feat_addr = p->feat_addr;
+	t->seed = p->seed;
+	t->radius_word = p->radius_word;
+	t->detail = p->detail;
+	memcpy (t->table, p->table, sizeof (t->table));
+	{
+		/* NULL (out of memory) rasterizes as an empty surface */
+		struct PSurf *s = psurf_get (p->feat_addr, p->seed, p->radius_word, p->detail);
+		for (i = 0; i < 6; i++) {
+			struct PPatch pt;
+			planet_face_patch (i, &pt);
+			psurf_raster (s, &pt, t->face_codes[i]);
+		}
+	}
+	t->patch_valid = 0;
+	planet_forget_colours (t);
+	return t;
+}
+
+/* The texture of cube face f (or of the local patch, f == -1) for light
+ * zone slot z, baked on first use. */
+static GLuint planet_zone_texture (struct PlanetTex *t, int f, int z, int light_code)
+{
+	if (f < 0) {
+		if (t->patch_code[z] != light_code) {
+			planet_bake (t->patch_tex[z], t->patch_codes, t->patch.n, light_code, t->table);
+			t->patch_code[z] = light_code;
+		}
+		return t->patch_tex[z];
+	}
+	if (t->face_code[f][z] != light_code) {
+		planet_bake (t->face_tex[f][z], t->face_codes[f], PLANET_FACE_RES, light_code, t->table);
+		t->face_code[f][z] = light_code;
+	}
+	return t->face_tex[f][z];
+}
+
+/* Make sure the local patch covers the whole visible ground: the cap of
+ * half angle 'horizon' around model direction 'down' (from the planet
+ * centre to the point under the camera). */
+static void planet_update_patch (struct PlanetTex *t, const double down[3], double horizon)
+{
+	double want = tan (horizon * 1.25 + 1e-6);
+	int z;
+
+	if (horizon * 1.25 > 1.2) want = tan (1.2);
+	if (t->patch_valid) {
+		double cover = atan (t->patch.half);
+		double moved = acos (fmin (1.0, pdot (down, t->patch.c)));
+		/* still on the patch, and not zoomed in so much that it has got
+		 * too coarse? */
+		if (moved + horizon < 0.98 * cover && t->patch.half < 3.0 * want)
+			return;
+	}
+
+	{
+		double *c = t->patch.c, *u = t->patch.u, *v = t->patch.v, l;
+		memcpy (c, down, 3 * sizeof (double));
+		/* any orthonormal frame will do */
+		if (fabs (c[0]) < 0.6) { u[0] = 0.0; u[1] = c[2]; u[2] = -c[1]; }
+		else { u[0] = -c[2]; u[1] = 0.0; u[2] = c[0]; }
+		l = sqrt (pdot (u, u));
+		u[0] /= l; u[1] /= l; u[2] /= l;
+		v[0] = c[1]*u[2] - c[2]*u[1];
+		v[1] = c[2]*u[0] - c[0]*u[2];
+		v[2] = c[0]*u[1] - c[1]*u[0];
+	}
+	t->patch.half = want;
+	t->patch.n = PLANET_PATCH_RES;
+	psurf_raster (psurf_get (t->feat_addr, t->seed, t->radius_word, t->detail),
+		      &t->patch, t->patch_codes);
+	t->patch_valid = 1;
+	for (z = 0; z < PLANET_MAX_ZONES; z++) t->patch_code[z] = -1;
+}
+
+/* A vertex of the planet surface: position (68k viewing coordinates),
+ * texture coordinates and cos(sun) of the surface there. */
+struct PVert {
+	double p[3], t[2], c;
+};
+
+/* Keep the part of a polygon with lo <= c (sign 1) or c <= hi (sign -1).
+ * c is (p - centre).sun / R, an affine function of the position, so
+ * interpolating it linearly along the edges cuts along the exact plane of
+ * the zone boundary. */
+static int clip_poly (const struct PVert *in, int n, struct PVert *out, double lim, double sign)
+{
+	int i, k, m = 0;
+
+	for (i = 0; i < n; i++) {
+		const struct PVert *a = &in[i], *b = &in[(i+1) % n];
+		double da = sign * (a->c - lim), db = sign * (b->c - lim);
+
+		if (da >= 0.0) out[m++] = *a;
+		if ((da >= 0.0) != (db >= 0.0)) {
+			double f = da / (da - db);
+			struct PVert *o = &out[m++];
+			for (k = 0; k < 3; k++) o->p[k] = a->p[k] + f * (b->p[k] - a->p[k]);
+			o->t[0] = a->t[0] + f * (b->t[0] - a->t[0]);
+			o->t[1] = a->t[1] + f * (b->t[1] - a->t[1]);
+			o->c = lim;
+		}
+	}
+	return m;
+}
+
+/* 68k viewing coordinates -> GL eye coordinates */
+static inline void planet_vertex (const double v[3])
+{
+	glVertex3d (v[0], v[1], -v[2]);
+}
+
+/* Draw the part of quad a b c d (in that order) that lies in the zone. */
+static void emit_zone_quad (const struct LightZone *z, const struct PVert *a, const struct PVert *b,
+			    const struct PVert *c, const struct PVert *d)
+{
+	struct PVert q[4], t1[8], t2[12];
+	const struct PVert *v = q;
+	double lo = fmin (fmin (a->c, b->c), fmin (c->c, d->c));
+	double hi = fmax (fmax (a->c, b->c), fmax (c->c, d->c));
+	int n = 4, i;
+
+	if (hi < z->lo || lo > z->hi) return;
+	q[0] = *a; q[1] = *b; q[2] = *c; q[3] = *d;
+	if (lo < z->lo) {
+		n = clip_poly (v, n, t1, z->lo, 1.0);
+		v = t1;
+	}
+	if (hi > z->hi) {
+		n = clip_poly (v, n, t2, z->hi, -1.0);
+		v = t2;
+	}
+	if (n < 3) return;
+	glBegin (GL_POLYGON);
+	for (i = 0; i < n; i++) {
+		glTexCoord2dv (v[i].t);
+		planet_vertex (v[i].p);
+	}
+	glEnd ();
+}
+
+/* The whole planet, seen from a distance: a cube sphere. */
+static void draw_planet_sphere (struct PlanetTex *t, const struct PlanetPrim *p, const double sun[3],
+				const struct LightZone *zones, int nzones)
+{
+	static struct PVert v[PLANET_FACE_GRID+1][PLANET_FACE_GRID+1];
+	static char front[PLANET_FACE_GRID][PLANET_FACE_GRID];
+	int f, i, j, k, z;
+
+	for (f = 0; f < 6; f++) {
+		const double (*F)[3] = planet_faces[f];
+		static double dir[PLANET_FACE_GRID+1][PLANET_FACE_GRID+1][3];
+		int any = 0;
+
+		for (j = 0; j <= PLANET_FACE_GRID; j++) {
+			double y = -1.0 + 2.0 * j / PLANET_FACE_GRID;
+			for (i = 0; i <= PLANET_FACE_GRID; i++) {
+				double x = -1.0 + 2.0 * i / PLANET_FACE_GRID;
+				double m[3], l;
+				for (k = 0; k < 3; k++) m[k] = F[0][k] + x*F[1][k] + y*F[2][k];
+				l = sqrt (pdot (m, m));
+				for (k = 0; k < 3; k++) m[k] /= l;
+				to_view (p, m, dir[j][i]);
+				for (k = 0; k < 3; k++) v[j][i].p[k] = p->centre[k] + p->R * dir[j][i][k];
+				v[j][i].t[0] = 0.5 * (x + 1.0);
+				v[j][i].t[1] = 0.5 * (y + 1.0);
+				v[j][i].c = pdot (dir[j][i], sun);
+			}
+		}
+		/* no depth buffer: drop the far side by hand. A cell faces us
+		 * when the camera (origin) is above its tangent plane. */
+		for (j = 0; j < PLANET_FACE_GRID; j++) {
+			for (i = 0; i < PLANET_FACE_GRID; i++) {
+				double n[3];
+				for (k = 0; k < 3; k++)
+					n[k] = dir[j][i][k] + dir[j][i+1][k] + dir[j+1][i][k] + dir[j+1][i+1][k];
+				front[j][i] = pdot (p->centre, n) + p->R * sqrt (pdot (n, n)) < 0.0;
+				any |= front[j][i];
+			}
+		}
+		if (!any) continue;
+
+		for (z = 0; z < nzones; z++) {
+			int bound = 0;
+			for (j = 0; j < PLANET_FACE_GRID; j++) {
+				for (i = 0; i < PLANET_FACE_GRID; i++) {
+					double lo, hi;
+					if (!front[j][i]) continue;
+					lo = fmin (fmin (v[j][i].c, v[j][i+1].c), fmin (v[j+1][i].c, v[j+1][i+1].c));
+					hi = fmax (fmax (v[j][i].c, v[j][i+1].c), fmax (v[j+1][i].c, v[j+1][i+1].c));
+					if (hi < zones[z].lo || lo > zones[z].hi) continue;
+					if (!bound) {
+						glBindTexture (GL_TEXTURE_2D, planet_zone_texture (t, f, z, zones[z].code));
+						bound = 1;
+					}
+					emit_zone_quad (&zones[z], &v[j][i], &v[j][i+1], &v[j+1][i+1], &v[j+1][i]);
+				}
+			}
+		}
+	}
 }
 
 /*
-static void NormCrossProd (float v1[3], float v2[3], float vout[3])
-{
-	vout[0] = v1[1]*v2[2] - v1[2]*v2[1];
-	vout[1] = v1[2]*v2[0] - v1[0]*v2[2];
-	vout[2] = v1[0]*v2[1] - v1[1]*v2[0];
-	Normalise (vout);
-}*/
+ * The ground, when the camera is near the surface.
+ *
+ * A fixed sphere mesh cannot do that job: at an altitude of a few
+ * thousandths of the planet radius the entire visible surface falls
+ * inside a single cell of the mesh, whose chord passes underneath the
+ * camera. So we tessellate the *cone of directions in which the surface
+ * is visible*, rather than a patch of surface positioned in space.
+ * Tessellating the visible spherical cap itself, out to the tangent
+ * horizon at acos(R/d), collapses to a single point when landed (d == R),
+ * and its vertices centre + R*n are a difference of two quantities of
+ * magnitude R, pure cancellation once cast to float. The direction cone
+ * has neither problem - see theta_max below - and the vertex along each
+ * direction is placed at the exact ray/sphere hit, computed in double
+ * relative to the camera. Rings are concentrated towards the horizon,
+ * where the silhouette needs the resolution.
+ *
+ * Every vertex knows exactly which point of the surface it shows, which
+ * gives its coordinates in the local surface patch texture.
+ */
+#define HORIZON_CAP_RINGS	64
+#define HORIZON_CAP_SLICES	64
 
-#define NUSPHERE_SUBDIVS	4
+/* Closest distance a ground vertex is emitted at: right under a landed
+ * ship the surface is closer than the near plane. Only the direction of
+ * such a vertex matters. */
+#define GROUND_MIN_DIST		16.0
 
-void nuSphere (float size)
+/* Where the atmosphere discs are emitted: only the *direction* of each
+ * vertex matters, and there is no depth buffer to care about the
+ * distance (see draw_3dview). Any value well inside the frustum will do.
+ * Host constant, not ST data (docs/09 §3). */
+#define GROUND_DOME_RADIUS	1.0e6
+
+static void draw_horizon_cap (struct PlanetTex *t, const struct PlanetPrim *p, double d,
+			      const double sun[3], const struct LightZone *zones, int nzones)
 {
-	int i;
-	glScalef (size, size, size);
-	for (i=0; i<20; i++) {
-		nuSubdivide (nus_vdata[nus_tindices[i][0]],
-				nus_vdata[nus_tindices[i][1]],
-				nus_vdata[nus_tindices[i][2]],
-				NUSPHERE_SUBDIVS);
+	static struct PVert v[HORIZON_CAP_RINGS+1][HORIZON_CAP_SLICES+1];
+	double up[3], e1[3], e2[3];
+	double theta_max, dot, len;
+	int i, j, k, z;
+
+	/* 'up' points from the planet centre towards the camera (origin) */
+	up[0] = -p->centre[0]/d;
+	up[1] = -p->centre[1]/d;
+	up[2] = -p->centre[2]/d;
+
+	/* any axis not parallel to 'up', made orthonormal to it */
+	if (fabs (up[0]) < 0.9) {
+		e1[0] = 1.0; e1[1] = 0.0; e1[2] = 0.0;
+	} else {
+		e1[0] = 0.0; e1[1] = 1.0; e1[2] = 0.0;
+	}
+	dot = pdot (up, e1);
+	for (k = 0; k < 3; k++) e1[k] -= up[k]*dot;
+	len = sqrt (pdot (e1, e1));
+	for (k = 0; k < 3; k++) e1[k] /= len;
+
+	/* e2 = up x e1 */
+	e2[0] = up[1]*e1[2] - up[2]*e1[1];
+	e2[1] = up[2]*e1[0] - up[0]*e1[2];
+	e2[2] = up[0]*e1[1] - up[1]*e1[0];
+
+	/* Half-angle of the cone of directions that actually hit the surface.
+	 *
+	 * This is NOT acos(R/d), the angular radius of the visible cap seen
+	 * from the planet centre, which collapses to 0 when landed (d == R).
+	 * Seen from the camera the very same surface is a cone of half-angle
+	 * asin(R/d), which is perfectly behaved: at d == R it is exactly 90
+	 * degrees, i.e. the ground fills everything below the true
+	 * horizontal, which is what standing on a planet looks like. */
+	theta_max = asin (p->R/d > 1.0 ? 1.0 : p->R/d);
+
+	for (i = 0; i <= HORIZON_CAP_RINGS; i++) {
+		double f = (double) i / HORIZON_CAP_RINGS;
+		/* denser towards theta_max, i.e. towards the horizon line */
+		double th = theta_max * (1.0 - (1.0-f)*(1.0-f));
+		double ct = cos (th), st = sin (th);
+		/* Exact ray/sphere hit distance along the ring. Kept in double:
+		 * it is a difference of quantities of magnitude R, which float
+		 * cannot resolve for planet-sized radii. */
+		double disc = p->R*p->R - d*d*st*st, l;
+
+		if (disc < 0.0) disc = 0.0;
+		l = d*ct - sqrt (disc);
+
+		for (j = 0; j <= HORIZON_CAP_SLICES; j++) {
+			double a = 2.0*M_PI*(double) j / HORIZON_CAP_SLICES;
+			double ca = cos (a), sa = sin (a);
+			double dir[3], n[3], m[3], cm;
+
+			for (k = 0; k < 3; k++) {
+				/* -up is 'down', towards the planet centre */
+				dir[k] = -up[k]*ct + (e1[k]*ca + e2[k]*sa)*st;
+				n[k] = (l*dir[k] - p->centre[k]) / p->R;
+				v[i][j].p[k] = dir[k] * (l > GROUND_MIN_DIST ? l : GROUND_MIN_DIST);
+			}
+			/* from the emitted position, so the zone cuts stay affine */
+			v[i][j].c = (pdot (v[i][j].p, sun) - pdot (p->centre, sun)) / p->R;
+			to_model (p, n, m);
+			cm = pdot (m, t->patch.c);
+			if (cm < 1e-6) cm = 1e-6;
+			v[i][j].t[0] = 0.5 + 0.5 * pdot (m, t->patch.u) / (cm * t->patch.half);
+			v[i][j].t[1] = 0.5 + 0.5 * pdot (m, t->patch.v) / (cm * t->patch.half);
+		}
+	}
+
+	/* The cap is an open, convex surface: every screen pixel it covers is
+	 * covered exactly once, so face culling is unnecessary here. */
+	glDisable (GL_CULL_FACE);
+
+	for (z = 0; z < nzones; z++) {
+		glBindTexture (GL_TEXTURE_2D, planet_zone_texture (t, -1, z, zones[z].code));
+		/* Walk the rings from the horizon inwards, i.e. far to near:
+		 * there is no depth buffer (see draw_3dview), so anything that
+		 * could overlap must be emitted back to front. */
+		for (i = HORIZON_CAP_RINGS - 1; i >= 0; i--)
+			for (j = 0; j < HORIZON_CAP_SLICES; j++)
+				emit_zone_quad (&zones[z], &v[i][j], &v[i][j+1], &v[i+1][j+1], &v[i+1][j]);
 	}
 }
 
-/* not finished by a long shot */
-void Nu_PutPlanet ()
+/*
+ * Atmosphere layers.
+ *
+ * Between the planet header and its feature list comes the atmosphere:
+ *	colour, { scale, colour }*, 0
+ * (read by l3d716 / L3d9ec in fe2.s, skipped at l3d2d4). When the planet
+ * is near, the ST draws each layer as a ring between the planet outline
+ * and the outline scaled by 'scale' / $4000 (L3d8f4), in the layer's
+ * colour plus a tint that depends on where the sun is
+ * (L3da2e_AtmosphereColNShit, 204(a3)).
+ *
+ * The scaling is not about the planet's own centre but about a point up
+ * to 2*$600 pixels away in its direction (114(a3)), so what matters is
+ * that a layer of scale f is a band (f-1) * that distance wide, whatever
+ * the size of the planet on screen: a thin rim around a planet seen from
+ * orbit, and bands of sky over the horizon when we are down in it. We
+ * draw each layer as the disc of directions around the planet centre
+ * that reaches that far beyond the planet's limb.
+ */
+/* S-23: add an atmosphere tint to a colour one 4-bit channel at a time,
+ * saturating, instead of letting a carry run from one channel into the
+ * next (and out of the colour). A negative tint word darkens each
+ * channel by the digits of its magnitude. */
+static unsigned short rgb444_add_sat (unsigned short col, unsigned short tint)
 {
-	if (use_renderer == R_OLD) return;
-	
-	/*{
-		int cunt, i;
-		cunt = GetReg (REG_A6);
-		cunt -= 36;
-		printf ("Cuntrix:");
-		for (i=0; i<9; i++) {
-			if (((i)%3) == 0) printf ("\n");
-			printf ("%04hx ", STMemory_ReadWord (cunt));
-			cunt += 2;
-		}
-		printf ("\n");
-	}*/
-	
-	znode_wrlong (NU_PLANET);
-	znode_wrlong (GetReg (REG_D6));
-	znode_wrlong (GetReg (REG_D1));
-	znode_wrlong (GetReg (REG_D0));
-	/* lighting vector */
-	znode_wrlightsource (GetReg (REG_A1));
-	znode_wrvertex (GetReg (REG_A0)+4);
-	znode_wrmatrix (GetReg (REG_A6)-36);
+	int neg = (short) tint < 0;
+	int t = neg ? -(short) tint : tint;
+	int out = 0, sh;
+
+	for (sh = 0; sh < 12; sh += 4) {
+		int c = (col >> sh) & 15, d = (t >> sh) & 15;
+		c = neg ? c - d : c + d;
+		if (c < 0)
+			c = 0;
+		if (c > 15)
+			c = 15;
+		out |= c << sh;
+	}
+	return out;
 }
+
+static void planet_read_atmosphere (struct PlanetPrim *p, int model, int a3, int a6, int detail3)
+{
+	int ptr = model, tint, d0, i, n = 0;
+	unsigned short scale[8], col[8];
+
+	p->natm = 0;
+	ptr += 8;
+	/* the flag bits are the high byte of the first model word */
+	if (p->flags & 0x10) ptr += 2 + 56;
+	else if (!(p->flags & 0x40)) ptr += 8;
+	if (!STMemory_ReadWord (ptr)) return;
+	ptr += 2;
+	for (;;) {
+		unsigned short sc = STMemory_ReadWord (ptr);
+		if (!sc || n == 8) break;
+		scale[n] = sc;
+		col[n++] = STMemory_ReadWord (ptr + 2);
+		ptr += 4;
+	}
+	/* layout sanity check: the features follow */
+	if (ptr + 2 != p->feat_addr) return;
+
+	/* L3da2e: tint from the light vector and the planet position */
+	d0 = 0;
+	for (i = 0; i < 3; i++)
+		d0 += STMemory_ReadWord (a6 - 198 + 2*i) * STMemory_ReadWord (a3 + 122 + 2*i);
+	d0 = (short) ((d0 * 2) >> 16);
+	d0 >>= 10;
+	d0 = -d0 & ~1;
+	if (d0 <= -8) d0 = -8;
+	if (d0 >= 6) d0 = 6;
+	tint = STMemory_ReadWord (a6 - 104 + 8 + d0);
+
+	/* innermost first */
+	for (i = 0; i < n; i++) {
+		if ((short) scale[i] <= detail3) continue;
+		p->atm_scale[p->natm] = scale[i] / 16384.0;
+		p->atm_col[p->natm++] = rgb444_add_sat (col[i], tint);
+	}
+}
+
+/*
+ * V-1: where the ST draws the atmosphere, and how far out (docs/09 §3).
+ *
+ * In ST pixels (focal length 256) on the line from the centre of the
+ * screen through the planet's: near and far limb (l3d274, l3d2d4).
+ * - near limb at 178 or more: the planet is off the screen (l3cd84);
+ * - the view plane cuts the planet, or far + near >= $600: big path with
+ *   the far limb taken as $600 (l3d710);
+ * - far + near >= $199: big path (l3d716);
+ * - otherwise the planet is small on the screen: the ST draws a circle
+ *   and no atmosphere at all;
+ * - big path: the atmosphere is drawn iff near - 3 > -178 (the $ff4e test
+ *   after l3d716), i.e. not when the planet fills the whole screen.
+ * How wide each band is was measured on the screen, not derived: the ST
+ * scales the planet outline by f = scale/$4000 about 2*far along that
+ * line (114(a3)), which on paper puts the band's edge (f-1)*(2*far -
+ * near) pixels in, but the bands the software renderer draws are about
+ * three times that. Sampled along the line through the planet centre,
+ * the ST's band edges sit at near - (f-1)*6*far, far taken as $600 on the
+ * l3d710 paths: Lave from Lave Station (l3d716, near 159, far 569, four
+ * layers at 138.1 145.2 150.3 153.4 pixels, the formula gives 138.0
+ * 145.2 150.3 153.4) and landed on Mars (l3d710: the widths agree, but
+ * the ST's bands start about 5 pixels nearer the horizon than these, an
+ * offset this does not model).
+ * That gives the half angle of the layer's cone of directions about the
+ * planet centre. Worked out from the same numbers the ST uses (the
+ * position and the radius before planet_fix_radius), in doubles: the
+ * ST's 16 bit wrap of near - 3 and far + near at saturation is not
+ * copied. No host constants.
+ */
+#define ST_FOCAL	256.0
+
+/* view angle off the screen centre -> ST pixels, saturating as the ST's
+ * words do */
+static double st_pixels (double a)
+{
+	if (a >= M_PI/2) return 32767.0;
+	if (a <= -M_PI/2) return -32768.0;
+	a = ST_FOCAL * tan (a);
+	return a > 32767.0 ? 32767.0 : a < -32768.0 ? -32768.0 : a;
+}
+
+static void planet_atmosphere_band (struct PlanetPrim *p)
+{
+	double x = p->centre[0], y = p->centre[1], z = p->centre[2], r = p->R;
+	double d = sqrt (x*x + y*y + z*z), gam, thp, edge, near, far;
+	int l, n = p->natm;
+
+	if (!n) return;
+	p->natm = 0;
+	if (r <= 0.0 || d <= 0.0) return;
+	gam = atan2 (sqrt (x*x + y*y), z);
+	thp = asin (r < d ? r/d : 1.0);
+	edge = st_pixels (gam - thp);
+	near = floor (edge);
+	if (near >= 178.0) return;
+	if (z*z - r*r <= 0.0) {
+		far = 1536.0;
+	} else {
+		far = floor (st_pixels (gam + thp));
+		if (far + near >= 1536.0) far = 1536.0;
+		else if (far + near < 409.0) return;
+	}
+	if (near - 3.0 <= -178.0) return;
+	for (l = 0; l < n; l++) {
+		double w = (p->atm_scale[l] - 1.0) * 6.0 * far;
+		p->atm_th[l] = gam - atan ((edge - w) / ST_FOCAL);
+	}
+	p->natm = n;
+}
+
+#define ATMOSPHERE_RINGS	24
+#define ATMOSPHERE_SLICES	64
+
+static void draw_planet_atmosphere (const struct PlanetPrim *p, double d)
+{
+	double down[3], e1[3], e2[3], dot, len, theta_p;
+	int l, i, j, k;
+
+	if (!p->natm) return;
+	theta_p = asin (p->R/d > 1.0 ? 1.0 : p->R/d);
+	for (k = 0; k < 3; k++) down[k] = p->centre[k]/d;
+	if (fabs (down[0]) < 0.9) { e1[0] = 1.0; e1[1] = 0.0; e1[2] = 0.0; }
+	else { e1[0] = 0.0; e1[1] = 1.0; e1[2] = 0.0; }
+	dot = pdot (down, e1);
+	for (k = 0; k < 3; k++) e1[k] -= down[k]*dot;
+	len = sqrt (pdot (e1, e1));
+	for (k = 0; k < 3; k++) e1[k] /= len;
+	e2[0] = down[1]*e1[2] - down[2]*e1[1];
+	e2[1] = down[2]*e1[0] - down[0]*e1[2];
+	e2[2] = down[0]*e1[1] - down[1]*e1[0];
+
+	glDisable (GL_TEXTURE_2D);
+	glDisable (GL_CULL_FACE);
+	/* outermost first, so that the inner layers stay visible (the ST
+	 * inserts them all at the same depth, and they come out the other way
+	 * round) */
+	for (l = p->natm - 1; l >= 0; l--) {
+		/* how far out: planet_atmosphere_band, from the ST's band */
+		double th = p->atm_th[l];
+		int r, g, b;
+
+		if (th <= theta_p) continue;
+		if (th > M_PI - 0.01) th = M_PI - 0.01;
+		split_rgb444b (p->atm_col[l], &r, &g, &b);
+		glColor3ub (r, g, b);
+		for (i = ATMOSPHERE_RINGS - 1; i >= 0; i--) {
+			/* denser towards the rim */
+			double f0 = (double) i / ATMOSPHERE_RINGS, f1 = (double) (i+1) / ATMOSPHERE_RINGS;
+			double t0 = th * (1.0 - (1.0-f0)*(1.0-f0)), t1 = th * (1.0 - (1.0-f1)*(1.0-f1));
+			double c0 = cos (t0), s0 = sin (t0), c1 = cos (t1), s1 = sin (t1);
+
+			glBegin (GL_QUAD_STRIP);
+			for (j = 0; j <= ATMOSPHERE_SLICES; j++) {
+				double a = 2.0*M_PI*(double) j / ATMOSPHERE_SLICES;
+				double ca = cos (a), sa = sin (a), v[3];
+				for (k = 0; k < 3; k++) v[k] = GROUND_DOME_RADIUS * (down[k]*c0 + (e1[k]*ca + e2[k]*sa)*s0);
+				glVertex3d (v[0], v[1], -v[2]);
+				for (k = 0; k < 3; k++) v[k] = GROUND_DOME_RADIUS * (down[k]*c1 + (e1[k]*ca + e2[k]*sa)*s1);
+				glVertex3d (v[0], v[1], -v[2]);
+			}
+			glEnd ();
+		}
+	}
+}
+
+/* De-quantize the radius.
+ *
+ * planet_rad (fe2.s L3ce38) is rebuilt by shifting it right by d5 and
+ * then left by d4, so its low d4 bits are gone: what we get is a multiple of 2^d4 and the
+ * true radius lies somewhere in [R, R + 2^d4). Landed on Mars that is a
+ * step of 131072, while the whole apparent "altitude" fits inside a single
+ * quantization step. So recover the step from the trailing zero bits and
+ * pick the value of the interval that is still physically possible: we can
+ * never be below the surface, so clamp to d. */
+static void planet_fix_radius (struct PlanetPrim *p, double d)
+{
+	unsigned int q = (unsigned int) p->R;
+	double step = 1.0;
+	while (q && !(q & 1)) { q >>= 1; step *= 2.0; }
+	if (p->R + step > d) p->R = d;
+	else p->R += step;
+}
+
+/* The atmosphere layers, in their own znode: see Nu_PutPlanet. */
+void Nu_DrawAtmosphere (void **data)
+{
+	struct PlanetPrim p;
+	double d;
+
+	memcpy (&p, *data, sizeof (p));
+	*data += sizeof (p);
+	d = sqrt (pdot (p.centre, p.centre));
+	if (p.R <= 0.0 || d <= 0.0) return;
+	planet_fix_radius (&p, d);
+	glDisable (GL_LIGHTING);
+	glDisable (GL_CULL_FACE);
+	glShadeModel (GL_SMOOTH);
+	draw_planet_atmosphere (&p, d);
+}
+
 void Nu_DrawPlanet (void **data)
 {
-	int v1[3];
-	int size;
-	float light_vec[4];
-	GLfloat rot_matrix[16];
-	unsigned int obj_col[4], light_col[4];
+	struct PlanetPrim p;
+	struct PlanetTex *t;
+	struct LightZone zones[PLANET_MAX_ZONES];
+	double d, sun[3];
+	int nzones;
 
-	/*obj_col[0] = 1000000000;
-	obj_col[1] = 1000000000;
-	obj_col[2] = 1000000000;
-	obj_col[3] = 0;*/
-	split_rgb444i (znode_rdlong (data), &obj_col[0], &obj_col[1], &obj_col[2]);
-	obj_col[3] = 0;
-	split_rgb444i (znode_rdlong (data), &light_col[0], &light_col[1], &light_col[2]);
-	light_col[3] = 0;
+	memcpy (&p, *data, sizeof (p));
+	*data += sizeof (p);
 
-	size = znode_rdlong (data);
-	
-	znode_rdvertexf (data, light_vec);
-	light_vec[3] = 0.0f;
-	
-	glLightfv (GL_LIGHT1, GL_POSITION, light_vec);
+	d = sqrt (pdot (p.centre, p.centre));
+	if (p.R <= 0.0 || d <= 0.0) return;
+	planet_fix_radius (&p, d);
 
-	glLightiv (GL_LIGHT1, GL_DIFFUSE, light_col);
-	glLightiv (GL_LIGHT1, GL_AMBIENT, obj_col);
+	/* We are close enough to a planet that its surface is the ground
+	 * under us - that is exactly the condition for the sky backdrop too,
+	 * so derive it from here rather than from a game flag. Picked up by
+	 * the next frame. */
+	if (d < p.R * PLANET_SKY_RATIO) planet_ground_seen = 1;
 
-//	glMaterialiv (GL_FRONT, GL_AMBIENT, obj_col);
-	glEnable (GL_LIGHTING);
-	glEnable (GL_LIGHT1);
-	glEnable (GL_NORMALIZE);
-	
-	glShadeModel (GL_SMOOTH);
-//	glColor3uiv (obj_col);
-	znode_rdvertex (data, v1);
-	znode_rdmatrix (data, rot_matrix);
+	t = planet_get_tex (&p);
+	if (!t) return;
+	planet_sun (&p, sun);
+	nzones = planet_zones (p.flags, zones);
 
-	//printf ("planet size %d, pos (%d,%d,%d)\n", size,v1[0],v1[1],v1[2]);
-	
-	glPushMatrix ();
-	glTranslatef (v1[0], v1[1], v1[2]);
-	glRotatef (180.0f, 1, 0, 0);
-	glRotatef (180.0f, 0, 1, 0);
-	glMultMatrixf (rot_matrix);
-	glCullFace (GL_BACK);
-	glEnable (GL_CULL_FACE);
-	/* why the fucking fudge factor?? */
-	nuSphere (size*1.0080);
-	//gluSphere (qobj, size, 100, 100);
-	glDisable (GL_CULL_FACE);
-	glPopMatrix ();
-	
-	glDisable (GL_NORMALIZE);
 	glDisable (GL_LIGHTING);
-	glDisable (GL_LIGHT1);
+	glDisable (GL_CULL_FACE);
+	glShadeModel (GL_SMOOTH);
+
+	glEnable (GL_TEXTURE_2D);
+	glTexEnvi (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+	glColor3f (1.0f, 1.0f, 1.0f);
+
+	if (d < p.R * PLANET_CAP_RATIO) {
+		double up[3] = { -p.centre[0]/d, -p.centre[1]/d, -p.centre[2]/d };
+		double down[3];
+		to_model (&p, up, down);
+		planet_update_patch (t, down, acos (p.R/d > 1.0 ? 1.0 : p.R/d));
+		draw_horizon_cap (t, &p, d, sun, zones, nzones);
+	} else {
+		draw_planet_sphere (t, &p, sun, zones, nzones);
+	}
+
+	glDisable (GL_TEXTURE_2D);
+}
+/* ==== PLANET END ==== */
+
+/*
+ * P-2: the hcall passes neither the planet model nor its feature list, and
+ * the 68000 core is left as it is, so they are found from what it does
+ * pass. a5 is just past the feature list, evened (l3d51e). The model is the
+ * one, after a planet command (low 5 bits $1f, ProjectPlanet) in the
+ * object's code, whose feature list, found the way L3d3f0 finds it, ends
+ * there.
+ */
+#define PLANET_SCAN_BYTES	0x10000
+#define PLANET_MAX_ATM		64
+#define PLANET_CACHE		16
+
+static inline int st_readable (unsigned int addr, unsigned int len)
+{
+	return addr <= MEM_SIZE && len <= MEM_SIZE - addr;
+}
+
+/* the feature list of the model at model, as L3d3f0 skips to it; 0 if the
+ * layout does not hold */
+static unsigned int planet_features_at (unsigned int model)
+{
+	unsigned int ptr = model + 8;
+	int flags, i;
+
+	if (!st_readable (model, 8)) return 0;
+	flags = STMemory_ReadByte (model) & 0xff;
+	if (flags & 0x10) ptr += 58;
+	else if (!(flags & 0x40)) ptr += 8;
+	if (!st_readable (ptr, 2)) return 0;
+	if (STMemory_ReadWord (ptr) == 0) return ptr + 2;
+	/* atmosphere layers: scale and colour words, up to a zero scale */
+	for (ptr += 6, i = 0; i < PLANET_MAX_ATM; i++, ptr += 4) {
+		if (!st_readable (ptr, 2)) return 0;
+		if (STMemory_ReadWord (ptr) == 0) return ptr + 2;
+	}
+	return 0;
+}
+
+static int planet_model_fits (unsigned int model, unsigned int end, unsigned int *feat)
+{
+	unsigned int f, e;
+
+	if (model < 6 || !st_readable (model - 6, 2)) return 0;
+	if ((STMemory_ReadWord (model - 6) & 0x1f) != 0x1f) return 0;
+	f = planet_features_at (model);
+	if (!f || f >= end) return 0;
+	e = psurf_features_end (f, end);
+	if (!e || ((e + 1) & ~1u) != end) return 0;
+	*feat = f;
+	return 1;
+}
+
+static unsigned int planet_cache[PLANET_CACHE];
+static int planet_cache_next;
+static unsigned int planet_found, planet_missed;
+
+static void planet_stats (void)
+{
+	fprintf (stderr, "planet: models found %u, missed %u; z-tree pushes %u, complex shapes %u aborted %u\n",
+		 planet_found, planet_missed, ztree_pushes, complex_starts, complex_aborts);
+}
+
+/* the planet model, 0 if none fits; *feat gets its feature list */
+static unsigned int planet_find_model (unsigned int a6, unsigned int end, unsigned int *feat)
+{
+	unsigned int start = 0, m;
+	int i;
+
+	if (end < 8 || end > MEM_SIZE) return 0;
+	for (i = 0; i < PLANET_CACHE; i++)
+		if (planet_cache[i] && planet_model_fits (planet_cache[i], end, feat))
+			return planet_cache[i];
+	/* from the start of the object's code: its header is at -4(a6) */
+	if (st_readable (a6 - 4, 4)) {
+		unsigned int h = STMemory_ReadLong (a6 - 4);
+		if (st_readable (h, 2)) start = h + (short) STMemory_ReadWord (h);
+	}
+	if (start >= end || end - start > PLANET_SCAN_BYTES)
+		start = end > PLANET_SCAN_BYTES ? end - PLANET_SCAN_BYTES : 0;
+	for (m = (start + 7) & ~1u; m < end; m += 2) {
+		if (planet_model_fits (m, end, feat)) {
+			planet_cache[planet_cache_next] = m;
+			planet_cache_next = (planet_cache_next + 1) % PLANET_CACHE;
+			return m;
+		}
+	}
+	return 0;
+}
+
+void Nu_PutPlanet ()
+{
+	static bool stats_init;
+	struct PlanetPrim p;
+	int a3 = GetReg (REG_A3), a6 = GetReg (REG_A6);
+	int a0 = GetReg (REG_A0), a1 = GetReg (REG_A1);
+	unsigned int feat = 0, model;
+	int i, r, c;
+
+	if (use_renderer == R_OLD) return;
+	if (!stats_init) {
+		stats_init = TRUE;
+		if (getenv ("FE2_PLANET_STATS")) atexit (planet_stats);
+	}
+	model = planet_find_model (a6, GetReg (REG_A5), &feat);
+	if (model) planet_found++;
+	else planet_missed++;
+
+	for (i = 0; i < 3; i++) {
+		p.centre[i] = (double) STMemory_ReadLong (a0 + 4 + 4*i);
+		/* lighting vector, -198(a6) */
+		p.light[i] = (double) STMemory_ReadWord (a1 + 2*i);
+	}
+	p.R = (double) (unsigned int) GetReg (REG_D0);
+
+	/* the object rotation matrix at -36(a6): the ST computes viewing
+	 * x as M0*x + M3*y + M6*z (L3d452_PlanetFeatureLoop) */
+	for (c = 0; c < 3; c++)
+		for (r = 0; r < 3; r++)
+			p.A[r][c] = STMemory_ReadWord (a6 - 36 + 2*(3*c + r)) / 32768.0;
+
+	/* the planet object's random seed (L3d3f0) */
+	p.seed = STMemory_ReadLong (STMemory_ReadLong (a6 - 212) + 118);
+	p.detail = (short) STMemory_ReadWord (__DL60d4_optdetail2);
+	for (i = 0; i < 16; i++)
+		p.table[i] = STMemory_ReadWord (a3 + 2*i);
+	if (model) {
+		p.feat_addr = feat;
+		p.radius_word = (STMemory_ReadLong (model - 4) >> 16) & 0xffff;
+		/* the flag bits are the high byte of the first model word */
+		p.flags = STMemory_ReadByte (model) & 0xff;
+		planet_read_atmosphere (&p, model, a3, a6,
+			(short) STMemory_ReadWord (__DL60d6_optdetail3));
+	} else {
+		/* not found: a plain planet, with no features and no sky */
+		p.feat_addr = 0;
+		p.radius_word = 0x4000;
+		p.flags = 0;
+		p.natm = 0;
+	}
+	/* V-1: only where the ST draws it */
+	planet_atmosphere_band (&p);
+
+	znode_wrlong (NU_PLANET);
+	/* S-7: through the checked writer */
+	znode_wrblock (&p, sizeof (p));
+
+	/* The ST draws each atmosphere layer as a primitive of its own,
+	 * inserted at the very back (the largest depth, in L3d8f4): it is a
+	 * backdrop, painted before everything else, other planets and their
+	 * rings included. Painted with the planet surface, the sky bands of
+	 * the planet we are standing on would hide the planets in its sky. */
+	if (p.natm) {
+		unsigned char *a = add_detached_node (cur_ztree, 0xffffffff, 4 + sizeof (p));
+		if (a) {
+			*(int *) a = NU_ATMOSPHERE;
+			memcpy (a + 4, &p, sizeof (p));
+		}
+	}
 }
 
 void Nu_PutCircle ()
@@ -1589,10 +2906,11 @@ void Nu_DrawCircle (void **data)
 	
 	size = -0.002*((short)dreg2)*v1[2];
 	
-	glPushMatrix ();
-	glTranslatef (v1[0], v1[1], v1[2]);
+	/* billboard: this is used for distant planets/stars rendered as a
+	 * flat shaded dot, which must always face the camera. */
+	billboard_begin (v1[0], v1[1], v1[2]);
 	gluDisk (qobj, 0.0, size, 32, 1);
-	glPopMatrix ();
+	billboard_end ();
 }
 
 /* life is so strange */
@@ -1663,7 +2981,21 @@ void Nu_DrawCylinder (void **data)
 }
 
 /*
- * this primitive is WRONG.
+ * NU_OVALTHINGY is used by the 68k code to draw planet rings (see
+ * fe2.s: L3d648_PutPlanetRings / L3b9aa_FilledOvalThingy /
+ * L37fb2_ProjectOvalXYZ, and the "gas giant ring colours" comment
+ * nearby). The hostcall never passes an actual colour register, so
+ * previously this always drew a solid black filled disc. We now draw
+ * a translucent, neutral-tinted *annulus* (hollow in the middle, like
+ * a real ring) instead.
+ *
+ * (d, e) are BAM-style angles (32768 = half turn) used to orient the
+ * ring's tilt, matching the angle convention used elsewhere in this
+ * file. (f) looked like a third rotation in the same family, but a
+ * flat, uniformly coloured, rotationally-symmetric ring is invariant
+ * under rotation around its own normal, so it has no visible effect
+ * here and is intentionally not applied. If this still looks wrong
+ * in-game, the sign/axis of (d, e) is the first thing to try flipping.
  */
 void Nu_PutOval ()
 {
@@ -1732,10 +3064,10 @@ void Nu_DrawBlob (void **data)
 			glVertex3iv (v1);
 		glEnd ();
 	} else {
-		glPushMatrix ();
-		glTranslatef (v1[0], v1[1], v1[2]);
+		/* billboard: keep the glow disk facing the camera. */
+		billboard_begin (v1[0], v1[1], v1[2]);
 		gluDisk (qobj, 0.0, -0.002*(rad)*v1[2], edges, 1);
-		glPopMatrix ();
+		billboard_end ();
 	}
 }
 void Nu_PutColoredPoint ()
@@ -1865,8 +3197,18 @@ NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	&Nu_DrawBlob,
 	&Nu_DrawOval,
 	&Nu_DrawPoint,
-	&Nu_Draw2DLine
+	&Nu_Draw2DLine,
+	NULL,	/* NU_SUBTREE, see Nu_DrawPrimitive */
+	&Nu_DrawAtmosphere
 };
+
+/*
+ * Primitives inside a znode are already in the exact order the engine
+ * wants them painted (hull face first, then the decals that lie on it:
+ * logos, panels, vector text, complex shape fills...). Just replay that
+ * order - see draw_3dview for why there is no depth test to fight with.
+ */
+static void draw_3dview (struct ZNode *node);
 
 static void Nu_DrawPrimitive (void *data)
 {
@@ -1876,6 +3218,10 @@ static void Nu_DrawPrimitive (void *data)
 		fnum = znode_rdlong (&data);
 		//fprintf (stderr, "%d ", fnum);
 		if (!fnum) return;
+		if (fnum == NU_SUBTREE) {
+			draw_3dview (subtree_root[znode_rdlong (&data)]);
+			continue;
+		}
 		nu_drawfuncs[fnum] (&data);
 	}
 }
@@ -1885,6 +3231,29 @@ static void Nu_DrawPrimitive (void *data)
  * of GL display lists to draw (in list order).
  *
  * Draw this crap starting from biggest value znodes.
+ *
+ * NO DEPTH BUFFER IS USED HERE, on purpose. This engine is a painter's
+ * algorithm engine: fe2.s sorts every single primitive into a z tree
+ * (L38594_InsertIntoZTree, mirrored here by Nu_InsertZNode) and paints
+ * back to front. The software renderer has no depth buffer at all and
+ * gets the right picture, so we get it the same way.
+ *
+ * This used to glClear(GL_DEPTH_BUFFER_BIT) before every node with the
+ * depth test on. That was worse than useless: Nu_InsertZNode allocates
+ * one node per primitive, so the depth buffer was wiped between
+ * primitives and never actually compared two of them - it only ever
+ * applied *within* a node, which is exactly where the engine emits
+ * deliberately coplanar decals (ship logos, panels, vector text, complex
+ * shape fills) on top of the face they belong to. Those are ties, so
+ * they fought and dropped out at random no matter how much depth
+ * precision we threw at it. Removing the depth test makes z-fighting
+ * impossible by construction, and drops thousands of full screen depth
+ * clears per frame.
+ *
+ * Note the zvals are NOT real 3D distances: some primitives (distant
+ * backdrops, cloud layers) get small/arbitrary vertex Z regardless of
+ * their intended "far away" zval, which is another reason a global depth
+ * buffer cannot work here.
  */
 static void draw_3dview (struct ZNode *node)
 {
@@ -1908,6 +3277,17 @@ static void set_gl_clear_col (int rgb)
 	glClearColor (r,g,b,0);
 }
 
+/*
+ * There is deliberately no backdrop drawing here.
+ *
+ * Nothing paints the backdrop under GL: Fn_Draw3DView, the engine's 2D
+ * primitive-list interpreter, is skipped outright while gl_renderer_on
+ * is set, and the full width spans the software renderer uses for
+ * the sky bands (Call_FillLine) are never issued. The flat sky colour left
+ * by glClear(MainRGBPalette[fe2_bgcol]) is all we get, so the ground has to
+ * come from the planet primitive itself - see draw_ground_dome.
+ */
+
 void Nu_DrawScreen ()
 {
 	/* build RGB palettes */
@@ -1917,6 +3297,7 @@ void Nu_DrawScreen ()
 	//fprintf (stderr, "Render: ");
 	if (znode_cur) end_node ();
 	//printf ("Frame: %d znodes.\n", znode_buf_pos);
+	planet_ground_seen = 0;
 	if (scene_overflow) {
 		/* S-6: the display lists are cut short somewhere: drop this
 		 * frame's 3D view rather than walk them */
@@ -1927,6 +3308,10 @@ void Nu_DrawScreen ()
 		draw_3dview (znode_start);
 	}
 	//fprintf (stderr, "\n");
+
+#if PRIM_DEBUG
+	prim_debug_frame_end ();
+#endif
 
 	if (mouse_shown) {
 		SDL_ShowCursor (SDL_ENABLE);

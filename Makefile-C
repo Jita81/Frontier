@@ -56,7 +56,7 @@ LIBS := $(VORBIS_LDFLAGS) -lvorbisfile -lvorbis -logg $(SDL_LIBS)
 
 WITH_GL=y
 ifeq ($(WITH_GL),y)
-	SRCOBJS += gl.o
+	SRCOBJS += gl.o planet.o
 	HOST_CFLAGS += -DWITH_GL
 ifeq ($(TARGET_OS),Darwin)
 	LIBS += -framework OpenGL
@@ -127,6 +127,9 @@ $(patsubst %.c,%.o,$(wildcard gen/*.c)) fe2.s.o: $(CORE_STAMP)
 $(HOST_OBJS): $(HOST_OBJDIR)%.o: %.c $(HOST_STAMP)
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(HOST_CFLAGS) -c -o $@ $<
+
+# gl.c reads engine variables at their label addresses (P-2)
+$(HOST_OBJDIR)src/gl.o: fixups.h
 
 $(CORE_STAMP): FORCE
 	@mkdir -p $(@D)
