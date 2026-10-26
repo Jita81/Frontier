@@ -12,7 +12,8 @@ game as FE2_DRIVE_REQ_FD / FE2_DRIVE_ACK_FD.  The driver thread writes
 "fail <seq> <reason>".  drive.py finds the window with
 CGWindowListCopyWindowInfo (owner PID == game PID, layer 0), captures it with
 `screencapture -x -o -l <window id>`, and scales it with ffmpeg to the
-window's point size (640x480 by default) so a PNG stays under 150 KB.
+window's point size (640x480: drive.py passes --size 640 480 unless --args
+sets a size) so a PNG stays under 150 KB.
 
 The game keeps running while a shot is taken: a shot is "about this moment",
 not a frame-exact capture.  This tool is a convenience, not an oracle.
@@ -167,6 +168,11 @@ def run(a):
         if not os.path.exists(p):
             sys.exit("drive.py: %s %s does not exist" % (what, p))
     cg = _CG()
+    # The game opens as large as the desktop allows; a fixed 640x480 keeps
+    # shots small and the same on every machine.
+    game_args = shlex.split(a.args)
+    if "--size" not in game_args:
+        game_args = ["--size", "640", "480"] + game_args
     req_r, req_w = os.pipe()
     ack_r, ack_w = os.pipe()
     env = dict(os.environ)
@@ -185,7 +191,7 @@ def run(a):
         "binary": bin_path,
         "binary_sha256": sha256(bin_path),
         "dylib_sha256": sha256(lib),
-        "args": shlex.split(a.args),
+        "args": game_args,
         "env": {k: env[k] for k in ("SDL_VIDEO_WINDOW_POS", "SDL_AUDIODRIVER")},
         "start_utc": utc_now(),
         "timeout_s": a.timeout,
@@ -196,7 +202,7 @@ def run(a):
     t0 = time.time()
     # Launch the binary directly: SIP-protected launchers (/usr/bin/env,
     # perl, ...) strip DYLD_* variables.
-    proc = subprocess.Popen([bin_path] + shlex.split(a.args), cwd=os.path.dirname(bin_path),
+    proc = subprocess.Popen([bin_path] + game_args, cwd=os.path.dirname(bin_path),
                             env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, pass_fds=(req_w, ack_r))
     os.close(req_w)
@@ -379,7 +385,8 @@ def main():
     p.add_argument("--script", help="driver script (.drv)")
     p.add_argument("--out", help="output directory for shots, game.log, manifest.json")
     p.add_argument("--timeout", type=float, default=120, help="wall-clock limit, seconds")
-    p.add_argument("--args", default="", help="extra game arguments, one string")
+    p.add_argument("--args", default="", help="extra game arguments, one string "
+                   "(--size 640 480 is added unless it sets --size)")
     p.add_argument("--lib", default=os.path.join(HERE, "libfe2drive.dylib"))
     p.add_argument("--pos", default="1300,640", help="SDL_VIDEO_WINDOW_POS")
     p.add_argument("--quiet", action="store_true", help="do not echo the game log")
