@@ -1,0 +1,20 @@
+# start-docked.drv - intro -> start-position menu -> docked at Lave Station.
+#
+# Verifies: FI-05 (intro runs), FI-06 (Space opens the start-position menu),
+#           FI-21 (2D cockpit and control panel while docked).
+# Acceptance: (b) a run reaches a docked view inside the timeout and exits 0;
+#             (c) two runs give the same screens (drive.py --compare).
+# Run:  python3 tools/drive/drive.py --script tools/drive/scripts/start-docked.drv \
+#           --out RUN_DIR --timeout 60
+# Expect: exit 0, three shots: 01-intro, 02-start-menu, 03-docked.
+# Timing is approximate (host clock on a second thread); the waits leave slack.
+
+wait 6000         # the intro is running
+shot 01-intro
+key space         # ST Space leaves the intro
+wait 2000
+shot 02-start-menu
+key 3             # start position 3: Lave Station, docked
+wait 11000        # the core loads the start position and draws the station
+shot 03-docked
+quit              # SDL_QUIT: Main_EventHandler exits 0

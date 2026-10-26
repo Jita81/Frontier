@@ -1,0 +1,45 @@
+# s19-menu-timeout.drv - S19: the start-position menu times out back to the intro.
+#
+# Verifies: FI-06 (the timeout half), scenario S19 (short form).
+# Method: Space at 6 s opens the menu; then no input at all; a shot every
+#         second for 14 s, then one at 20 s. The first shot that shows the
+#         intro again brackets the timeout to about 1 s of host time
+#         (drive.py records each shot's time in manifest.json). This counts
+#         host seconds, not VBLs: S19's VBL count needs an instrumented core.
+# Run:  python3 tools/drive/drive.py --script tools/drive/scripts/s19-menu-timeout.drv \
+#           --out RUN_DIR --timeout 60
+# Expect: exit 0; the first shots show the menu; later shots show the intro.
+
+wait 6000
+key space         # the menu opens
+wait 1000
+shot m01
+wait 1000
+shot m02
+wait 1000
+shot m03
+wait 1000
+shot m04
+wait 1000
+shot m05
+wait 1000
+shot m06
+wait 1000
+shot m07
+wait 1000
+shot m08
+wait 1000
+shot m09
+wait 1000
+shot m10
+wait 1000
+shot m11
+wait 1000
+shot m12
+wait 1000
+shot m13
+wait 1000
+shot m14
+wait 6000
+shot m20
+quit

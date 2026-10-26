@@ -1,0 +1,49 @@
+# fi12-main-keys.drv - the main keys, sent through the port's real keymap.
+#
+# Verifies: FI-12 (Space, digits, F1-F4, Esc reach the ST and do what FE2
+#           does with them). Every key here is an `sdlkey` step: a fabricated
+#           SDL 1.2 key event with the macOS key code, handled by the port's
+#           own Keymap_KeyDown/KeyUp, so the log line "ikbd: ..." shows the
+#           ST scancode the keymap produced. Screens double as FI-23/FI-24
+#           evidence (F2 twice) and FI-16 (Esc pauses).
+# Run:  python3 tools/drive/drive.py --script tools/drive/scripts/fi12-main-keys.drv \
+#           --out RUN_DIR --timeout 90
+#       python3 tools/drive/drive.py --ikbd RUN_DIR      # scancode summary
+# Expect: exit 0; 11 shots: menu, docked, galactic map, system view,
+#         equipment, profile, services, front view, paused, preferences, back.
+
+wait 6000
+sdlkey space
+wait 2000
+shot 01-space-menu
+sdlkey 3
+wait 11000
+shot 02-3-docked
+sdlkey f2
+wait 2500
+shot 03-f2-galactic-map
+sdlkey f2
+wait 2500
+shot 04-f2-again-system-view
+sdlkey f3
+wait 2500
+shot 05-f3-equipment
+sdlkey f3
+wait 2500
+shot 06-f3-again
+sdlkey f4
+wait 4000
+shot 07-f4-services
+sdlkey f1
+wait 2500
+shot 08-f1-front-view
+sdlkey esc
+wait 1500
+shot 09-esc
+sdlkey esc
+wait 1500
+shot 10-esc-again
+sdlkey esc
+wait 1500
+shot 11-esc-third
+quit

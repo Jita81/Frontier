@@ -1,0 +1,47 @@
+# fi15-fi16-stardreamer-pause.drv - Stardreamer time ladder, then pause and resume.
+#
+# Verifies: FI-15 (Shift+F1..F5 set 1x/10x/100x/1000x/10000x while docked),
+#           FI-16 (Esc stops the clock; Shift+F1 starts it again), S14 (short
+#           form: screen clock only; S14's check of 10428(a6)/14482(a6) needs
+#           a memory probe and stays open).
+# Keys are `sdlkey` steps, so Shift+Fn goes through the port's keymap exactly
+# as a Mac keyboard event with the Shift modifier would (fn-key settings of a
+# real Mac keyboard are outside this test: U-07).
+# Evidence: the panel clock (top left of the control panel) in each shot.
+# Run:  python3 tools/drive/drive.py --script tools/drive/scripts/fi15-fi16-stardreamer-pause.drv \
+#           --out RUN_DIR --timeout 90
+# Expect: exit 0; the clock gains ~3 s between 01 and 02, more per 3 s at each
+#         rung, is frozen between 08 and 09, and runs again in 10.
+
+wait 6000
+key space
+wait 2000
+key 3
+wait 11000
+shot 01-1x-a
+wait 3000
+shot 02-1x-b
+sdlkey f2 shift
+wait 3000
+shot 03-shift-f2
+sdlkey f3 shift
+wait 3000
+shot 04-shift-f3
+sdlkey f4 shift
+wait 3000
+shot 05-shift-f4
+sdlkey f5 shift
+wait 3000
+shot 06-shift-f5
+sdlkey f1 shift
+wait 2000
+shot 07-shift-f1
+sdlkey esc
+wait 500
+shot 08-esc-paused-a
+wait 3000
+shot 09-esc-paused-b
+sdlkey f1 shift
+wait 3000
+shot 10-shift-f1-resumed
+quit
