@@ -51,7 +51,9 @@ the game's pointer.
 The run directory holds:
 
 - one `<name>.png` per `shot` step, scaled to the window's point size
-  (640x480 by default) and kept under 150 KB;
+  and kept under 150 KB.  The window is 640x480: the game would open as
+  large as the desktop allows, so drive.py passes `--size 640 480` unless
+  `--args` sets `--size`;
 - `game.log`: the game's stdout and stderr, including the driver's
   `drive: [seconds] ...` line for every step;
 - `manifest.json`: the binary, script and library hashes, the environment,

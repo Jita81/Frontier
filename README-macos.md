@@ -94,6 +94,11 @@ Any other argument goes to the game unchanged (`--old-renderer`, `--size w h`,
 `--nosound`, `--fullscreen`; `--help` prints the launcher's and the game's
 options).
 
+The window opens at the original's 4:3 shape, as large as fits in 85% of the
+desktop (1600x1200 on a 3440x1440 screen), drawn at that resolution with 4x
+multisampling.  `--size w h` picks another size.  The ship's panel and the
+text are still the original 320x200 picture, scaled up.
+
 How the launcher works, so nothing in `src/` has to change: the game opens
 every file relative to the current directory, and a Finder launch starts in
 `/`. The launcher therefore `cd`s to the data folder and then runs the real

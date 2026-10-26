@@ -78,8 +78,15 @@ float hack;
 /*
   Set window size
 */
-int screen_w = 640;
-int screen_h = 480;
+/* The window's size in SDL coordinates, which mouse input comes in.
+ * --size sets it; 0 picks one that fits the desktop, see pick_window_size. */
+int screen_w = 0;
+int screen_h = 0;
+/* The window's framebuffer in pixels, which every glViewport is in: the
+ * same as screen_w x screen_h unless the window has a higher pixel density
+ * (sdl12-compat with SDL12COMPAT_HIGHDPI=1 and SDL12COMPAT_OPENGL_SCALING=0
+ * on a Retina Mac). */
+static int fb_w = 640, fb_h = 480;
 #define GLERR { printf ("GL: %s\n", gluErrorString (glGetError ()));}
 
 #ifndef CALLBACK
@@ -100,13 +107,36 @@ void CALLBACK combineCallback(GLdouble coords[3],
 
 static void set_main_viewport ()
 {
-	int ctrl_h = 32*screen_h/200;
-	glViewport (0, ctrl_h, screen_w, screen_h - ctrl_h);
+	int ctrl_h = 32*fb_h/200;
+	glViewport (0, ctrl_h, fb_w, fb_h - ctrl_h);
 }
 
 static void set_ctrl_viewport ()
 {
-	glViewport (0, 0, screen_w, screen_h);
+	glViewport (0, 0, fb_w, fb_h);
+}
+
+/* Point sizes were chosen for a 640x480 window: keep them the same share
+ * of the view at any framebuffer size. */
+static float px_scale (void)
+{
+	return fb_h > 480 ? fb_h / 480.0f : 1.0f;
+}
+
+/* The original's 4:3 shape (640x480) as large as fits in 85% of the
+ * desktop, in whole steps of 64x48 and never smaller than 640x480. */
+static void pick_window_size (const SDL_VideoInfo *info)
+{
+	int k = 10;
+
+	if (info->current_w > 0 && info->current_h > 0) {
+		int kw = info->current_w * 85 / 100 / 64;
+		int kh = info->current_h * 85 / 100 / 48;
+		k = kw < kh ? kw : kh;
+		if (k < 10) k = 10;
+	}
+	screen_w = 64 * k;
+	screen_h = 48 * k;
 }
 
 /*
@@ -152,19 +182,47 @@ static void change_vidmode ()
 		exit (-1);
 	}
 
+	if (screen_w <= 0 || screen_h <= 0) pick_window_size (info);
+
 	SDL_GL_SetAttribute (SDL_GL_DOUBLEBUFFER, 1);
 	/* No depth buffer is requested: the 3D view is drawn with a pure
 	 * painter's algorithm, exactly like the software renderer. See
 	 * draw_3dview. */
-	
+	/* 4x multisampling smooths polygon and line edges. It only changes
+	 * how the host draws, so no oracle stream sees it. */
+	SDL_GL_SetAttribute (SDL_GL_MULTISAMPLEBUFFERS, 1);
+	SDL_GL_SetAttribute (SDL_GL_MULTISAMPLESAMPLES, 4);
+
 	modes = SDL_OPENGL | SDL_ANYFORMAT | (bInFullScreen ? SDL_FULLSCREEN : 0);
-	
-	if ((sdlscrn = SDL_SetVideoMode (screen_w, screen_h,
-				info->vfmt->BitsPerPixel, modes)) == 0) {
+
+	sdlscrn = SDL_SetVideoMode (screen_w, screen_h, info->vfmt->BitsPerPixel, modes);
+	if (sdlscrn == 0) {
+		/* no multisampled format: carry on without it */
+		SDL_GL_SetAttribute (SDL_GL_MULTISAMPLEBUFFERS, 0);
+		SDL_GL_SetAttribute (SDL_GL_MULTISAMPLESAMPLES, 0);
+		sdlscrn = SDL_SetVideoMode (screen_w, screen_h, info->vfmt->BitsPerPixel, modes);
+	}
+	if (sdlscrn == 0) {
 		fprintf (stderr, "Video mode set failed: %s\n", SDL_GetError ());
 		SDL_Quit ();
 		exit (-1);
 	}
+
+	/* A new context's viewport is its whole framebuffer, in pixels: that
+	 * is how big the window really is. */
+	{
+		GLint vp[4] = { 0, 0, 0, 0 };
+		glGetIntegerv (GL_VIEWPORT, vp);
+		fb_w = vp[2] > 0 ? vp[2] : screen_w;
+		fb_h = vp[3] > 0 ? vp[3] : screen_h;
+	}
+	if (getenv ("FE2_GL_INFO")) {
+		GLint samples = 0;
+		glGetIntegerv (GL_SAMPLES, &samples);
+		fprintf (stderr, "gl: window %dx%d, framebuffer %dx%d, %d samples\n",
+			 screen_w, screen_h, fb_w, fb_h, (int) samples);
+	}
+	glEnable (GL_MULTISAMPLE);
 
 	glDisable (GL_CULL_FACE);
 	glShadeModel (GL_FLAT);
@@ -3059,7 +3117,7 @@ void Nu_DrawBlob (void **data)
 	
 	glColor3ui (r, g, b);
 	if (rad < 3) {
-		glPointSize ((rad/2)+1);
+		glPointSize (((rad/2)+1) * px_scale ());
 		glBegin (GL_POINTS);
 			glVertex3iv (v1);
 		glEnd ();
@@ -3097,7 +3155,7 @@ void Nu_DrawPoint (void **data)
 	znode_rdcolor (data, &r, &g, &b);
 	point_size = znode_rdlong (data);
 
-	glPointSize (point_size);
+	glPointSize (point_size * px_scale ());
 	glColor3ub (r, g, b);
 	glBegin (GL_POINTS);
 		glVertex3iv (v1);
