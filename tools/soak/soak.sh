@@ -11,14 +11,20 @@
 #   --cwd DIR        directory the game runs in, holding fe2.s.bin (default: repo top)
 #   --out DIR        run directory (default: a new $TMPDIR/fe2-soak.XXXXXX)
 #   --tape FILE      replay an oracle tape as the scripted route; needs a build with
-#                    --oracle-replay (src/oracle.c), else exit 2
+#                    --oracle-replay (src/oracle.c), else exit 2.  The game runs with
+#                    --oracle-hold: when the tape ends it writes the trace's end and
+#                    keeps running with no input until the SIGTERM of item 6.  A tape
+#                    that ends after --duration gets a warning: item 6 would then stop
+#                    the route early (exit 3).
 #   --keep-frames    keep the window captures in DIR/frames (they show game screens)
 #   --no-frames      skip the frame watchdog (item 3), e.g. with SDL_VIDEODRIVER=dummy
 #   --no-leaks       skip the codesign and `leaks` step of item 4
 #
 # How each item is judged:
 #   1 session  PASS only for --duration >= 1800 with a --tape route; the 30-minute
-#              idle intro is a second run without --tape.
+#              idle intro is a second run without --tape.  With a tape the line also
+#              says route_done=yes|no: whether oracle.out holds an end line and no
+#              invalid line (detail only, not a gate).
 #   2 liveness kill -0 on the game's PID every 5 s.
 #   3 watchdog window-only capture every 10 s (needs Screen Recording permission for
 #              the terminal); FAIL if no frame changed for 60 s or nothing is captured.
@@ -55,6 +61,8 @@
 #              script prepends `pkg-config --variable=libdir sdl2` there.
 #   6 exit     SIGTERM to the PID gives exit 0 and stderr holds only the loader line
 #              (MallocStackLogging's own notices, which this script causes, are ignored).
+#              With a tape the SIGTERM must come after the tape's end: before it the
+#              oracle marks the trace early-exit and exits 3.
 #
 # The game runs as a copy named fe2soak in the run directory, so it is never hit by
 # anyone's `pkill frontier`, and only that PID is ever signalled.  The copy (game
@@ -102,6 +110,12 @@ if [ -n "$tape" ]; then
 	# Static check: running the game with an unknown flag would open a window.
 	grep -q -a -e '--oracle-replay' "$binary" ||
 		die "$binary has no --oracle-replay; build from a tree with src/oracle.c"
+	grep -q -a -e '--oracle-hold' "$binary" ||
+		die "$binary has no --oracle-hold; build from a tree with it in src/oracle.c"
+	# --pace replays at 50 VBLs a second
+	tape_end=$(sed -n 's/^end \([0-9][0-9]*\)$/\1/p' "$tape" | head -n 1)
+	[ -n "$tape_end" ] && [ $(((tape_end + 49) / 50)) -ge "$duration" ] &&
+		echo "soak: warning: the tape ends at VBL $tape_end (about $(((tape_end + 49) / 50)) s), not before --duration $duration; item 6 will stop the route early" >&2
 fi
 
 if [ -z "$out" ]; then
@@ -110,7 +124,7 @@ else
 	mkdir -p "$out" || die "cannot make $out"
 fi
 out=$(cd "$out" && pwd)
-[ -n "$tape" ] && game_args+=(--oracle-replay "$tape" --oracle-out "$out/oracle.out" --pace)
+[ -n "$tape" ] && game_args+=(--oracle-replay "$tape" --oracle-out "$out/oracle.out" --pace --oracle-hold)
 
 ubsan=0 asan=0
 otool -L "$binary" 2>/dev/null | grep -q 'libclang_rt\.ubsan' && ubsan=1
@@ -278,6 +292,12 @@ result() { # item verdict details...
 }
 
 route=none; [ -n "$tape" ] && route=tape
+if [ -n "$tape" ]; then
+	route_done=no
+	grep -q '^end ' "$out/oracle.out" 2>/dev/null && ! grep -q '^invalid' "$out/oracle.out" &&
+		route_done=yes
+	route="$route route_done=$route_done"
+fi
 if [ "$duration" -ge 1800 ] && [ -n "$tape" ] && [ -z "$died_at" ]; then v=PASS; else v=FAIL; fi
 result 1 $v "session_s=$ran route=$route needs=1800s+tape"
 

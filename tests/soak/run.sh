@@ -23,6 +23,10 @@
 #   grow           a stand-in that grows about 6 MB/min     -> slope=FAIL
 #   asan-grow      as grow, on a build otool shows linking   -> item 4 INFO,
 #                  the ASan runtime                             slope=FAIL
+# Item 6 with --tape, 30 s with --no-frames --no-leaks:
+#   tape           a stand-in that exits 0 on SIGTERM only  -> item 6 PASS
+#                  when soak.sh passed --oracle-hold, else
+#                  3 with the oracle's early-exit line
 # Exit 0 when every verdict is as expected.
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
@@ -45,7 +49,20 @@ print STDERR "fe2.s.bin: 0x1 bytes (code end 0x1), 0 fixups; loaded at 0x0.\n";
 my @a;
 while (1) { push @a, "x" x 102400; select(undef, undef, undef, 1); }
 G
-chmod +x "$work/game" "$work/grow"
+# Stands in for a build with --oracle-replay: like the game, it exits 0 on
+# SIGTERM after the tape only when it was given --oracle-hold.
+cat >"$work/tapegame" <<'G'
+#!/bin/sh
+# soak.sh greps a build for its flags: --oracle-replay --oracle-hold
+echo 'fe2.s.bin: 0x1 bytes (code end 0x1), 0 fixups; loaded at 0x0.' >&2
+hold=0
+for a; do [ "$a" = --oracle-hold ] && hold=1; done
+if [ $hold = 1 ]; then trap 'exit 0' TERM
+else trap 'echo "oracle: invalid reason=early-exit v=200 (tape end 100)" >&2; exit 3' TERM; fi
+while :; do sleep 1; done
+G
+printf 'fe2rep 1 mode=gl-rgl seed=0 size=640x480 requires=-\nend 100\n' >"$work/route.fe2rep"
+chmod +x "$work/game" "$work/grow" "$work/tapegame"
 
 # swiftc stub: "builds" a winid that reports window 1, or none after the
 # first call in nowindow mode.
@@ -140,9 +157,11 @@ leaks-nocount 4 leaks=FAIL game 30 --no-frames
 codesign-fail 4 leaks=FAIL game 30 --no-frames
 steady 4 slope=PASS game 100 --no-frames --no-leaks
 grow 4 slope=FAIL grow 100 --no-frames --no-leaks
-asan-grow 4 verdict=INFO,slope=FAIL grow 100 --no-frames --no-leaks'
+asan-grow 4 verdict=INFO,slope=FAIL grow 100 --no-frames --no-leaks
+tape 6 verdict=PASS tapegame 30 --no-frames --no-leaks --tape @tape'
 
 while read -r mode item want game dur opts; do
+	opts=${opts//@tape/$work/route.fe2rep}
 	# shellcheck disable=SC2086  # split the options
 	run "$mode" "$game" "$dur" $opts &
 done <<<"$cases"
