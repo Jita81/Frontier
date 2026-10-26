@@ -67,6 +67,8 @@ BOOL bInFullScreen = FALSE;
 
 /* new stuff */
 enum RENDERERS use_renderer = R_OLD;
+/* --flat-hulls: the GL renderer's option, nothing to do here */
+int flat_hulls = 0;
 /* mouse shown this frame? */
 int mouse_shown = 0;
 /* --pixel-text: the GL renderer's HD text; this one only has pixels */

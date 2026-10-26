@@ -60,6 +60,8 @@ BOOL bInFullScreen = FALSE;
 
 /* new stuff */
 enum RENDERERS use_renderer = R_GL;
+/* --flat-hulls: no hull texture on ship faces (see hull_begin) */
+int flat_hulls = 0;
 /* mouse shown this frame? */
 int mouse_shown = 0;
 /* --pixel-text: no HD text, see hdtext.c */
@@ -188,6 +190,7 @@ static void pick_window_size ()
 #define GL_FAR_PLANE	10000000000.0f
 
 static void planet_forget_textures (void);
+static void hull_forget_texture (void);
 
 static void change_vidmode ()
 {
@@ -200,6 +203,7 @@ static void change_vidmode ()
 	 * while that context is still current, they get made again when
 	 * needed. */
 	planet_forget_textures ();
+	hull_forget_texture ();
 	hdtext_forget ();
 	if (screen_tex) {
 		glDeleteTextures (1, &screen_tex);
@@ -1747,6 +1751,200 @@ void Nu_DrawBezierLine (void **data)
 	glEnd ();
 }
 
+/*
+ * Hull plating on flat faces (GL renderer only; --flat-hulls turns it off).
+ *
+ * The 68k lights every polygon flat and hands us its colour, so a ship is
+ * a set of flat-coloured faces. Triangles and quads get a plating texture
+ * over that colour: it multiplies the colour by 1.0 on average, so a face
+ * keeps the colour and brightness the game gave it, and adds only the
+ * seams, rivets and panel-to-panel shading of plated metal. Nothing the
+ * game reads changes; it is how the host paints a polygon.
+ *
+ * The texture is pinned to the polygon: its frame starts at the first
+ * vertex and runs along the first edge, and one tile is the longest edge
+ * scaled down to a power of two (the engine scales objects by powers of
+ * two, so a face keeps its plating as it moves). Complex polygons, which
+ * carry the decals, logos and text, stay flat and read as paint on top.
+ */
+#define HULL_TEX_N	512	/* texels per tile side */
+#define HULL_ROWS	4	/* rows of plates per tile */
+static GLuint hull_tex;
+static int hull_on;
+
+static unsigned int hull_hash (unsigned int x)
+{
+	x ^= x >> 16; x *= 0x7feb352du;
+	x ^= x >> 15; x *= 0x846ca68bu;
+	x ^= x >> 16;
+	return x;
+}
+
+static void hull_make_texture (void)
+{
+	static float v[HULL_TEX_N * HULL_TEX_N];
+	static unsigned char lum[HULL_TEX_N * HULL_TEX_N];
+	const int rh = HULL_TEX_N / HULL_ROWS;
+	double sum = 0, scale;
+	int x, y, i;
+
+	for (y = 0; y < HULL_TEX_N; y++) {
+		int r = y / rh, ty = y % rh, by = rh - 1 - ty;
+		/* plates of this row: widths of 96..192 texels from a fixed
+		 * hash, the last one taking the rest; rows start staggered */
+		int cut[16], n = 0, off = hull_hash (r + 1) % HULL_TEX_N;
+		cut[n++] = 0;
+		while (cut[n-1] < HULL_TEX_N - 160 && n < 15)
+			cut[n] = cut[n-1] + 96 + 32 * (hull_hash (r * 64 + n) % 4), n++;
+		cut[n] = HULL_TEX_N;
+		for (x = 0; x < HULL_TEX_N; x++) {
+			int dx = (x - off + HULL_TEX_N) % HULL_TEX_N, p = 0, lx, rx;
+			double f;
+			while (dx >= cut[p+1]) p++;
+			lx = dx - cut[p];
+			rx = cut[p+1] - 1 - dx;
+			/* each plate a little lighter or darker, a slight bow */
+			f = 1.0 + 0.05 * ((int) (hull_hash (r * 64 + p + 4096) % 201) - 100) / 100.0;
+			f *= 1.0 + 0.03 * (ty - rh / 2) / (double) rh;
+			/* seam: dark groove on the top and left edges, a bright
+			 * lip below it, a shadow on the bottom and right edges */
+			if (lx < 2 || ty < 2) f *= 0.62;
+			else if (lx == 2 || ty == 2) f *= 1.12;
+			else if (rx == 0 || by == 0) f *= 0.88;
+			/* rivets in from the top and left edges */
+			else if (((ty >= 7 && ty < 9 && lx >= 8 && rx >= 8 && lx % 16 >= 7 && lx % 16 < 9) ||
+				  (lx >= 7 && lx < 9 && ty >= 8 && by >= 8 && ty % 16 >= 7 && ty % 16 < 9)))
+				f *= 0.8;
+			else if ((ty == 6 && lx >= 8 && rx >= 8 && lx % 16 >= 7 && lx % 16 < 9) ||
+				 (lx == 6 && ty >= 8 && by >= 8 && ty % 16 >= 7 && ty % 16 < 9))
+				f *= 1.1;
+			/* grain */
+			f *= 1.0 + 0.02 * ((int) (hull_hash (y * HULL_TEX_N + x + 0x10000) % 201) - 100) / 100.0;
+			v[y * HULL_TEX_N + x] = f;
+			sum += f;
+		}
+	}
+	/* mean 128: with RGB_SCALE 2 the average texel multiplies by 1.0 */
+	scale = 128.0 / (sum / (HULL_TEX_N * HULL_TEX_N));
+	for (i = 0; i < HULL_TEX_N * HULL_TEX_N; i++) {
+		double l = v[i] * scale + 0.5;
+		lum[i] = l < 0 ? 0 : l > 255 ? 255 : (unsigned char) l;
+	}
+	glGenTextures (1, &hull_tex);
+	glBindTexture (GL_TEXTURE_2D, hull_tex);
+	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+#ifdef GL_TEXTURE_MAX_ANISOTROPY_EXT
+	{
+		const char *ext = (const char *) glGetString (GL_EXTENSIONS);
+		if (ext && strstr (ext, "GL_EXT_texture_filter_anisotropic")) {
+			GLfloat a = 1;
+			glGetFloatv (GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &a);
+			glTexParameterf (GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, a < 8 ? a : 8);
+		}
+	}
+#endif
+	gluBuild2DMipmaps (GL_TEXTURE_2D, GL_LUMINANCE, HULL_TEX_N, HULL_TEX_N,
+			   GL_LUMINANCE, GL_UNSIGNED_BYTE, lum);
+}
+
+static void hull_forget_texture (void)
+{
+	if (hull_tex) glDeleteTextures (1, &hull_tex);
+	hull_tex = 0;
+	hull_on = 0;
+}
+
+/* Texture coordinates of the n (3 or 4) vertices p of a polygon on the
+ * plating, in the polygon's own frame. 0 for a degenerate polygon. */
+static int hull_coords (double p[][3], int n, float st[][2])
+{
+	double e1[3], e2[3], nm[3], a[3], b[3], l, lmax = 0, le1, lnm, tile;
+	int i, k;
+
+	for (i = 0; i < n; i++) {
+		for (l = 0, k = 0; k < 3; k++)
+			l += (p[(i+1) % n][k] - p[i][k]) * (p[(i+1) % n][k] - p[i][k]);
+		if (l > lmax) lmax = l;
+	}
+	/* the normal: two edges of a triangle, the diagonals of a quad */
+	for (k = 0; k < 3; k++) {
+		a[k] = p[n == 4 ? 2 : 1][k] - p[0][k];
+		b[k] = p[n == 4 ? 3 : 2][k] - p[n == 4 ? 1 : 0][k];
+		e1[k] = p[1][k] - p[0][k];
+	}
+	nm[0] = a[1]*b[2] - a[2]*b[1];
+	nm[1] = a[2]*b[0] - a[0]*b[2];
+	nm[2] = a[0]*b[1] - a[1]*b[0];
+	e2[0] = nm[1]*e1[2] - nm[2]*e1[1];
+	e2[1] = nm[2]*e1[0] - nm[0]*e1[2];
+	e2[2] = nm[0]*e1[1] - nm[1]*e1[0];
+	le1 = sqrt (e1[0]*e1[0] + e1[1]*e1[1] + e1[2]*e1[2]);
+	lnm = sqrt (nm[0]*nm[0] + nm[1]*nm[1] + nm[2]*nm[2]);
+	l = sqrt (e2[0]*e2[0] + e2[1]*e2[1] + e2[2]*e2[2]);
+	if (!(lmax > 1) || !(lnm > 1e-6 * lmax) || !(le1 > 1e-3 * sqrt (lmax)) || !(l > 0))
+		return 0;
+	/* a tile of 1.3 to 2.6 per longest edge; the cut is off the powers of
+	 * two that model edges tend to be, so no face jumps between sizes */
+	tile = ldexp (1.0, (int) floor (log2 (0.77 * sqrt (lmax))));
+	for (k = 0; k < 3; k++) {
+		e1[k] /= le1 * tile;
+		e2[k] /= l * tile;
+	}
+	for (i = 0; i < n; i++) {
+		double s = 0, t = 0;
+		for (k = 0; k < 3; k++) {
+			s += (p[i][k] - p[0][k]) * e1[k];
+			t += (p[i][k] - p[0][k]) * e2[k];
+		}
+		st[i][0] = s;
+		st[i][1] = t;
+	}
+	return 1;
+}
+
+/* Plating on, for the polygon drawn next (texture times primary colour,
+ * times 2). Stays on through a run of triangles and quads. */
+static void hull_begin (void)
+{
+	if (hull_on) return;
+	if (!hull_tex) hull_make_texture ();
+	glEnable (GL_TEXTURE_2D);
+	glBindTexture (GL_TEXTURE_2D, hull_tex);
+	glTexEnvi (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_COMBINE);
+	glTexEnvi (GL_TEXTURE_ENV, GL_COMBINE_RGB, GL_MODULATE);
+	glTexEnvi (GL_TEXTURE_ENV, GL_SOURCE0_RGB, GL_TEXTURE);
+	glTexEnvi (GL_TEXTURE_ENV, GL_SOURCE1_RGB, GL_PRIMARY_COLOR);
+	glTexEnvi (GL_TEXTURE_ENV, GL_COMBINE_ALPHA, GL_REPLACE);
+	glTexEnvi (GL_TEXTURE_ENV, GL_SOURCE0_ALPHA, GL_PRIMARY_COLOR);
+	glTexEnvf (GL_TEXTURE_ENV, GL_RGB_SCALE, 2.0f);
+	hull_on = 1;
+}
+
+/* Plating off, texture state back to the GL defaults the rest expects */
+static void hull_end (void)
+{
+	if (!hull_on) return;
+	glTexEnvf (GL_TEXTURE_ENV, GL_RGB_SCALE, 1.0f);
+	glTexEnvi (GL_TEXTURE_ENV, GL_SOURCE0_ALPHA, GL_TEXTURE);
+	glTexEnvi (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+	glDisable (GL_TEXTURE_2D);
+	hull_on = 0;
+}
+
+/* Plating for this polygon: 1 with st filled in, 0 to draw it flat */
+static int hull_use (double p[][3], int n, float st[][2])
+{
+	if (flat_hulls || !hull_coords (p, n, st)) {
+		hull_end ();
+		return 0;
+	}
+	hull_begin ();
+	return 1;
+}
+
 void Nu_PutTriangle ()
 {
 	if (use_renderer == R_OLD) return;
@@ -1774,9 +1972,16 @@ void Nu_DrawTriangle (void **data)
 			glVertex3fv (v1);
 		glEnd ();
 	} else {
+		double p[3][3] = { { v1[0], v1[1], v1[2] }, { v2[0], v2[1], v2[2] },
+				   { v3[0], v3[1], v3[2] } };
+		float st[3][2];
+		int tex = hull_use (p, 3, st);
 		glBegin (GL_TRIANGLES);
+			if (tex) glTexCoord2fv (st[0]);
 			glVertex3fv (v1);
+			if (tex) glTexCoord2fv (st[1]);
 			glVertex3fv (v2);
+			if (tex) glTexCoord2fv (st[2]);
 			glVertex3fv (v3);
 		glEnd ();
 	}
@@ -1813,10 +2018,18 @@ void Nu_DrawQuad (void **data)
 			glVertex3iv (v1);
 		glEnd ();
 	} else {
+		double p[4][3] = { { v1[0], v1[1], v1[2] }, { v2[0], v2[1], v2[2] },
+				   { v3[0], v3[1], v3[2] }, { v4[0], v4[1], v4[2] } };
+		float st[4][2];
+		int tex = hull_use (p, 4, st);
 		glBegin (GL_TRIANGLE_STRIP);
+			if (tex) glTexCoord2fv (st[0]);
 			glVertex3iv (v1);
+			if (tex) glTexCoord2fv (st[1]);
 			glVertex3iv (v2);
+			if (tex) glTexCoord2fv (st[3]);
 			glVertex3iv (v4);
+			if (tex) glTexCoord2fv (st[2]);
 			glVertex3iv (v3);
 		glEnd ();
 	}
@@ -3337,6 +3550,7 @@ static void Nu_DrawPrimitive (void *data)
 		fnum = znode_rdlong (&data);
 		//fprintf (stderr, "%d ", fnum);
 		if (!fnum) return;
+		if (fnum != NU_TRIANGLE && fnum != NU_QUAD) hull_end ();
 		if (fnum == NU_SUBTREE) {
 			draw_3dview (subtree_root[znode_rdlong (&data)]);
 			continue;
@@ -3426,6 +3640,7 @@ void Nu_DrawScreen ()
 	} else {
 		draw_3dview (znode_start);
 	}
+	hull_end ();
 	//fprintf (stderr, "\n");
 
 #if PRIM_DEBUG

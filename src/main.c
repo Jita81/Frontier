@@ -198,6 +198,7 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --nosound             Disable sound (faster!).\n"
                "  --size w h            Start at specified window size.\n"
 			   "  --old-renderer        Start with the old renderer.\n"
+               "  --flat-hulls          Flat ship faces, no hull plating.\n"
                "  --pixel-text          Keep the original bitmap font (no HD text;\n"
                "                        FE2_HD_FONT=<PostScript name> picks the font).\n"
               );
@@ -213,6 +214,8 @@ void Main_ReadParameters(int argc, char *argv[])
       }
 	  else if (!strcmp(argv[i], "--old-renderer"))
 		use_renderer = R_OLD;
+	  else if (!strcmp(argv[i], "--flat-hulls"))
+		flat_hulls = 1;
 	  else if (!strcmp(argv[i], "--pixel-text"))
 		pixel_text = 1;
       else if ( !strcmp(argv[i],"--size") )

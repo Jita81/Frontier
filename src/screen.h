@@ -26,6 +26,7 @@ enum RENDERERS {
 	R_MAX
 };
 extern enum RENDERERS use_renderer;
+extern int flat_hulls;
 extern int pixel_text;
 
 /* palette length changes as dynamic colours change */
