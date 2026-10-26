@@ -57,6 +57,7 @@ static const char *script_path;    /* record: scripted SDL input */
 static long seed;
 static int seed_given;
 static int pace;
+static int hold;                  /* --oracle-hold: keep running after the tape */
 static long detail_a = -1, detail_b = -1;
 static long sample_every = 1;      /* g/m/f lines every N VBLs */
 static long hang_v = -1;           /* --oracle-test-hang */
@@ -107,6 +108,7 @@ static u32 key_ovf;
 static u32 a6_first, a6_set, a6_changes;
 static u32 n_draw;
 static atomic_int exiting;
+static int held;                  /* the tape ended under --oracle-hold (out_lock) */
 
 /* Shared with the watchdog thread.  hcall_enter_ns is the entry time of the
  * hcall in progress, 0 when none is; last_hcall_ns is the time of the last
@@ -279,7 +281,7 @@ static void emit (int stream, u32 v, const char *fmt, ...)
 	if (detail_a >= 0 && v >= detail_a && v <= detail_b) show = 1;
 	if (show) {
 		pthread_mutex_lock (&out_lock);
-		fprintf (out, "%c %u %s\n", stream_tag[stream], v, buf);
+		if (!held) fprintf (out, "%c %u %s\n", stream_tag[stream], v, buf);
 		pthread_mutex_unlock (&out_lock);
 	}
 }
@@ -308,8 +310,9 @@ static void g_record (int hc, int phase)
 	gv_seq++;
 	if (detail_a >= 0 && hu_count >= detail_a && hu_count <= detail_b) {
 		pthread_mutex_lock (&out_lock);
-		fprintf (out, "G %u %u %02x %c %016llx\n", hu_count, gv_seq, hc,
-			 phase ? 'x' : 'e', (unsigned long long) h);
+		if (!held)
+			fprintf (out, "G %u %u %02x %c %016llx\n", hu_count, gv_seq, hc,
+				 phase ? 'x' : 'e', (unsigned long long) h);
 		pthread_mutex_unlock (&out_lock);
 	}
 }
@@ -319,6 +322,24 @@ static void g_flush (void)
 	emit (S_G, hu_count, "%016llx", (unsigned long long) gv);
 	gv = FNV_OFF;
 	gv_seq = 0;
+}
+
+/* the stat and end lines (07 4.1 counters, 6 "end"); call with out_lock held */
+static void write_end (void)
+{
+	int i;
+	fprintf (out, "stat flagged=%u hostupdate=%u wd=%u wdv=", n_flagged, hu_count, n_wd);
+	for (i = 0; i < (int) n_wd && i < MAX_WD; i++) fprintf (out, "%s%u", i ? "," : "", wd_v[i]);
+	if (!n_wd) fputc ('-', out);
+	fprintf (out, " keyovf=%u a6=%08x a6chg=%u draws=%u screens=%d idle=",
+		 key_ovf, a6_first, a6_changes, n_draw, n_screens);
+	for (i = 0; i < n_sites; i++) fprintf (out, "%s%06x:%u", i ? "," : "", idle_site[i], idle_n[i]);
+	if (!n_sites) fputc ('-', out);
+	if (idle_site_overflow) fprintf (out, ",+%d", idle_site_overflow);
+	fputc ('\n', out);
+	fprintf (out, "end %u", hu_count);
+	for (i = 0; i < S_N; i++) fprintf (out, " %c=%016llx", stream_tag[i], (unsigned long long) cum[i]);
+	fputc ('\n', out);
 }
 
 /* ------------------------------------------------------------------ */
@@ -469,7 +490,7 @@ static void *watchdog (void *arg)
 			if (stable >= 3) {
 				FlagException (0);
 				pthread_mutex_lock (&out_lock);
-				fprintf (out, "w %u hc=%02x\n", hu_count, cur_hc & 0xff);
+				if (!held) fprintf (out, "w %u hc=%02x\n", hu_count, cur_hc & 0xff);
 				pthread_mutex_unlock (&out_lock);
 				if (n_wd < MAX_WD) wd_v[n_wd] = hu_count;
 				n_wd++;
@@ -640,9 +661,24 @@ static void hostupdate (void)
 		Keymap_DebounceAllKeys ();
 		ShortCut_CheckKeys ();
 		replay_pump ();
-		if ((long) v == tape_end_v) {
+		if ((long) v == tape_end_v && !hold) {
 			SDL_Quit ();
 			exit (0);
+		}
+		if ((long) v == tape_end_v) {
+			/* --oracle-hold: end the trace exactly where a quit would
+			 * (the same g, stat and end lines), then keep running with no
+			 * input: no keys, the mouse still and its buttons up.  The
+			 * watchdog stays on; an invalid after this is still written */
+			g_flush ();
+			pthread_mutex_lock (&out_lock);
+			write_end ();
+			fflush (out);
+			held = 1;
+			pthread_mutex_unlock (&out_lock);
+			kpos = nk;
+			mpos = nm;
+			last_b = 0;
 		}
 		while (kpos < nk && ktape[kpos].v < v) kpos++;
 		while (kpos < nk && ktape[kpos].v == v) {
@@ -795,23 +831,14 @@ void oracle_call (int n)
 
 static void oracle_atexit (void)
 {
-	int i, early;
+	int early;
 	if (atomic_exchange (&exiting, 1)) return;
 	g_flush ();
 	pthread_mutex_lock (&out_lock);
-	fprintf (out, "stat flagged=%u hostupdate=%u wd=%u wdv=", n_flagged, hu_count, n_wd);
-	for (i = 0; i < (int) n_wd && i < MAX_WD; i++) fprintf (out, "%s%u", i ? "," : "", wd_v[i]);
-	if (!n_wd) fputc ('-', out);
-	fprintf (out, " keyovf=%u a6=%08x a6chg=%u draws=%u screens=%d idle=",
-		 key_ovf, a6_first, a6_changes, n_draw, n_screens);
-	for (i = 0; i < n_sites; i++) fprintf (out, "%s%06x:%u", i ? "," : "", idle_site[i], idle_n[i]);
-	if (!n_sites) fputc ('-', out);
-	if (idle_site_overflow) fprintf (out, ",+%d", idle_site_overflow);
-	fputc ('\n', out);
-	fprintf (out, "end %u", hu_count);
-	for (i = 0; i < S_N; i++) fprintf (out, " %c=%016llx", stream_tag[i], (unsigned long long) cum[i]);
-	fputc ('\n', out);
-	early = oracle.mode == ORACLE_REPLAY && (long) hu_count != tape_end_v;
+	/* held: the trace already ended at the tape's end, and the run did not
+	 * stop early; a quit before the tape's end is still early-exit */
+	if (!held) write_end ();
+	early = !held && oracle.mode == ORACLE_REPLAY && (long) hu_count != tape_end_v;
 	if (early)
 		fprintf (out, "invalid reason=early-exit v=%u hc=%02x\n", hu_count, cur_hc & 0xff);
 	fclose (out);
@@ -854,6 +881,7 @@ static void usage (void)
 		"  --oracle-sample N       g/m/f/p lines every N VBLs (default 1)\n"
 		"  --oracle-timeout S      INVALID after S seconds wall time\n"
 		"  --oracle-stall S        INVALID after S s with no VBL (default 10)\n"
+		"  --oracle-hold           replay: keep running after the tape ends\n"
 		"  --oracle-test-hang V[:novbl]  test: hang at VBL V\n"
 		"  --seed N                srand(N) (default 0 in oracle modes)\n"
 		"  --pace                  sleep to 50 Hz (changes no stream)\n");
@@ -908,6 +936,8 @@ void oracle_parse_args (int *argc, char *argv[])
 			oracle.active = 1;
 		} else if (!strcmp (a, "--seed")) {
 			seed = need_num (++i, *argc, argv); seed_given = 1; oracle.active = 1;
+		} else if (!strcmp (a, "--oracle-hold")) {
+			hold = 1; oracle.active = 1;
 		} else if (!strcmp (a, "--pace")) {
 			pace = 1; oracle.active = 1;
 		} else if (!strcmp (a, "--oracle-help")) {
@@ -925,6 +955,7 @@ void oracle_parse_args (int *argc, char *argv[])
 	if (!oracle.mode) die2 ("an oracle flag needs --oracle-replay or --oracle-record");
 	if (!out_path) die2 ("--oracle-out FILE is required");
 	if (script_path && oracle.mode != ORACLE_RECORD) die2 ("--oracle-script is for record mode");
+	if (hold && oracle.mode != ORACLE_REPLAY) die2 ("--oracle-hold is for replay mode");
 	/* pins (07 3.2): no music, no sfx, fixed seed */
 	bDisableSound = TRUE;
 	if (oracle.mode == ORACLE_REPLAY) tape_load (tape_path);

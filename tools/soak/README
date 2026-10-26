@@ -33,6 +33,14 @@ Item 1 needs --duration >= 1800 and a --tape route.  A shorter run, or one
 without a tape, FAILs item 1 by design: it can show the other five items but
 is not a full soak.
 
+With --tape the game runs with --oracle-hold (tools/oracle/README.md): when
+the tape ends, the oracle writes the trace's end and the game keeps running
+with no input until item 6's SIGTERM, which then exits 0.  Without the hold a
+replay quits at the tape's end, and a SIGTERM before it is an early exit
+(exit 3), so item 6 could not pass with a tape: a 1800 s soak of a 95000-VBL
+tape failed it that way.  The tape must end before --duration (soak.sh warns
+when it does not); route.fe2rep ends at VBL 3100, about 62 s.
+
 Item 3 on sanitizer builds (measured 2026-10-26)
 ------------------------------------------------
 

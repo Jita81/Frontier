@@ -60,6 +60,7 @@ They are listed by `--oracle-help`; the main `--help` output is unchanged.
 | `--oracle-sample N` | Write the `g`/`m`/`f`/`p` lines every N VBLs; the cumulative hash still covers every VBL |
 | `--oracle-timeout S` | Wall-clock limit; when it is exceeded the trace is marked `invalid reason=timeout` |
 | `--oracle-stall S` | No HostUpdate progress for S seconds gives `invalid reason=no-vbl-progress` (default 10) |
+| `--oracle-hold` | Replay only: at the tape's end write the `g`, `stat` and `end` lines a quit there would write (the trace is byte-identical), then keep running with no input instead of quitting. A later quit exits 0; the watchdog stays on, so a stall after the tape still gives `invalid` and exit 3. For soaks (`tools/soak`) |
 | `--oracle-test-hang V[:novbl]` | Test hook: hang inside HostUpdate at VBL V, or with `:novbl` stop the Idle-epoch rule at VBL V |
 | `--seed N` | `srand` seed (replay default: the tape's seed; record default: 0) |
 | `--pace` | Sleep to 50 Hz in Idle (record at human speed); the hashes do not change |
@@ -74,7 +75,9 @@ Other pins in oracle modes:
   before it (window closed, or SIGTERM, which SDL turns into a quit) still
   writes its `stat` and `end` lines, then `invalid reason=early-exit`, and exits
   3. `compare` also checks the `end` VBL against `tape_end`, so a short run is
-  INVALID (ERROR-INFRA), never a game divergence (07 §7.1).
+  INVALID (ERROR-INFRA), never a game divergence (07 §7.1). With
+  `--oracle-hold` a quit before the tape's end is still early-exit; one after
+  it is not.
 
 ## Streams (07 §4.1)
 
