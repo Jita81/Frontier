@@ -1731,6 +1731,30 @@ static unsigned int hull_hash (unsigned int x)
 	return x;
 }
 
+/* A tile from the file FE2_HULL_TEX names, HULL_TEX_N squared bytes of
+ * grey (tools/art/hull_tile.py makes them), to try other plating without a
+ * rebuild. Its sum into *sum; 0 if unset or not a tile. */
+static int hull_load_tile (float *v, double *sum)
+{
+	static unsigned char buf[HULL_TEX_N * HULL_TEX_N + 1];
+	const char *path = getenv ("FE2_HULL_TEX");
+	FILE *f;
+	size_t got;
+	int i;
+
+	if (!path || !*path || !(f = fopen (path, "rb"))) return 0;
+	got = fread (buf, 1, sizeof buf, f);
+	fclose (f);
+	if (got != HULL_TEX_N * HULL_TEX_N) {
+		fprintf (stderr, "FE2_HULL_TEX: %s is not a %dx%d tile, using the built-in plating\n",
+			 path, HULL_TEX_N, HULL_TEX_N);
+		return 0;
+	}
+	for (i = 0; i < HULL_TEX_N * HULL_TEX_N; i++)
+		*sum += v[i] = buf[i] + 1;
+	return 1;
+}
+
 static void hull_make_texture (void)
 {
 	static float v[HULL_TEX_N * HULL_TEX_N];
@@ -1739,6 +1763,7 @@ static void hull_make_texture (void)
 	double sum = 0, scale;
 	int x, y, i;
 
+	if (!hull_load_tile (v, &sum))
 	for (y = 0; y < HULL_TEX_N; y++) {
 		int r = y / rh, ty = y % rh, by = rh - 1 - ty;
 		/* plates of this row: widths of 96..192 texels from a fixed
