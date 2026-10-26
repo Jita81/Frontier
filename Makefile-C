@@ -5,61 +5,136 @@ SRCOBJS := audio.o hostcall.o keymap.o main.o shortcut.o input.o joystick.o ini.
 
 COMPILER ?= gcc
 CC := $(CROSS_COMPILE)$(COMPILER)
+PKG_CONFIG ?= $(CROSS_COMPILE)pkg-config
 
-UNAME_S := $(shell uname -s)
+# The platform is the TARGET's, taken from the compiler (S-4): `uname -s`
+# names the build host, which is wrong when cross compiling.  Override with
+# TARGET_OS=Darwin|Linux|Windows.
+TARGET_MACHINE := $(shell $(CC) -dumpmachine 2>/dev/null)
+ifneq ($(findstring darwin,$(TARGET_MACHINE)),)
+TARGET_OS ?= Darwin
+else ifneq ($(findstring mingw,$(TARGET_MACHINE))$(findstring cygwin,$(TARGET_MACHINE)),)
+TARGET_OS ?= Windows
+else
+TARGET_OS ?= Linux
+endif
 
-# the toolchain's sysroot sdl-config when cross compiling, else the one in PATH
-# (clang, the macOS compiler, has no --print-sysroot)
+# SDL 1.2.  An explicit SDL_CONFIG wins; otherwise pkg-config (sdl12_compat,
+# then classic SDL 1.2), then the toolchain sysroot's sdl-config when cross
+# compiling (clang, the macOS compiler, has no --print-sysroot), then
+# sdl-config in PATH.
+ifeq ($(origin SDL_CONFIG),undefined)
+SDL_PKG := $(firstword $(foreach p,sdl12_compat sdl,$(shell $(PKG_CONFIG) --exists $(p) 2>/dev/null && echo $(p))))
+ifneq ($(SDL_PKG),)
+SDL_CFLAGS := $(shell $(PKG_CONFIG) --cflags $(SDL_PKG))
+SDL_LIBS := $(shell $(PKG_CONFIG) --libs $(SDL_PKG))
+else
 SYSROOT_SDL_CONFIG := $(shell $(CC) --print-sysroot 2>/dev/null)/usr/bin/sdl-config
-SDL_CONFIG ?= $(if $(wildcard $(SYSROOT_SDL_CONFIG)),$(SYSROOT_SDL_CONFIG),sdl-config)
+SDL_CONFIG := $(if $(wildcard $(SYSROOT_SDL_CONFIG)),$(SYSROOT_SDL_CONFIG),sdl-config)
+endif
+endif
+ifneq ($(SDL_CONFIG),)
 SDL_CFLAGS := $(shell $(SDL_CONFIG) --cflags)
 SDL_LIBS := $(shell $(SDL_CONFIG) --libs)
+endif
 
 # include/library paths of libvorbis/libogg when they are not in the system
 # ones (Homebrew on macOS)
-VORBIS_CFLAGS := $(shell pkg-config --cflags vorbisfile 2>/dev/null)
-VORBIS_LDFLAGS := $(shell pkg-config --libs-only-L vorbisfile vorbis ogg 2>/dev/null)
+VORBIS_CFLAGS := $(shell $(PKG_CONFIG) --cflags vorbisfile 2>/dev/null)
+VORBIS_LDFLAGS := $(shell $(PKG_CONFIG) --libs-only-L vorbisfile vorbis ogg 2>/dev/null)
 
+# Flags for every C file, the translated 68k core included.
 # -fwrapv: the translated 68k code relies on signed 32-bit wraparound (overflow
 # flag); without it optimised clang builds hang on planets
 CFLAGS := -O3 -fomit-frame-pointer -fwrapv -Wall -Wno-unused $(SDL_CFLAGS) $(VORBIS_CFLAGS) -DOGG_MUSIC
+
+# Flags for the hand-written host files only (host.c, src/*.c): the renderer
+# choice and the sanitizers.  The core (fe2.s.c, gen/) never sees them.
+HOST_CFLAGS :=
 
 LIBS := $(VORBIS_LDFLAGS) -lvorbisfile -lvorbis -logg $(SDL_LIBS)
 
 WITH_GL=y
 ifeq ($(WITH_GL),y)
 	SRCOBJS += gl.o
-	CFLAGS += -DWITH_GL
-ifeq ($(UNAME_S),Darwin)
+	HOST_CFLAGS += -DWITH_GL
+ifeq ($(TARGET_OS),Darwin)
 	LIBS += -framework OpenGL
-	CFLAGS += -DGL_SILENCE_DEPRECATION
+	HOST_CFLAGS += -DGL_SILENCE_DEPRECATION
 else
 	LIBS += -lGL -lGLU
 endif
 else
 	SRCOBJS += soft.o
-ifeq ($(UNAME_S),Darwin)
+ifeq ($(TARGET_OS),Darwin)
 	# no SDL_image for SDL 1.2 on Homebrew: soft.c reads cursor.png with libpng
-	CFLAGS += -DNO_SDL_IMAGE $(shell pkg-config --cflags libpng)
-	LIBS += $(shell pkg-config --libs libpng)
+	HOST_CFLAGS += -DNO_SDL_IMAGE $(shell $(PKG_CONFIG) --cflags libpng)
+	LIBS += $(shell $(PKG_CONFIG) --libs libpng)
 else
 	LIBS += -lSDL_image
 endif
 endif
 
-OBJS := fe2.s.o host.o \
-	$(addprefix src/,$(SRCOBJS))
-TARGET := frontier
+# Sanitizer builds of the host files: make -f Makefile-C SAN=ubsan (or asan).
+# The core is not instrumented (it is translated 68k code, docs/07 section 9)
+# and keeps its normal objects; the host objects and the binary go to
+# san/$(SAN)/, so a sanitizer build never clobbers the normal one.  Run the
+# binary from the top directory: the game finds its data relative to it.
+# An ASan binary also needs the SDL2 libdir on DYLD_FALLBACK_LIBRARY_PATH:
+# without it sdl12-compat cannot load libSDL2 inside the ASan process and the
+# game hangs before main (O-11).  The link prints the command; soak.sh sets it.
+SAN ?=
+ifeq ($(SAN),)
+HOST_OBJDIR :=
+else ifeq ($(SAN),ubsan)
+HOST_OBJDIR := san/ubsan/
+HOST_CFLAGS += -fsanitize=undefined -fno-omit-frame-pointer -g -O1
+else ifeq ($(SAN),asan)
+HOST_OBJDIR := san/asan/
+HOST_CFLAGS += -fsanitize=address -fno-omit-frame-pointer -g -O1
+SAN_RUN_NOTE = @echo 'run: DYLD_FALLBACK_LIBRARY_PATH="$$(pkg-config --variable=libdir sdl2):/usr/local/lib:/usr/lib" ASAN_OPTIONS=detect_leaks=0 $@'
+else
+$(error SAN must be empty, ubsan or asan)
+endif
 
-.PHONY: all $(TARGET) allclean clean
+OBJS := fe2.s.o $(HOST_OBJDIR)host.o \
+	$(addprefix $(HOST_OBJDIR)src/,$(SRCOBJS))
+HOST_OBJS := $(filter-out fe2.s.o,$(OBJS))
+TARGET := $(HOST_OBJDIR)frontier
+
+# Objects record the flags they were built with (S-4).  Each stamp holds a
+# flag set and is rewritten only when that set changes, so `make WITH_GL=n`
+# straight after a GL build recompiles the host files it must, and a host-only
+# change never recompiles the 535 core files.
+CORE_STAMP := gen/.flags-core
+HOST_STAMP := gen/.flags-host-$(if $(SAN),$(SAN),plain)
+CORE_FLAGS_TEXT := $(CC) $(CFLAGS)
+HOST_FLAGS_TEXT := $(CC) $(CFLAGS) $(HOST_CFLAGS)
+
+.PHONY: all $(TARGET) allclean clean install-hooks FORCE
 
 all: $(TARGET)
 
 $(TARGET): fe2.s.c
 	$(MAKE) -f $(THIS) gen
-	$(CC) $(CFLAGS) $(LIBS) $(OBJS) gen/*.o -o $@
+	$(CC) $(CFLAGS) $(HOST_CFLAGS) $(LIBS) $(OBJS) gen/*.o -o $@
+	$(SAN_RUN_NOTE)
 
 gen: $(patsubst %.c,%.o,$(wildcard gen/*.c)) $(OBJS)
+
+$(patsubst %.c,%.o,$(wildcard gen/*.c)) fe2.s.o: $(CORE_STAMP)
+
+$(HOST_OBJS): $(HOST_OBJDIR)%.o: %.c $(HOST_STAMP)
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) $(HOST_CFLAGS) -c -o $@ $<
+
+$(CORE_STAMP): FORCE
+	@mkdir -p $(@D)
+	@printf '%s\n' '$(CORE_FLAGS_TEXT)' | cmp -s - $@ || printf '%s\n' '$(CORE_FLAGS_TEXT)' > $@
+
+$(HOST_STAMP): FORCE
+	@mkdir -p $(@D)
+	@printf '%s\n' '$(HOST_FLAGS_TEXT)' | cmp -s - $@ || printf '%s\n' '$(HOST_FLAGS_TEXT)' > $@
 
 as68k/as68k:
 	$(MAKE) -C as68k/
@@ -69,10 +144,17 @@ fe2.s.c: as68k/as68k
 	as68k/as68k --output-c fe2.s
 
 clean:
-	rm -rf fe2.s.bin $(OBJS) gen fe2.s.c fixups.h $(TARGET)
+	rm -rf fe2.s.bin $(OBJS) gen fe2.s.c fixups.h $(TARGET) san
 
 allclean: clean
 	$(MAKE) -C as68k/ clean
+
+# Run the game-data guard before every commit in this repository: point git at
+# .githooks (pre-commit runs tools/check-no-game-data.sh --staged).  Sets
+# core.hooksPath for this repository only, never --global.
+install-hooks:
+	git config --local core.hooksPath .githooks
+	@echo "core.hooksPath=$$(git config --local core.hooksPath) (this repository only)"
 
 # To make a nice clean tarball
 dist:

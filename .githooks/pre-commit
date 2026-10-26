@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Refuse commits that stage Frontier Developments game data (fe2.s and friends).
+# Install once per clone:  git config core.hooksPath .githooks
+exec "$(git rev-parse --show-toplevel)/tools/check-no-game-data.sh" --staged

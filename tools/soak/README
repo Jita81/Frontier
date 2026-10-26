@@ -1,0 +1,75 @@
+tools/soak — real-time soak of one Frontier build
+=================================================
+
+soak.sh runs one build for a set wall-clock time and prints the six
+04 §8.3 lines (session, liveness, watchdog, memory, sanitizer, exit).  Its
+header comment is the reference for every option and rule; this file keeps
+the measurements behind the rules that differ by build, so a reader can
+check why a line says INFO and not PASS or FAIL.
+
+    tools/soak/soak.sh --binary ./frontier --duration 1800 --tape route.fe2rep
+    tools/soak/soak.sh --binary san/ubsan/frontier --duration 300
+    bash tests/soak/run.sh        # the script's own tests; no game, no screen
+
+winid.swift is built on first use and prints the game window's id for
+`screencapture -l`.  Window captures show game screens: they are deleted on
+exit unless --keep-frames, and must never be committed.
+
+Which build gates which item
+----------------------------
+
+    item            plain build   UBSan build        ASan build
+    1 session       gate          gate               gate
+    2 liveness      gate          gate               gate
+    3 watchdog      gate          INFO               INFO
+    4 memory        gate          gate               INFO (leak half SKIP)
+    5 sanitizer     SKIP          gate (UBSan)       gate (ASan)
+    6 exit          gate          gate               gate
+
+An INFO line still carries what the rule would have said (watchdog=PASS|FAIL,
+slope=PASS|FAIL), so nothing is hidden; it just does not fail the run.
+
+Item 1 needs --duration >= 1800 and a --tape route.  A shorter run, or one
+without a tape, FAILs item 1 by design: it can show the other five items but
+is not a full soak.
+
+Item 3 on sanitizer builds (measured 2026-10-26)
+------------------------------------------------
+
+A UBSan build soaked alone for 300 s (window 240 s, nothing covering it)
+took 30 captures with only 13 distinct pictures, and one picture held for
+81 s before the game moved on.  The 60 s rule would call that a freeze; it
+is instrumented code being slow.  An earlier uncovered UBSan run held one
+picture for 100 s.  The rule cannot tell a freeze from slow code on these
+builds, so a plain build is the item-3 gate.
+
+Item 4 on ASan builds (measured 2026-10-26)
+-------------------------------------------
+
+Two identical 300 s ASan soaks, each run with no other frontier process and a
+load average near 3, gave:
+
+    run     rss slope        footprint slope
+    asan1   -22.311 MB/min   -21.447 MB/min
+    asan2   +1.570 MB/min    +1.445 MB/min
+
+Same binary, same settings, slopes 24 MB/min apart and of opposite sign.
+ASan's quarantine and shadow memory move the process's memory by far more
+than the 1 MB/min rule, so the slope says nothing about the game there, and
+`leaks` cannot run against ASan's allocator.  Item 4 is INFO on ASan; plain
+and UBSan builds gate it.
+
+Fixed leak: GLU tessellator combine vertices (S-2)
+--------------------------------------------------
+
+The same day's UBSan soak FAILed item 4: rss slope 2.480, footprint slope
+1.084 MB/min, and `leaks` reported 75237 leaked blocks (74951 with a game
+frame on the stack, 2,417,056 bytes).  Every top stack was a malloc in
+combineCallback in gl.c: each GLU tessellator combine vertex was allocated
+and never freed.  That was a real game-side leak, not a soak artefact.
+
+S-2 replaced the mallocs with a fixed pool that is reset at the start of
+each complex polygon.  A solo 300 s UBSan soak of that build passed item 4:
+rss slope -0.022, footprint slope 0.000 MB/min, and 285 leaked blocks, none
+with a game frame on the stack.  The oracle route replay of the same build
+gave the reference end line, so the pool does not change game state.

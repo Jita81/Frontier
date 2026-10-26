@@ -129,7 +129,8 @@ static void read_key_config(struct INI *ini, unsigned char mode)
 		const char *key, *val;
 		size_t lkey, lval;
 		unsigned int i;
-		unsigned char code = 0, button;
+		unsigned char code = 0;
+		int button;
 		int ret = ini_read_pair(ini, &key, &lkey, &val, &lval);
 		if (ret <= 0)
 			break;
@@ -146,6 +147,12 @@ static void read_key_config(struct INI *ini, unsigned char mode)
 		}
 
 		button = atoi(val);
+		if (button < 0 || button >= JS_NB_BUTTONS_MAX) {
+			/* The table has JS_NB_BUTTONS_MAX entries per mode (S-17). */
+			fprintf(stderr, "Skipping %.*s: button %d is out of range 0-%d\n",
+				(int) lkey, key, button, JS_NB_BUTTONS_MAX - 1);
+			continue;
+		}
 		JoystickButtonToSTScanCode[mode][button] = code;
 	}
 }
@@ -197,7 +204,7 @@ void Keymap_JoystickUpDown(unsigned int button, int pressed)
 	static unsigned int button_already_pressed;
 	char code;
 
-	if (button > 16)
+	if (button >= JS_NB_BUTTONS_MAX)
 		return;
 
 	code = JoystickButtonToSTScanCode[current_mode][button];
