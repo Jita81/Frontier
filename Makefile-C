@@ -111,7 +111,7 @@ HOST_STAMP := gen/.flags-host-$(if $(SAN),$(SAN),plain)
 CORE_FLAGS_TEXT := $(CC) $(CFLAGS)
 HOST_FLAGS_TEXT := $(CC) $(CFLAGS) $(HOST_CFLAGS)
 
-.PHONY: all $(TARGET) allclean clean FORCE
+.PHONY: all $(TARGET) allclean clean install-hooks FORCE
 
 all: $(TARGET)
 
@@ -148,6 +148,13 @@ clean:
 
 allclean: clean
 	$(MAKE) -C as68k/ clean
+
+# Run the game-data guard before every commit in this repository: point git at
+# .githooks (pre-commit runs tools/check-no-game-data.sh --staged).  Sets
+# core.hooksPath for this repository only, never --global.
+install-hooks:
+	git config --local core.hooksPath .githooks
+	@echo "core.hooksPath=$$(git config --local core.hooksPath) (this repository only)"
 
 # To make a nice clean tarball
 dist:

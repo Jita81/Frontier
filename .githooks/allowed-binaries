@@ -1,0 +1,6 @@
+# Binary, audio or compressed files the game-data guard
+# (tools/check-no-game-data.sh) lets into git despite their magic bytes.
+# One repository path per line, matched exactly (case-sensitive).  Listing a
+# path exempts it from the magic rule only: the copy, hash, near and excerpt
+# rules still apply, and the contents of a listed compressed file are not
+# inspected.  Never list game data or anything built from it.
