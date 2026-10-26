@@ -59,15 +59,17 @@ than the 1 MB/min rule, so the slope says nothing about the game there, and
 `leaks` cannot run against ASan's allocator.  Item 4 is INFO on ASan; plain
 and UBSan builds gate it.
 
-Known leak: GLU tessellator combine vertices (S-2)
+Fixed leak: GLU tessellator combine vertices (S-2)
 --------------------------------------------------
 
 The same day's UBSan soak FAILed item 4: rss slope 2.480, footprint slope
 1.084 MB/min, and `leaks` reported 75237 leaked blocks (74951 with a game
-frame on the stack, 2,417,056 bytes).  Every top stack is a malloc in
-combineCallback in gl.c: each GLU tessellator combine vertex is allocated and
-never freed.  This is a real game-side leak, not a soak artefact, and the
-item-4 FAIL is the right verdict.  The fix is on wave/planet-fidelity
-("bounded pool for GLU tessellator combine vertices"), outside this
-directory's scope; re-soak a UBSan build once that branch has merged and
-item 4 should PASS.
+frame on the stack, 2,417,056 bytes).  Every top stack was a malloc in
+combineCallback in gl.c: each GLU tessellator combine vertex was allocated
+and never freed.  That was a real game-side leak, not a soak artefact.
+
+S-2 replaced the mallocs with a fixed pool that is reset at the start of
+each complex polygon.  A solo 300 s UBSan soak of that build passed item 4:
+rss slope -0.022, footprint slope 0.000 MB/min, and 285 leaked blocks, none
+with a game frame on the stack.  The oracle route replay of the same build
+gave the reference end line, so the pool does not change game state.
