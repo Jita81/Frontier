@@ -56,7 +56,7 @@ LIBS := $(VORBIS_LDFLAGS) -lvorbisfile -lvorbis -logg $(SDL_LIBS)
 
 WITH_GL=y
 ifeq ($(WITH_GL),y)
-	SRCOBJS += gl.o planet.o hdtext.o art.o hdstill.o hdface.o hdui.o
+	SRCOBJS += gl.o planet.o hdtext.o art.o hdstill.o hdface.o hdui.o hull.o
 	HOST_CFLAGS += -DWITH_GL
 ifeq ($(TARGET_OS),Darwin)
 	LIBS += -framework OpenGL -framework ApplicationServices -framework ImageIO
