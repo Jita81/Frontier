@@ -1,3 +1,16 @@
 # Images the game-data guard (tools/check-no-game-data.sh) lets into git.
 # One repository path per line.  Never list a screenshot or capture of the game.
 cursor.png
+
+# New art for the HD layers: made from words or code, never from the
+# game's bitmaps or screens.  Each stream lists its files under its own
+# heading, so branches that add art merge without conflicts.
+
+# art/hd/ (hdstill.c: logo, control panel, icons)
+
+# art/faces/ (hdface.c: portraits)
+
+# art/ui/ (hdui.c: panels and markers)
+
+# art/hull/ (hull plating and interiors)
+
