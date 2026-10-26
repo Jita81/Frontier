@@ -150,7 +150,7 @@ To find that boundary it re-runs both sides with `--oracle-detail v-5:v+1`.
 ## Reference results (route.fe2rep, GL build, macOS arm64)
 
 ```
-end 3100 g=04240640be4bb4ad m=7e57accfe3a24acb c=dcad3c8a8bf9c46d s=cbf29ce484222325 r=cbf29ce484222325 f=e2cf48f9f4d07294 p=d0b676b2ffc4d3cb
+end 3100 g=14a8e1f0b71dbab4 m=0ec88beb674ab6e9 c=dcad3c8a8bf9c46d s=cbf29ce484222325 r=cbf29ce484222325 f=e2cf48f9f4d07294 p=d0b676b2ffc4d3cb
 stat flagged=3100 hostupdate=3100 wd=0 wdv=- keyovf=0 a6=0000015e a6chg=0 draws=3106 screens=2 idle=036f70:1000,03709e:3600,0729f4:600,037082:999
 ```
 
