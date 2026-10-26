@@ -129,6 +129,8 @@ def lint_tape(path):
             if t[0] == "end":
                 if len(t) != 2:
                     errs.append("line %d: bad end" % n)
+                if v == 0:
+                    errs.append("line %d: end 0 replays nothing" % n)
                 end_seen = v
             elif t[0] == "h":
                 if len(t) < 3 or t[2] not in KNOWN_H_ACTIONS:
