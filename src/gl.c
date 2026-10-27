@@ -966,6 +966,7 @@ enum NuPrimitive {
 	NU_2DLINE,
 	NU_SUBTREE,
 	NU_ATMOSPHERE,
+	NU_COMPLEX_OVAL,
 	NU_MAX
 };
 
@@ -3371,25 +3372,44 @@ void Nu_DrawCylinder (void **data)
 }
 
 /*
- * NU_OVALTHINGY is used by the 68k code to draw planet rings (see
- * fe2.s: L3d648_PutPlanetRings / L3b9aa_FilledOvalThingy /
- * L37fb2_ProjectOvalXYZ, and the "gas giant ring colours" comment
- * nearby). The hostcall never passes an actual colour register, so
- * previously this always drew a solid black filled disc. We now draw
- * a translucent, neutral-tinted *annulus* (hollow in the middle, like
- * a real ring) instead.
+ * Filled circles: fe2.s L3b9aa_FilledOvalThingy -> L37fb2_ProjectOvalXYZ,
+ * which hcalls Nu_PutOval. The only user seen is the intro's FRONTIER logo
+ * (its planet, the planet's lighter face and the orbit ring).
  *
- * (d, e) are BAM-style angles (32768 = half turn) used to orient the
- * ring's tilt, matching the angle convention used elsewhere in this
- * file. (f) looked like a third rotation in the same family, but a
- * flat, uniformly coloured, rotationally-symmetric ring is invariant
- * under rotation around its own normal, so it has no visible effect
- * here and is intentionally not applied. If this still looks wrong
- * in-game, the sign/axis of (d, e) is the first thing to try flipping.
+ * The hcall gets a circle in viewing coordinates: its centre in d0-d2 (the
+ * same as 4(a0)), the normal of its plane in d3-d5 (words, length 32768)
+ * and its radius in d6. The ST turns it into two Bezier half circles
+ * (ProjectOvalXYZ: axis A = (-ny, nx, 0)*r/|nxy|, B = n x A at 4/3 r) and
+ * puts them into the complex shape the model has started, so they are
+ * filled with that shape's colour by its even-odd rule: two circles in
+ * one shape make the orbit ring an annulus.
+ *
+ * So inside a complex shape the circle is one more contour of it
+ * (NU_COMPLEX_OVAL). This used to be a black disc facing the camera
+ * whatever the shape's colour (no colour comes with the hcall): the
+ * intro's logo planet came out black.
+ *
+ * Outside a complex shape there is no colour to fill with; that case has
+ * not been seen and keeps the old disc (NU_OVALTHINGY).
  */
 void Nu_PutOval ()
 {
 	if (use_renderer == R_OLD) return;
+	if (complex_st_start) {
+		complex_check_abort ();
+		if (complex_aborted) return;
+		if (do_start_complex) { put_complex_start_4real (); do_start_complex = FALSE; }
+		znode_wrlong (NU_COMPLEX_OVAL);
+		/* viewing -> GL eye coordinates: z flips, as in znode_wrvertex */
+		znode_wrlong (GetReg (REG_D0));
+		znode_wrlong (GetReg (REG_D1));
+		znode_wrlong (-GetReg (REG_D2));
+		znode_wrlong ((short) GetReg (REG_D3));
+		znode_wrlong ((short) GetReg (REG_D4));
+		znode_wrlong (-(short) GetReg (REG_D5));
+		znode_wrlong ((short) GetReg (REG_D6));
+		return;
+	}
 	znode_wrlong (NU_OVALTHINGY);
 	znode_wrvertex (GetReg (REG_A0)+4);
 	
@@ -3399,6 +3419,55 @@ void Nu_PutOval ()
 
 	znode_wrlong (GetReg (REG_D6));
 }
+
+/* segments per circle: at the intro's largest (the orbit ring, about the
+ * picture's width) a 64-gon is within a pixel of the circle at 1600 wide.
+ * Two circles a shape stay well inside MAX_TESS_VERTICES. */
+#define OVAL_STEPS	64
+
+void Nu_DrawComplexOval (void **data)
+{
+	GLdouble c[3], n[3], u[3], w[3], v[3];
+	double len, lxy, r;
+	int i, k;
+
+	znode_rdvertexd (data, c);
+	znode_rdvertexd (data, n);
+	r = fabs ((double) znode_rdlong (data));
+
+	len = sqrt (n[0]*n[0] + n[1]*n[1] + n[2]*n[2]);
+	if (len <= 0.0) { n[0] = 0.0; n[1] = 0.0; n[2] = 1.0; len = 1.0; }
+	for (k = 0; k < 3; k++) n[k] /= len;
+	/* the ST's first axis, (-ny, nx, 0); face on, any will do */
+	lxy = sqrt (n[0]*n[0] + n[1]*n[1]);
+	if (lxy < 1e-6) { u[0] = 1.0; u[1] = 0.0; }
+	else { u[0] = -n[1]/lxy; u[1] = n[0]/lxy; }
+	u[2] = 0.0;
+	/* w = n x u */
+	w[0] = n[1]*u[2] - n[2]*u[1];
+	w[1] = n[2]*u[0] - n[0]*u[2];
+	w[2] = n[0]*u[1] - n[1]*u[0];
+
+	if (use_renderer == R_GL && contour_n > 0) {
+		/* a contour of its own */
+		flush_contour ();
+		gluTessEndContour (tobj);
+		gluTessBeginContour (tobj);
+	}
+	for (i = 0; i <= OVAL_STEPS; i++) {
+		double a = 2.0 * M_PI * (i % OVAL_STEPS) / OVAL_STEPS;
+		double ca = r * cos (a), sa = r * sin (a);
+		for (k = 0; k < 3; k++) v[k] = c[k] + ca*u[k] + sa*w[k];
+		if (use_renderer == R_GLWIRE) glVertex3dv (v);
+		else if (i < OVAL_STEPS) push_contour_vertex (v);
+	}
+	if (use_renderer == R_GL) {
+		flush_contour ();
+		gluTessEndContour (tobj);
+		gluTessBeginContour (tobj);
+	}
+}
+
 void Nu_DrawOval (void **data)
 {
 	int v1[3];
@@ -3590,7 +3659,8 @@ NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	&Nu_DrawPoint,
 	&Nu_Draw2DLine,
 	NULL,	/* NU_SUBTREE, see Nu_DrawPrimitive */
-	&Nu_DrawAtmosphere
+	&Nu_DrawAtmosphere,
+	&Nu_DrawComplexOval
 };
 
 /*
