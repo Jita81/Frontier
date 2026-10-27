@@ -793,28 +793,65 @@ int hull_frame (const double p[][3], int n, const double light[3], unsigned int 
 /*
  * Style 5: the tile laid on the model, not on the face. w are the face's
  * vertices in the model's own frame; the face takes the side of the
- * model's box it faces most and is mapped straight onto it (a side face:
- * u along the length, v up; a top face: u across, v along the length), so
- * neighbouring faces on one side of the ship share one run of plating and
- * the panels keep their size from ship to ship of a model. The tangent
- * frame is worked out from that mapping in view space, so the bump map,
- * the light and the edges all agree with where the panels are drawn.
+ * model's box it faces most (a side face: u along the length, v up; a top
+ * face: u across, v along the length), so neighbouring faces on one side
+ * of the ship share one run of plating and the panels keep their size
+ * from ship to ship of a model. A sloping face is not squashed onto that
+ * side (which would stretch its panels into planks): the side's u and v
+ * are tipped into the face's own plane, about the point of the plane
+ * nearest the model's centre (hull_obj_tan). A face square to the side is
+ * mapped exactly as the side; a run of narrow faces round a curve stays
+ * nearly joined. The tangent frame is worked out from that mapping in
+ * view space, so the bump map, the light and the edges all agree with
+ * where the panels are drawn.
  */
 #define HULL_MACRO	0.2071		/* the second scale, per tile */
 
-/* the square root of a face's area (for a quad, from its diagonals) */
-double hull_obj_size (const float w[][3], int n)
+/*
+ * The tile's axes on a face whose normal in the model's frame is Nw (any
+ * length, either way round) and which takes side ax of the box: Tu is the
+ * box's u axis tipped into the plane, Tv the plane's other axis, the way
+ * the box's v runs. A point w of the plane maps to u = w . Tu + h[0],
+ * v = w . Tv + h[1] (model units), with h from a point w0 of the plane:
+ * the same for every face and decal in one plane. 0 if Nw is nothing.
+ */
+static int hull_obj_tan (const double Nw[3], int ax, const double w0[3], double Tu[3],
+			 double Tv[3], double h[2])
 {
-	double a[3], b[3], Nw[3];
-	int k;
+	double n[3], d;
+	int k, cu = ax == 0 ? 2 : 0, cv = ax == 1 ? 2 : 1;
 
-	if (n < 3) return 0;
-	for (k = 0; k < 3; k++) {
-		a[k] = w[n == 4 ? 2 : 1][k] - w[0][k];
-		b[k] = w[n == 4 ? 3 : 2][k] - w[n == 4 ? 1 : 0][k];
-	}
-	cross3 (a, b, Nw);
-	return sqrt (0.5 * sqrt (Nw[0] * Nw[0] + Nw[1] * Nw[1] + Nw[2] * Nw[2]));
+	for (k = 0; k < 3; k++) n[k] = Nw[k];
+	if (!unit3 (n)) return 0;
+	/* ax is the biggest part of n, so u's axis is never near the normal */
+	for (k = 0; k < 3; k++) Tu[k] = (k == cu) - n[cu] * n[k];
+	if (!unit3 (Tu)) return 0;
+	cross3 (n, Tu, Tv);
+	if (!unit3 (Tv)) return 0;
+	if (Tv[cv] < 0) for (k = 0; k < 3; k++) Tv[k] = -Tv[k];
+	/* about the plane's point nearest the centre, q = d n: there the
+	 * face's u and v are the box side's (and q . Tu = 0) */
+	d = dot3 (n, w0);
+	h[0] = d * n[cu];
+	h[1] = d * n[cv];
+	return 1;
+}
+
+/* the longest distance between two of a face's corners: a sliding door,
+ * whose face grows along one side, keeps its span (its height) */
+double hull_obj_span (const float w[][3], int n)
+{
+	double best = 0;
+	int i, j, k;
+
+	if (n < 2) return 0;
+	for (i = 0; i < n; i++)
+		for (j = i + 1; j < n; j++) {
+			double d = 0;
+			for (k = 0; k < 3; k++) d += ((double) w[i][k] - w[j][k]) * ((double) w[i][k] - w[j][k]);
+			if (d > best) best = d;
+		}
+	return sqrt (best);
 }
 
 /* the side of the model's box a face looks at most (a near tie goes to
@@ -840,7 +877,8 @@ int hull_frame_obj (const double p[][3], const float w[][3], int n, const double
 {
 	double a[3], b[3], N3[3], T[3], B[3], Tr[3], Br[3], d[3], c[3] = { 0, 0, 0 };
 	double L[3], m[3], e[3], U[4][2], base[2], mb[2], t, best = 0, lmax = 0, l, sc, near = 1e30;
-	int i, j, k, ax, cu, cv;
+	double Nw[3], w0[3], Tu[3], Tv[3], h[2];
+	int i, j, k, ax;
 
 	if (!(panel > 0)) return 0;
 	for (i = 0; i < n; i++) {
@@ -860,13 +898,20 @@ int hull_frame_obj (const double p[][3], const float w[][3], int n, const double
 	unit3 (N3);
 	if (dot3 (N3, p[0]) > 0) for (k = 0; k < 3; k++) N3[k] = -N3[k];
 
-	/* the side of the model's box the face looks at most */
+	/* the side of the model's box the face looks at most, its axes tipped
+	 * into the face's plane */
 	if ((ax = hull_obj_axis (w, n)) < 0) return 0;
-	cu = ax == 0 ? 2 : 0;
-	cv = ax == 1 ? 2 : 1;
+	for (k = 0; k < 3; k++) {
+		a[k] = w[n == 4 ? 2 : 1][k] - w[0][k];
+		b[k] = w[n == 4 ? 3 : 2][k] - w[n == 4 ? 1 : 0][k];
+		w0[k] = w[0][k];
+	}
+	cross3 (a, b, Nw);
+	if (!hull_obj_tan (Nw, ax, w0, Tu, Tv, h)) return 0;
 	for (i = 0; i < n; i++) {
-		U[i][0] = w[i][cu] / panel + off[0];
-		U[i][1] = w[i][cv] / panel + off[1];
+		double wi[3] = { w[i][0], w[i][1], w[i][2] };
+		U[i][0] = (dot3 (wi, Tu) + h[0]) / panel + off[0];
+		U[i][1] = (dot3 (wi, Tv) + h[1]) / panel + off[1];
 	}
 	/* where u and v run in view space, from the better shaped of the
 	 * face's triangles */
@@ -954,8 +999,8 @@ int hull_plane_obj (const double c[][3], int n, const float M[9], const int o[3]
 		    const double light[3], double panel, const float off[2], struct HullPlane *g)
 {
 	double N[3] = { 0, 0, 0 }, n68[3], Nw[3], P[3], Q[3], Tr[3], Br[3], L[3], U0[2];
-	double gp, gq, hp, hq, det, t;
-	int i, j, k, ax, cu, cv;
+	double wc[3], Tu[3], Tv[3], h[2], gp, gq, hp, hq, det, t;
+	int i, j, k, ax;
 
 	if (n < 3 || !(panel > 0)) return 0;
 	for (i = 0; i < n; i++) {
@@ -974,17 +1019,26 @@ int hull_plane_obj (const double c[][3], int n, const float M[9], const int o[3]
 	for (k = 1; k < 3; k++)
 		if (fabs (Nw[k]) > 1.02 * fabs (Nw[ax])) ax = k;
 	if (!(fabs (Nw[ax]) > 0)) return 0;
-	cu = ax == 0 ? 2 : 0;
-	cv = ax == 1 ? 2 : 1;
-	/* u = (M (v - o))[cu] / panel + off[0], v the 68k's point (x, y, -z) */
-	g->u0 = off[0];
-	g->v0 = off[1];
+	/* the shape's first point in the model's frame, w = M (v - o), v the
+	 * 68k's point (x, y, -z); the side's axes tipped into the plane */
+	for (j = 0; j < 3; j++) {
+		wc[j] = 0;
+		for (k = 0; k < 3; k++) wc[j] += M[3*j+k] * ((k == 2 ? -c[0][k] : c[0][k]) - o[k]);
+	}
+	if (!hull_obj_tan (Nw, ax, wc, Tu, Tv, h)) return 0;
+	/* u = (Tu . M (v - o) + h[0]) / panel + off[0], v likewise */
+	g->u0 = off[0] + h[0] / panel;
+	g->v0 = off[1] + h[1] / panel;
 	for (k = 0; k < 3; k++) {
-		double s = k == 2 ? -1 : 1;
-		g->gu[k] = s * M[3*cu+k] / panel;
-		g->gv[k] = s * M[3*cv+k] / panel;
-		g->u0 -= M[3*cu+k] * (double) o[k] / panel;
-		g->v0 -= M[3*cv+k] * (double) o[k] / panel;
+		double s = k == 2 ? -1 : 1, mu = 0, mv = 0;
+		for (j = 0; j < 3; j++) {
+			mu += Tu[j] * M[3*j+k];
+			mv += Tv[j] * M[3*j+k];
+		}
+		g->gu[k] = s * mu / panel;
+		g->gv[k] = s * mv / panel;
+		g->u0 -= mu * (double) o[k] / panel;
+		g->v0 -= mv * (double) o[k] / panel;
 	}
 	/* where u and v run in the plane: Tr moves u by one and keeps v, Br
 	 * the other way round */

@@ -2220,6 +2220,8 @@ static unsigned int hull_model_key (void)
 	return 0x80000000u | STMemory_ReadWord (rec + 90);
 }
 
+static int hull_model_unit (unsigned int key);
+
 #define HULL_SEEN	64
 static void hull_log_model (unsigned int key)
 {
@@ -2232,11 +2234,12 @@ static void hull_log_model (unsigned int key)
 	if (nseen < HULL_SEEN) seen[nseen++] = key;
 	if (hull_key_listed (key)) {
 		float sc, off[2];
-		fprintf (stderr, "hull: model %u -> class %s (style 4 profile %s)\n", key & 0xffff,
-			 hull_classes[hull_class_of_key (key, &sc, off)].name,
-			 hull_profiles[hull_profile_of_key (key)].name);
+		fprintf (stderr, "hull: model %u -> class %s (style 4 profile %s), unit 2^%d\n",
+			 key & 0xffff, hull_classes[hull_class_of_key (key, &sc, off)].name,
+			 hull_profiles[hull_profile_of_key (key)].name, hull_model_unit (key));
 	} else
-		fprintf (stderr, "hull: model %u -> not listed in hull_models, class generic\n", key & 0xffff);
+		fprintf (stderr, "hull: model %u -> not listed in hull_models, class generic, unit 2^%d\n",
+			 key & 0xffff, hull_model_unit (key));
 }
 
 /*
@@ -2246,15 +2249,43 @@ static void hull_log_model (unsigned int key)
  * record. The view units are the model's own scaled by a power of two: the
  * word at -208(a6) against the one at +10 of the model's header. So a
  * vertex v (view units, as the 68k keeps it) is at M (v - o) in the
- * model's own units, whatever its distance. 0 when any of it is not what
- * that expects. Only reads.
+ * model's own units, whatever its distance.
+ *
+ * A part of the model (a sub-object: the hangar's walls and doors, a
+ * ship's gear) is drawn in a frame of its own, linked under the object's:
+ * its turn and origin are its own and its -208 word its own scale, but the
+ * view units, and the record at -212, are the object's. So the scale is
+ * always the object's (the top frame, the one linked straight from the
+ * record), and a part that is square to the object (not turned against
+ * it, or turned by quarter turns and flips: a piece of the structure set
+ * in place) takes the object's frame whole: the tile then runs on across
+ * it as if it were one piece (a stripe painted on a wall lines up with the
+ * wall's panels). A part turned any other way keeps its own turn and
+ * origin, so the tile stays put on it as it moves. 0 when any of it is not
+ * what that expects. Only reads.
  */
+static int hull_frame_words (unsigned int f, int V[9], int o[3], int *s)
+{
+	int j;
+
+	if (f > MEM_SIZE || !st_readable (f - 36, 32) || !st_readable (f - 208, 2)) return 0;
+	for (j = 0; j < 9; j++) V[j] = (short) STMemory_ReadWord (f - 36 + 2 * j);
+	for (j = 0; j < 3; j++) o[j] = (int) STMemory_ReadLong (f - 16 + 4 * j);
+	*s = (short) STMemory_ReadWord (f - 208);
+	for (j = 0; j < 3; j++) {
+		double r = (double) V[3*j] * V[3*j] + (double) V[3*j+1] * V[3*j+1] +
+			   (double) V[3*j+2] * V[3*j+2];
+		if (r < 0.81 * 1073741824.0 || r > 1.21 * 1073741824.0) return 0;
+	}
+	return 1;
+}
+
 static int hull_model_frame (unsigned int key, double M[9], int o[3])
 {
-	unsigned int a6 = GetReg (REG_A6), gd, mh;
-	int V[9], s, h10, j;
+	unsigned int a6 = GetReg (REG_A6), gd, mh, rec, top;
+	int V[9], Vt[9], ot[3], s, st, h10, j, depth, same;
 
-	if (!HULL_KEY_OK (key) || !st_readable (a6 - 36, 32) || !st_readable (a6 - 208, 2) ||
+	if (!HULL_KEY_OK (key) || a6 > MEM_SIZE || !st_readable (a6 - 212, 4) ||
 	    !st_readable (__DL973c_game_data, 4))
 		return 0;
 	gd = STMemory_ReadLong (__DL973c_game_data);
@@ -2262,17 +2293,61 @@ static int hull_model_frame (unsigned int key, double M[9], int o[3])
 	mh = gd + STMemory_ReadWord (gd + (key & 0xffff));
 	if (!st_readable (mh + 10, 2)) return 0;
 	h10 = (short) STMemory_ReadWord (mh + 10);
-	s = (short) STMemory_ReadWord (a6 - 208);
-	if (h10 < -4 || h10 > 24 || s < -8 || s > 24) return 0;
-	for (j = 0; j < 9; j++) V[j] = (short) STMemory_ReadWord (a6 - 36 + 2 * j);
-	for (j = 0; j < 3; j++) o[j] = (int) STMemory_ReadLong (a6 - 16 + 4 * j);
-	for (j = 0; j < 3; j++) {
-		double r = (double) V[3*j] * V[3*j] + (double) V[3*j+1] * V[3*j+1] +
-			   (double) V[3*j+2] * V[3*j+2];
-		if (r < 0.81 * 1073741824.0 || r > 1.21 * 1073741824.0) return 0;
+	if (!hull_frame_words (a6, V, o, &s)) return 0;
+	/* the object's own frame: up the links while they carry its record */
+	rec = STMemory_ReadLong (a6 - 212);
+	top = a6;
+	for (depth = 0; depth < 8; depth++) {
+		unsigned int up;
+		if (!st_readable (top, 4)) return 0;
+		up = STMemory_ReadLong (top);
+		if (up == rec) break;
+		if (up > MEM_SIZE || up <= top || !st_readable (up - 212, 4) ||
+		    STMemory_ReadLong (up - 212) != rec)
+			return 0;
+		top = up;
 	}
+	if (depth == 8) return 0;
+	if (top != a6) {
+		if (!hull_frame_words (top, Vt, ot, &st)) return 0;
+		/* the part's turn against the object's: a quarter turn or a flip
+		 * (every entry 0 or 1 or -1) is a piece of the structure set in
+		 * place, which takes the object's frame */
+		same = 1;
+		for (j = 0; j < 9; j++) {
+			double r = 0, a = 0, b = 0;
+			int k;
+			for (k = 0; k < 3; k++) {
+				r += (double) V[3*(j/3)+k] * Vt[3*(j%3)+k];
+				a += (double) V[3*(j/3)+k] * V[3*(j/3)+k];
+				b += (double) Vt[3*(j%3)+k] * Vt[3*(j%3)+k];
+			}
+			r = fabs (r) / sqrt (a * b);
+			if (r > 0.004 && r < 0.996) same = 0;
+		}
+		if (same) {
+			for (j = 0; j < 9; j++) V[j] = Vt[j];
+			for (j = 0; j < 3; j++) o[j] = ot[j];
+		}
+		s = st;
+	}
+	if (h10 < -4 || h10 > 24 || s < -8 || s > 24) return 0;
 	for (j = 0; j < 9; j++) M[j] = ldexp (V[j] / 32768.0, h10 - s);
 	return 1;
+}
+
+/* the model's unit (the word at +10 of its header, see hull_model_frame);
+ * -99 when it cannot be read */
+static int hull_model_unit (unsigned int key)
+{
+	unsigned int gd, mh;
+
+	if (!HULL_KEY_OK (key) || !st_readable (__DL973c_game_data, 4)) return -99;
+	gd = STMemory_ReadLong (__DL973c_game_data);
+	if (!st_readable (gd + (key & 0xffff), 2)) return -99;
+	mh = gd + STMemory_ReadWord (gd + (key & 0xffff));
+	if (!st_readable (mh + 10, 2)) return -99;
+	return (short) STMemory_ReadWord (mh + 10);
 }
 
 /* Style 5: the face's n vertices (records at va) in the model's own frame;
@@ -2810,12 +2885,13 @@ static int hull_paint5 (double p[][3], int n, const struct HullCtx *cx, int host
 	if (rgb[2] < mn) mn = rgb[2];
 	lamp = cls == HC_HANGAR && mn >= 208;
 	pure = mx > 191 && mn < 0.2 * mx;
-	/* but in the hangar a face of pure colour more than about half a tile
-	 * across (the band over the hall, the big hazard stripes, the docking
-	 * bay's doors; the small stripes and lamps are a third of one or less)
-	 * is paint, plated calm when it carries decals */
+	/* but in the hangar a face of pure colour whose longest side is more
+	 * than about 0.4 of a tile (the band over the hall, the big hazard
+	 * stripes, the yellow sign, the doors, which keep that span as they
+	 * slide; the lamps and small plaques are under a quarter of one) is
+	 * paint, plated calm when it carries decals */
 	if (pure && cls == HC_HANGAR && cx->wok &&
-	    hull_obj_size (cx->w, n) >= 0.6 * hull_classes[cls].panel * sc) {
+	    hull_obj_span (cx->w, n) >= 0.4 * hull_classes[cls].panel * sc) {
 		pure = 0;
 		calm |= host;
 	}

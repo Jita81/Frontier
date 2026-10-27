@@ -112,8 +112,8 @@ void hull_bake_tile (int cls, const unsigned char *lum, int n, unsigned char *t0
  * (model units) looks along most, a near tie going to the first; -1 if
  * the face is degenerate. */
 int hull_obj_axis (const float w[][3], int n);
-/* the square root of the face's area, in model units; 0 if n < 3 */
-double hull_obj_size (const float w[][3], int n);
+/* the longest distance between two of the face's corners, in model units */
+double hull_obj_span (const float w[][3], int n);
 
 /* Style 5 coordinates: as hull_frame, but the tile is laid on the model
  * itself, not on the face: w are the n vertices in the model's own frame
