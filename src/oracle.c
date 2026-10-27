@@ -299,9 +299,10 @@ static void g_record (int hc, int phase)
 	h = fnv32 (h, N); h = fnv32 (h, nZ); h = fnv32 (h, V); h = fnv32 (h, C); h = fnv32 (h, X);
 	h = fnv32 (h, bN); h = fnv32 (h, bnZ); h = fnv32 (h, bV); h = fnv32 (h, bC); h = fnv32 (h, bX);
 	h = fnv32 (h, rdest);
-	h = fnv32 (h, exceptions_pending);
-	h = fnv32 (h, exceptions_pending_nums[0]);
-	h = fnv32 (h, exceptions_pending_nums[1]);
+	/* relaxed loads: the watchdog thread may flag an exception meanwhile */
+	h = fnv32 (h, ExceptionsPending ());
+	h = fnv32 (h, __atomic_load_n (&exceptions_pending_nums[0], __ATOMIC_RELAXED));
+	h = fnv32 (h, __atomic_load_n (&exceptions_pending_nums[1], __ATOMIC_RELAXED));
 	if (a7 < MEM_SIZE) cnt = (MEM_SIZE - a7 < 32) ? MEM_SIZE - a7 : 32;
 	h = fnv32 (h, cnt);
 	if (cnt) h = fnv (h, m68kram + a7, cnt);
@@ -483,7 +484,7 @@ static void *watchdog (void *arg)
 			inj_since_progress = 0;
 		}
 		if (age_ns (t, last_progress) > (u64) (stall_s * 1e9)) invalid ("no-vbl-progress");
-		if (!enter && age_ns (t, last) > 250000000ULL && exceptions_pending == 0) {
+		if (!enter && age_ns (t, last) > 250000000ULL && ExceptionsPending () == 0) {
 			u64 h = machine_hash ();
 			stable = (stable && h == prev) ? stable + 1 : 1;
 			prev = h;
@@ -768,7 +769,7 @@ static void idle (void)
 	}
 	/* the Idle-epoch rule (07 3.3) */
 	if (!(hang_v >= 0 && hang_kind == 1 && hu_count >= (u32) hang_v)) {
-		if (exceptions_pending_nums[0] == 0 && hu_count == hu_at_last_idle) {
+		if (__atomic_load_n (&exceptions_pending_nums[0], __ATOMIC_RELAXED) == 0 && hu_count == hu_at_last_idle) {
 			if (exception_handlers[0]) n_flagged++;
 			FlagException (0);
 		}

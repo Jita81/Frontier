@@ -90,8 +90,9 @@ void SetZFlag (char val) { nZ = !val; }
 void FlagException (int num)
 {
 	if (exception_handlers[num]) {
-		exceptions_pending |= 1<<num;
-		exceptions_pending_nums[num]++;
+		/* count first, then the bit (release): see TakeException in host.h */
+		__atomic_fetch_add (&exceptions_pending_nums[num], 1, __ATOMIC_RELAXED);
+		__atomic_fetch_or (&exceptions_pending, (s32) (1u<<num), __ATOMIC_RELEASE);
 	}
 }
 

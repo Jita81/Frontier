@@ -111,7 +111,7 @@ HOST_STAMP := gen/.flags-host-$(if $(SAN),$(SAN),plain)
 CORE_FLAGS_TEXT := $(CC) $(CFLAGS)
 HOST_FLAGS_TEXT := $(CC) $(CFLAGS) $(HOST_CFLAGS)
 
-.PHONY: all $(TARGET) allclean clean install-hooks FORCE
+.PHONY: all $(TARGET) allclean clean install-hooks stress FORCE
 
 all: $(TARGET)
 
@@ -122,9 +122,11 @@ $(TARGET): fe2.s.c
 
 gen: $(patsubst %.c,%.o,$(wildcard gen/*.c)) $(OBJS)
 
-$(patsubst %.c,%.o,$(wildcard gen/*.c)) fe2.s.o: $(CORE_STAMP)
+# host.h holds inlines the core calls at every jump (ExceptionsPending,
+# TakeException), so a change to it must rebuild the core
+$(patsubst %.c,%.o,$(wildcard gen/*.c)) fe2.s.o: $(CORE_STAMP) host.h
 
-$(HOST_OBJS): $(HOST_OBJDIR)%.o: %.c $(HOST_STAMP)
+$(HOST_OBJS): $(HOST_OBJDIR)%.o: %.c $(HOST_STAMP) host.h
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(HOST_CFLAGS) -c -o $@ $<
 
@@ -151,6 +153,14 @@ clean:
 
 allclean: clean
 	$(MAKE) -C as68k/ clean
+
+# Stress test of the exception (VBL) flag protocol in host.c and host.h: many
+# threads flag, one takes, and it fails on a lost, doubled or negative count.
+# Needs no game data.  The binary goes in san/, which is never committed.
+stress:
+	@mkdir -p san
+	$(CC) -O3 -pthread -I. tools/stress/vbl_race.c host.c -o san/vbl_race
+	san/vbl_race 20000000 4
 
 # Run the game-data guard before every commit in this repository: point git at
 # .githooks (pre-commit runs tools/check-no-game-data.sh --staged).  Sets
