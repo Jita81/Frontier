@@ -20,6 +20,12 @@
 /* --pixel-text: keep the original 8x8 bitmap font */
 extern int pixel_text;
 
+/* Set while the galaxy map is up (not under --classic-ui): its names
+ * overlap each other and its grid crosses them, so there a glyph is
+ * replaced only by one drawn on its own line, and one drawn this frame or
+ * the last is still found with up to half of it covered. */
+extern int hdtext_map;
+
 /* DrawStr drew glyph chr of font (the 10 byte a glyph bitmap font
  * DrawChar draws with) (character code - 0x20) with its top left
  * at ST pixel (x, y) in palette colour col, with a shadow at (x+1, y+1)

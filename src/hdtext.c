@@ -43,7 +43,7 @@
 /* Recorded at a glyph's top left pixel: two per position, for a place
  * that alternates between two glyphs (a highlighted menu item). */
 struct ent {
-	unsigned char chr, col, flags, misses;
+	unsigned char chr, col, flags, misses, age;	/* age: frames since drawn */
 };
 #define F_USED		1
 #define F_SHADOW	2
@@ -51,6 +51,7 @@ struct ent {
 static struct ent slots[ST_W * ST_H][2];
 static unsigned char listed[ST_W * ST_H];
 static int active[MAX_ACTIVE], n_active;
+int hdtext_map;
 
 /* what the last hdtext_frame found on the screen */
 static struct shown {
@@ -88,7 +89,7 @@ void hdtext_glyph (const unsigned char *font, int x, int y, int col, int chr,
 	if (!(g[0] | g[1] | g[2] | g[3] | g[4] | g[5] | g[6] | g[7])) return;
 
 	for (oy = y - 7; oy <= y + 7; oy++) {
-		if (oy < 0 || oy >= ST_H) continue;
+		if (oy < 0 || oy >= ST_H || (hdtext_map && abs (oy - y) > 2)) continue;
 		for (ox = x - 8; ox <= x + 8; ox++) {
 			if (ox < 0 || ox >= ST_W || (ox == x && oy == y)) continue;
 			s = slots[oy * ST_W + ox];
@@ -116,25 +117,30 @@ void hdtext_glyph (const unsigned char *font, int x, int y, int col, int chr,
 		s[0].flags = flags;
 	}
 	s[0].misses = 0;
+	s[0].age = 0;
 }
 
 /* Every pixel of the glyph is in its colour, and something in its box is
- * not: a block of solid colour is not a glyph. */
-static int on_screen (const unsigned char *g, const unsigned char *r, int x, int y, int col)
+ * not: a block of solid colour is not a glyph.  lenient: it was drawn
+ * just now, so whatever covers up to half of it was drawn over it since
+ * (the galaxy map's grid, a star's stalk, another name). */
+static int on_screen (const unsigned char *g, const unsigned char *r, int x, int y, int col,
+		      int lenient)
 {
-	int row, c, pixels = 0, other = 0;
+	int row, c, pixels = 0, covered = 0, other = 0;
 
 	for (row = 0; row < 8; row++) {
 		for (c = 0; c < 8 && x + c < ST_W; c++) {
 			int p = r[(y + row) * ST_W + x + c];
 			if (ink (g, c, row)) {
-				if (p != col) return 0;
-				pixels++;
+				if (p == col) pixels++;
+				else if (!lenient) return 0;
+				else covered++;
 			} else if (c < g[9] && p != col)
 				other = 1;
 		}
 	}
-	return pixels && other;
+	return pixels && other && covered <= pixels;
 }
 
 /* Paint the glyph (and its shadow) out of out with the colour behind it:
@@ -210,7 +216,9 @@ void hdtext_frame (const unsigned char *font, const unsigned char *r, unsigned c
 
 		for (k = 0; k < 2; k++) {
 			if (!(s[k].flags & F_USED)) continue;
-			if (hit < 0 && on_screen (font + s[k].chr * 10, r, x, y, s[k].col)) {
+			int lenient = hdtext_map && s[k].age < 2;
+			if (s[k].age < 255) s[k].age++;
+			if (hit < 0 && on_screen (font + s[k].chr * 10, r, x, y, s[k].col, lenient)) {
 				hit = k;
 				s[k].misses = 0;
 			} else if (++s[k].misses > MISS_LIMIT)
@@ -1076,7 +1084,7 @@ static int run_chars (const struct hdtext_run *r, int upper, UniChar *u, short *
 {
 	const unsigned char *font = runs_font;
 	int space = font && font[9] > 0 ? font[9] : 4;
-	int k, n = 0;
+	int k, j, n = 0, quote = -1;
 
 	for (k = r->first; k < r->first + r->n && n < MAX_CHARS - 4; k++) {
 		UniChar c = letter (shown[k].chr), unit = unit_letter (shown[k].chr);
@@ -1086,6 +1094,21 @@ static int run_chars (const struct hdtext_run *r, int upper, UniChar *u, short *
 				u[n] = ' ';
 				src[n++] = -1;
 			}
+		}
+		/* a letter or two quoted between words with no gap (a star's
+		 * class letter in the info line): the pixel quotes are wide
+		 * enough to read as gaps, set ones are not, so space them */
+		if (c == '\'' && k != quote && n && u[n - 1] != ' ')
+			for (j = k + 2; j <= k + 3 && j < r->first + r->n; j++)
+				if (letter (shown[j].chr) == '\'') {
+					quote = j;
+					u[n] = ' ';
+					src[n++] = -1;
+					break;
+				}
+		if (k == quote + 1 && quote >= 0 && n && u[n - 1] != ' ') {
+			u[n] = ' ';
+			src[n++] = -1;
 		}
 		if (unit) {
 			/* a unit keeps its small letter, even in capitals */
