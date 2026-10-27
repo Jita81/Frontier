@@ -675,14 +675,15 @@ static void galaxy_draw (void)
 	glBindTexture (GL_TEXTURE_2D, galaxy_tex);
 	glTexSubImage2D (GL_TEXTURE_2D, 0, 0, 0, 320, GAL_H, GL_RGBA, GL_UNSIGNED_BYTE, galaxy_rgba);
 	glTexEnvf (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+	/* texel centres at the edges: nothing outside the picture blends in */
 	glBegin (GL_TRIANGLE_STRIP);
-		glTexCoord2f (0, (GAL_H - 0.5f) / 256);
+		glTexCoord2f (0.5f / 512, (GAL_H - 0.5f) / 256);
 		glVertex2i (0, 200 - GAL_H);
-		glTexCoord2f (320.0f / 512, (GAL_H - 0.5f) / 256);
+		glTexCoord2f (319.5f / 512, (GAL_H - 0.5f) / 256);
 		glVertex2i (320, 200 - GAL_H);
-		glTexCoord2f (0, 0);
+		glTexCoord2f (0.5f / 512, 0.5f / 256);
 		glVertex2i (0, 200);
-		glTexCoord2f (320.0f / 512, 0);
+		glTexCoord2f (319.5f / 512, 0.5f / 256);
 		glVertex2i (320, 200);
 	glEnd ();
 	glDisable (GL_TEXTURE_2D);
@@ -723,6 +724,7 @@ static void draw_control_panel ()
 	 * them fucking annoying. */
 	y = logscreen2;
 	logscreen2 = physcreen;
+	hdtext_queue = 1;
 	for (x=0; x<queued_string_pos; x++) {
 		DrawStr (	queued_strings[x].x,
 				queued_strings[x].y,
@@ -730,6 +732,7 @@ static void draw_control_panel ()
 				queued_strings[x].str,
 				FALSE);
 	}
+	hdtext_queue = 0;
 	logscreen2 = y;
 	/****************************************************/
 	
@@ -3686,6 +3689,30 @@ void Nu_DrawLine (void **data)
 	znode_rdvertex (data, v2);
 	znode_rdcolor (data, &r, &g, &b);
 	
+	if (galmap == 1 && r == b && (unsigned char) r > 3 * (unsigned char) g + 40) {
+		/* the map's magenta, where you are: its label (the game's
+		 * own stroke text) and range in strokes as heavy as its ring,
+		 * round ended, over a faint glow */
+		float w = px_scale ();
+		int k;
+		glEnable (GL_POINT_SMOOTH);
+		for (k = 0; k < 2; k++) {
+			glColor4ub (r, g, b, k ? 255 : 50);
+			glLineWidth ((k ? 1.1f : 3.5f) * w);
+			glBegin (GL_LINES);
+				glVertex3iv (v1);
+				glVertex3iv (v2);
+			glEnd ();
+		}
+		glPointSize (1.1f * w);
+		glBegin (GL_POINTS);
+			glVertex3iv (v1);
+			glVertex3iv (v2);
+		glEnd ();
+		glDisable (GL_POINT_SMOOTH);
+		glLineWidth (0.6f * w);
+		return;
+	}
 	glColor3ub (r, g, b);
 	glBegin (GL_LINES);
 		glVertex3iv (v1);

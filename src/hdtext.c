@@ -47,11 +47,14 @@ struct ent {
 };
 #define F_USED		1
 #define F_SHADOW	2
+#define F_QUEUED	4	/* a 3D view name gl.c drew just now */
 
 static struct ent slots[ST_W * ST_H][2];
 static unsigned char listed[ST_W * ST_H];
 static int active[MAX_ACTIVE], n_active;
-int hdtext_map;
+int hdtext_map, hdtext_queue;
+/* the ink of the names gl.c drew over the screen this frame */
+static unsigned char over[ST_W * ST_H];
 
 /* what the last hdtext_frame found on the screen */
 static struct shown {
@@ -88,7 +91,16 @@ void hdtext_glyph (const unsigned char *font, int x, int y, int col, int chr,
 	/* a space draws nothing, so it covers nothing */
 	if (!(g[0] | g[1] | g[2] | g[3] | g[4] | g[5] | g[6] | g[7])) return;
 
-	for (oy = y - 7; oy <= y + 7; oy++) {
+	if (hdtext_map && hdtext_queue) {
+		/* a name on the map, drawn by gl.c just before the frame
+		 * is checked: it is on the screen, and it replaces nothing,
+		 * since every name is drawn again each frame */
+		flags |= F_QUEUED;
+		for (oy = 0; oy < 9 && y + oy < ST_H; oy++)
+			for (ox = 0; ox < 9 && x + ox < ST_W; ox++)
+				if (ink (g, ox, oy) || (shadowed && ink (g, ox - 1, oy - 1)))
+					over[(y + oy) * ST_W + x + ox] = 1;
+	} else for (oy = y - 7; oy <= y + 7; oy++) {
 		if (oy < 0 || oy >= ST_H || (hdtext_map && abs (oy - y) > 2)) continue;
 		for (ox = x - 8; ox <= x + 8; ox++) {
 			if (ox < 0 || ox >= ST_W || (ox == x && oy == y)) continue;
@@ -121,20 +133,35 @@ void hdtext_glyph (const unsigned char *font, int x, int y, int col, int chr,
 }
 
 /* Every pixel of the glyph is in its colour, and something in its box is
- * not: a block of solid colour is not a glyph.  lenient: it was drawn
- * just now, so whatever covers up to half of it was drawn over it since
- * (the galaxy map's grid, a star's stalk, another name). */
+ * not: a block of solid colour is not a glyph.  A pixel under a map name
+ * gl.c drew this frame is explained.  lenient: it was drawn just now, so
+ * up to half of it may be covered by what was drawn over it since (the
+ * old renderer's grid and stalks), but not by the background: a glyph
+ * whose pixels went back to the sky has moved, it is not covered. */
 static int on_screen (const unsigned char *g, const unsigned char *r, int x, int y, int col,
 		      int lenient)
 {
-	int row, c, pixels = 0, covered = 0, other = 0;
+	int row, c, pixels = 0, covered = 0, other = 0, bg = -1, n = 0;
+	unsigned char count[256];
 
+	if (lenient) {
+		memset (count, 0, sizeof (count));
+		for (row = 0; row < 8; row++)
+			for (c = 0; c < 8 && x + c < ST_W; c++) {
+				int p = r[(y + row) * ST_W + x + c];
+				if (!ink (g, c, row) && p != col && ++count[p] > n) {
+					n = count[p];
+					bg = p;
+				}
+			}
+	}
 	for (row = 0; row < 8; row++) {
 		for (c = 0; c < 8 && x + c < ST_W; c++) {
-			int p = r[(y + row) * ST_W + x + c];
+			int i = (y + row) * ST_W + x + c, p = r[i];
 			if (ink (g, c, row)) {
 				if (p == col) pixels++;
-				else if (!lenient) return 0;
+				else if (over[i]) continue;
+				else if (!lenient || p == bg) return 0;
 				else covered++;
 			} else if (c < g[9] && p != col)
 				other = 1;
@@ -215,9 +242,15 @@ void hdtext_frame (const unsigned char *font, const unsigned char *r, unsigned c
 		struct ent *s = slots[o];
 
 		for (k = 0; k < 2; k++) {
-			if (!(s[k].flags & F_USED)) continue;
 			int lenient = hdtext_map && s[k].age < 2;
+			if (!(s[k].flags & F_USED)) continue;
 			if (s[k].age < 255) s[k].age++;
+			if (s[k].flags & F_QUEUED) {
+				/* drawn this frame, or gone */
+				if (hit < 0 && s[k].age == 1) hit = k;
+				else s[k].flags = 0;
+				continue;
+			}
 			if (hit < 0 && on_screen (font + s[k].chr * 10, r, x, y, s[k].col, lenient)) {
 				hit = k;
 				s[k].misses = 0;
@@ -242,6 +275,7 @@ void hdtext_frame (const unsigned char *font, const unsigned char *r, unsigned c
 		}
 		i++;
 	}
+	memset (over, 0, sizeof (over));
 	build_runs (font);
 }
 
@@ -1095,10 +1129,11 @@ static int run_chars (const struct hdtext_run *r, int upper, UniChar *u, short *
 				src[n++] = -1;
 			}
 		}
-		/* a letter or two quoted between words with no gap (a star's
-		 * class letter in the info line): the pixel quotes are wide
-		 * enough to read as gaps, set ones are not, so space them */
-		if (c == '\'' && k != quote && n && u[n - 1] != ' ')
+		/* on the map, a letter or two quoted between words with no
+		 * gap (a star's class letter in the info line): the pixel
+		 * quotes are wide enough to read as gaps, set ones are not,
+		 * so space them */
+		if (hdtext_map && c == '\'' && k != quote && n && u[n - 1] != ' ')
 			for (j = k + 2; j <= k + 3 && j < r->first + r->n; j++)
 				if (letter (shown[j].chr) == '\'') {
 					quote = j;

@@ -23,8 +23,14 @@ extern int pixel_text;
 /* Set while the galaxy map is up (not under --classic-ui): its names
  * overlap each other and its grid crosses them, so there a glyph is
  * replaced only by one drawn on its own line, and one drawn this frame or
- * the last is still found with up to half of it covered. */
+ * the last is still found with up to half of it covered by something
+ * drawn over it (not by the background). */
 extern int hdtext_map;
+
+/* Set by gl.c while it draws the 3D view's names into the screen, just
+ * before hdtext_frame: on the map those are taken as they are drawn, with
+ * no check, and kept for that frame only. */
+extern int hdtext_queue;
 
 /* DrawStr drew glyph chr of font (the 10 byte a glyph bitmap font
  * DrawChar draws with) (character code - 0x20) with its top left
