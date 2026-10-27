@@ -22,7 +22,53 @@ is 590 x 684 screen pixels in a 1600 x 1200 window. That covers:
 - the police contact,
 - any other screen that draws a face in that box.
 
-A face drawn anywhere else is left alone. None has been seen.
+It also covers the face in the console when a message comes in (see
+*Messages* below). No other face has been seen.
+
+## Messages
+
+A message (a station's clearance, another pilot's hail, the police) shows
+no face of its own. The console at the bottom gets one of two fixed 32 x 30
+thumbnails, the same for everyone, sometimes with a small overlay at its
+foot. The thumbnail sits at ST x 89..120, y 169..198.
+
+The sender is known, though. The message routine keeps its registers in
+the game's variables, and the sender's seed is among them. A face is a
+function of (seed, flags): the face generator picks its parts from tables
+in ST memory by the seed. So when the thumbnail is blitted, the layer reads
+the parts the generator would pick for that person (reading ST memory
+only) and passes them through the same analysis and choice as a face drawn
+in the box. The thumbnail becomes the very portrait that person gets on a
+big screen.
+
+- **A station** (the sender is a starport object whose seed matches) gets
+  the flags its station services face is drawn with. The voice of a
+  station is therefore the person behind its counter: in the test run the
+  Lave clearance message and the Lave services screen show the same
+  portrait, with the same person id.
+- **Anyone else** gets the flags the message carries (`d7 & 6`), so each
+  sender gets one stable portrait.
+
+The thumbnail is replaced only while the console shows exactly the game's
+thumbnail, pixel for pixel, over the face's own columns (x 89..115; the
+message text starts drawing over the thumbnail's black edge at x 116). The
+portrait is cropped to the head and shoulders, because the rectangle is
+small.
+
+With `FE2_HDFACE_LOG` set, each thumbnail logs a `thumb` line with the
+seed, flags, sender, person id and portrait. A `check` line also compares
+the face composed from the game's own (seed, flags) with the face in the
+box, to show that the composition matches the game.
+
+## Shape
+
+The face box is 118 x 114 ST pixels, and the picture is always shown at
+4:3, so on screen the box is close to the portraits' 864 x 1010 shape at
+every window size. Even so, the part of the portrait drawn is cut to the
+exact aspect its rectangle has in the GL viewport, so a portrait is never
+stretched. Any excess is cut evenly from the sides, or 1:3 from the top
+and bottom. The textures are mipmapped, so a portrait drawn small (the
+console thumbnail, or a small window) is filtered rather than aliased.
 
 ## How it works
 
@@ -103,6 +149,7 @@ and the oracle replay ends on the same hashes.
 | switch | effect |
 |---|---|
 | `--pixel-faces` | Keep the game's own faces. The layer returns before doing anything, so the picture is exactly the one without it. |
+| `--classic-ui` | Keeps the console's own message thumbnail. The face box still shows the portrait, as before this change; `--pixel-faces` removes both. |
 | `FE2_HDFACE_LOG=file` | Write one line per person to `file`: frame, id, the attributes read (sex, ramp, hair/cap/shaved, eyewear, eye darkness, hair length) and the portrait chosen. |
 | `FE2_ART_DIR=dir` | Where `art/` is, shared with the other HD layers (default `art` in the current directory). |
 
@@ -268,5 +315,13 @@ were never processed and are not in the repository.
   it then gets a portrait of the nearest kind.
 - **Resolution.** The files are 864 x 1010 pixels, about 1.5 times the
   box's size in a 1600 x 1200 window, not 2 times. The files total 5.6 MB.
-- **Only the face box is covered.** A face drawn anywhere else on the
-  screen keeps the game's pixels. None has been seen.
+- **Only the face box and the message thumbnail are covered.** A face
+  drawn anywhere else on the screen keeps the game's pixels. None has been
+  seen.
+- **Message senders other than stations are not yet seen live.** The code
+  path for a pilot's or the police's message (flags from the message, the
+  two overlays) was not reached in the test drive. A sender whose seed the
+  generator would not make into a face keeps the game's thumbnail.
+- **A station's message uses the services flags.** The game's own
+  thumbnail is a fixed face without a cap. The portrait instead is the
+  services person, cap included, because that is who the station is.
