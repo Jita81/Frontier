@@ -2263,11 +2263,14 @@ static void split_colons (float right)
 
 	for (i = n_runs - 1; i >= 0; i--) {
 		const struct hdtext_run *r = &runs[i];
-		if (!ON_PAGE (r) || r->x0 >= right || r->y < 10 || !(r->kind & HDT_K_COLON)) continue;
+		if (!ON_PAGE (r) || r->x0 >= right || r->y < 10 || !(r->kind & HDT_K_LETTER)) continue;
 		n = hdtext_chars (r, c, sp, 96);
 		for (k = 1; k < n - 1; k++)
 			if (c[k] == ':') break;
-		if (k >= n - 1 || sp[k + 1] || !hdtext_split (i, k + 1)) continue;
+		/* after a letter, the value straight after it: not a time */
+		if (k >= n - 1 || (c[k - 1] | 32) < 'a' || (c[k - 1] | 32) > 'z' || sp[k + 1] ||
+		    !hdtext_split (i, k + 1))
+			continue;
 		n_runs = hdtext_runs (&runs);
 		runs[i + 1].align = HDT_LEFT;
 		runs[i + 1].ax = runs[i + 1].ink0 + 3;
