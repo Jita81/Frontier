@@ -1,7 +1,7 @@
 THIS=Makefile-C
 VERSION=20060623
 
-SRCOBJS := audio.o hostcall.o keymap.o main.o shortcut.o input.o joystick.o ini.o oracle.o oracle_tramp.o
+SRCOBJS := audio.o hostcall.o keymap.o main.o shortcut.o input.o joystick.o ini.o bindings.o oracle.o oracle_tramp.o
 
 COMPILER ?= gcc
 CC := $(CROSS_COMPILE)$(COMPILER)
@@ -56,7 +56,7 @@ LIBS := $(VORBIS_LDFLAGS) -lvorbisfile -lvorbis -logg $(SDL_LIBS)
 
 WITH_GL=y
 ifeq ($(WITH_GL),y)
-	SRCOBJS += gl.o planet.o hdtext.o art.o hdstill.o hdface.o hdui.o hdback.o
+	SRCOBJS += gl.o planet.o hdtext.o art.o hdstill.o hdface.o hdui.o hdback.o hdcontrols.o procfx.o
 	HOST_CFLAGS += -DWITH_GL
 ifeq ($(TARGET_OS),Darwin)
 	LIBS += -framework OpenGL -framework ApplicationServices -framework ImageIO
@@ -130,8 +130,8 @@ $(HOST_OBJS): $(HOST_OBJDIR)%.o: %.c $(HOST_STAMP) host.h
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(HOST_CFLAGS) -c -o $@ $<
 
-# gl.c reads engine variables at their label addresses (P-2)
-$(HOST_OBJDIR)src/gl.o: fixups.h
+# gl.c, bindings.c, hdface.c and hdback.c read engine variables at their label addresses (P-2)
+$(HOST_OBJDIR)src/gl.o $(HOST_OBJDIR)src/bindings.o $(HOST_OBJDIR)src/hdface.o $(HOST_OBJDIR)src/hdback.o: fixups.h
 
 $(CORE_STAMP): FORCE
 	@mkdir -p $(@D)
