@@ -131,6 +131,29 @@ int hull_obj_axis (const float w[][3], int n);
 /* the longest distance between two of the face's corners, in model units */
 double hull_obj_span (const float w[][3], int n);
 
+/*
+ * Style 5 on a face that moves against its own model (a docking bay's
+ * door, whose edge slides while the rest stays): w (n corners in the
+ * model's frame, as hull_frame_obj takes them) is moved so that the tile
+ * stays on the face's moving part instead of the model, and a face whose
+ * part's frame jumps under it keeps its tile. A face is followed from
+ * frame to frame by key, seed (the corners it uses), a6 (the 68k's frame
+ * that drew it) and where it was; frame counts the engine's frames and q
+ * is how many model units one unit of the 68k's view space is. Returns
+ * HULL_ANIM_KEPT (w is ready), with HULL_ANIM_FLAT when the face changes
+ * shape in a way no move of the tile follows (draw it flat; w untouched),
+ * and the TELL bits the first time a face is seen to move or deform; 0
+ * when the face could not be followed (w untouched).
+ */
+#define HULL_ANIM_KEPT		1
+#define HULL_ANIM_FLAT		2
+#define HULL_ANIM_TELL_MOVE	4
+#define HULL_ANIM_TELL_FLAT	8
+int hull_anim_bind (unsigned int key, unsigned int seed, unsigned int a6, unsigned int frame,
+		    int n, float w[][3], double q);
+/* forget every face followed so far */
+void hull_anim_reset (void);
+
 /* Style 5 coordinates: as hull_frame, but the tile is laid on the model
  * itself, not on the face: w are the n vertices in the model's own frame
  * (object units), and the face takes the plane of the model's box it

@@ -2250,13 +2250,16 @@ struct HullCtx {
 	short light[3];
 	short wok;		/* style 5: w holds the face in the model's frame (bit 0)
 				 * and the face is out of a docking bay's box (bit 1,
-				 * hull_bay_outside) */
+				 * hull_bay_outside); the face changes shape against its
+				 * model in a way the tile cannot follow, so it is flat
+				 * (bit 2, hull_anim_bind) */
 	float w[4][3];
 };
 
 /* this frame's triangles and quads carry a HullCtx: 1 for styles 0 to 4,
  * 2 for style 5 (with the face in the model's frame) */
 static int hull_ctx;
+static unsigned int hull_frame_no;	/* the engine's frames, for hull_anim_bind */
 static int hull_logging = -1;
 
 static int hull_log_on (void)
@@ -2272,6 +2275,7 @@ static int hull_log_on (void)
 static void hull_latch (void)
 {
 	hull_ctx = !flat_hulls && use_renderer != R_OLD ? (hull_style >= 5 ? 2 : 1) : 0;
+	hull_frame_no++;
 }
 
 static inline int st_readable (unsigned int addr, unsigned int len);
@@ -2423,12 +2427,15 @@ static int hull_model_unit (unsigned int key)
  * model or part that draws it (see hull_model_frame): 1, or 3 when the
  * face is out of a docking bay's box (measured in the object's own frame,
  * hull_bay_outside); 0 (and the face is mapped on its own) when that
- * cannot be had */
-static int hull_obj_coords (unsigned int key, int n, const unsigned int *va, float w[][3])
+ * cannot be had. A face that moves against its model (a bay's door) is
+ * followed from frame to frame by seed and a6, so that its tile moves
+ * with it (hull_anim_bind); 4 is added when it cannot be (drawn flat). */
+static int hull_obj_coords (unsigned int key, unsigned int seed, unsigned int a6, int n,
+			    const unsigned int *va, float w[][3])
 {
-	double M[9], Mo[9];
+	double M[9], Mo[9], q = 0;
 	float wo[4][3];
-	int o[3], oo[3], i, j, k;
+	int o[3], oo[3], i, j, k, wok, a;
 
 	if (!hull_model_frame (key, M, o, Mo, oo)) return 0;
 	for (i = 0; i < n; i++) {
@@ -2446,7 +2453,19 @@ static int hull_obj_coords (unsigned int key, int n, const unsigned int *va, flo
 			wo[i][j] = (float) mo;
 		}
 	}
-	return hull_bay_outside (key, (const float (*)[3]) wo, n) ? 3 : 1;
+	wok = hull_bay_outside (key, (const float (*)[3]) wo, n) ? 3 : 1;
+	if (!hull_key_listed (key)) return wok;		/* drawn flat anyway */
+	for (j = 0; j < 3; j++) {
+		double r = sqrt (M[3*j] * M[3*j] + M[3*j+1] * M[3*j+1] + M[3*j+2] * M[3*j+2]);
+		if (r > q) q = r;
+	}
+	a = hull_anim_bind (key, seed, a6, hull_frame_no, n, w, q);
+	if (hull_log_on () && (a & (HULL_ANIM_TELL_MOVE | HULL_ANIM_TELL_FLAT)))
+		fprintf (stderr, "hull: model %u face %08x (a6 %x) %s\n", HULL_KEY_MODEL (key),
+			 seed, a6, a & HULL_ANIM_TELL_FLAT ? "changes shape, drawn flat"
+							     : "moves, tile bound to it");
+	if (a & HULL_ANIM_FLAT) wok |= 4;
+	return wok;
 }
 
 /* the light, the way znode_wrlightsource gives it to GL: towards the
@@ -2489,7 +2508,7 @@ static void hull_put_ctx (int n)
 	if (hull_ctx == 2) {
 		unsigned int va[4] = { a0, a1, a2, a3 };
 		float w[4][3];
-		short wok = hull_obj_coords (key, n, va, w);
+		short wok = hull_obj_coords (key, seed, a6, n, va, w);
 		znode_wrword (wok);
 		if (wok) znode_wrblock (w, n * 3 * sizeof (float));
 	}
@@ -3044,8 +3063,14 @@ static int hull_paint (double p[][3], int n, int have_ctx, const struct HullCtx 
 		hull_end ();
 		return 0;
 	}
-	if (hull_style >= 5 && have_ctx == 2)
+	if (hull_style >= 5 && have_ctx == 2) {
+		/* a face that changes shape against its model (hull_anim_bind) */
+		if (cx->wok & 4) {
+			hull_end ();
+			return 0;
+		}
 		return hull_paint5 (p, n, cx, host, rgb, st, hf);
+	}
 	if (hull_style > 0) {
 #ifdef HULL_SHADERS
 		if (!hull_prog_failed) return hull_shade (p, n, cx, host, hf) ? 2 : 0;

@@ -56,7 +56,9 @@ const struct HullClass hull_classes[HC_N] = {
  * looked up the way it always was (a model of 256 or more takes the row of
  * its low byte), so that style still gives the picture it gave. Style 5
  * has its own table, hull_models[] below. A model not listed gets
- * HP_GENERIC.
+ * HP_GENERIC. Every row is reached: 32 by the hangar (288, whose low byte
+ * is 32) and 72 by the intro's station (HULL_TAB_INTRO | 72), since only
+ * the low byte is compared.
  */
 static const struct { unsigned char type, prof; } hull_style4[] = {
 	{ 20, HP_SMALL }, { 32, HP_STATION }, { 40, HP_MILITARY }, { 42, HP_SMALL },
@@ -1127,4 +1129,214 @@ void hull_plane_at (const struct HullPlane *g, const double e[3], float uv[2], f
 	vt[0] = (float) dot3 (d, g->T);
 	vt[1] = (float) dot3 (d, g->B);
 	vt[2] = (float) dot3 (d, g->N);
+}
+
+/*
+ * Faces that move against their own model (see hull.h, hull_anim_bind).
+ * One entry per face seen: the corners where it was first seen (rest) and
+ * where they were last frame (last); b is how far the face has moved as a
+ * whole since (an origin that jumps while the face stays still, or the
+ * part moving), so w - b is the face in the frame it was first seen in. A face is told from another of the same model by its
+ * key and seed (which corners of the model it uses) and then by where it
+ * was last frame, since several objects of one model draw the same face.
+ */
+#define HULL_ANIM_N	8192	/* entries, a power of two */
+#define HULL_ANIM_PROBE	16	/* slots looked at from a face's hash */
+#define HULL_ANIM_GAP	600	/* frames unseen after which it starts again */
+#define HULL_ANIM_CALM	16	/* frames a face that changed shape stays flat */
+
+struct HullAnim {
+	unsigned int key, seed, a6, frame;
+	unsigned char n, used, flat, told;	/* flat: frames to stay flat */
+	float rest[4][3], last[4][3], b[3];
+};
+static struct HullAnim *hull_anim;
+static int hull_anim_failed;
+
+void hull_anim_reset (void)
+{
+	if (hull_anim) memset (hull_anim, 0, HULL_ANIM_N * sizeof *hull_anim);
+}
+
+static float hull_anim_dist (const float a[3], const float b[3])
+{
+	float d = 0;
+	int k;
+	for (k = 0; k < 3; k++) if (fabsf (a[k] - b[k]) > d) d = fabsf (a[k] - b[k]);
+	return d;
+}
+
+/* the mean of v[i] over the corners in mask, and how far the furthest of
+ * them is from it */
+static float hull_anim_mean (const float v[4][3], int n, int mask, float m[3])
+{
+	float s = 0;
+	int i, k, c = 0;
+
+	m[0] = m[1] = m[2] = 0;
+	for (i = 0; i < n; i++) if (mask & (1 << i)) {
+		for (k = 0; k < 3; k++) m[k] += v[i][k];
+		c++;
+	}
+	if (!c) return 0;
+	for (k = 0; k < 3; k++) m[k] /= c;
+	for (i = 0; i < n; i++) if (mask & (1 << i)) {
+		float d = hull_anim_dist (v[i], m);
+		if (d > s) s = d;
+	}
+	return s;
+}
+
+/* 1 if the faces a and b (n corners) have the same distances between
+ * their corners, to within e: one is the other moved and turned */
+static int hull_anim_same_size (const float a[][3], const float b[][3], int n, float e)
+{
+	int i, j;
+	for (i = 0; i < n; i++)
+		for (j = i + 1; j < n; j++) {
+			float da = 0, db = 0, d;
+			int k;
+			for (k = 0; k < 3; k++) {
+				d = a[i][k] - a[j][k]; da += d * d;
+				d = b[i][k] - b[j][k]; db += d * d;
+			}
+			if (fabsf (sqrtf (da) - sqrtf (db)) > e) return 0;
+		}
+	return 1;
+}
+
+static void hull_anim_start (struct HullAnim *e, unsigned int key, unsigned int seed,
+			     unsigned int a6, int n, const float w[][3])
+{
+	memset (e, 0, sizeof *e);
+	e->key = key; e->seed = seed; e->a6 = a6; e->n = n; e->used = 1;
+	memcpy (e->rest, w, n * sizeof w[0]);
+	memcpy (e->last, w, n * sizeof w[0]);
+}
+
+int hull_anim_bind (unsigned int key, unsigned int seed, unsigned int a6, unsigned int frame,
+		    int n, float w[][3], double q)
+{
+	struct HullAnim *e = NULL, *spare = NULL;
+	float ext = (float) hull_obj_span (w, n), big = 0, tol, near, best = 0, D[4][3], t[3], c[3];
+	unsigned int h, age = 0;
+	int i, k, S = 0, r = HULL_ANIM_KEPT, all = (1 << n) - 1;
+
+	if (n < 3 || n > 4) return 0;
+	if (!hull_anim) {
+		if (hull_anim_failed) return 0;
+		hull_anim = calloc (HULL_ANIM_N, sizeof *hull_anim);
+		if (!hull_anim) { hull_anim_failed = 1; return 0; }
+	}
+	for (i = 0; i < n; i++)
+		for (k = 0; k < 3; k++) if (fabsf (w[i][k]) > big) big = fabsf (w[i][k]);
+	/* what the 68k's rounding moves a corner by: half a unit of its view
+	 * space (q model units), and the turn's 15 bits on the distance */
+	tol = (float) (16 + 4 * q);
+	if (tol < 1e-3f * big) tol = 1e-3f * big;
+	near = 0.25f * ext + tol;
+	h = hull_mix (key * 0x9e3779b1u ^ hull_mix (seed + n));
+	for (i = 0; i < HULL_ANIM_PROBE; i++) {
+		struct HullAnim *x = &hull_anim[(h + i) & (HULL_ANIM_N - 1)];
+		float cost = 0;
+		if (!x->used) { if (!spare || spare->used) spare = x; continue; }
+		if (x->frame == frame) continue;	/* that face is drawn already */
+		if (!spare || (spare->used && frame - x->frame > age)) {
+			spare = x;
+			age = frame - x->frame;
+		}
+		if (x->key != key || x->seed != seed || x->n != n) continue;
+		/* the face as it was last frame: its corners where they were,
+		 * or those that moved all moved by one step (an edge sliding,
+		 * a part moving); not a copy of another size or turned. A
+		 * step of more than a quarter of the face is its part's frame
+		 * slipping, taken only from the frame that drew it just now
+		 * (else it is another copy of the face, elsewhere). The best
+		 * is the face still or nearest, then a slip, then a change of
+		 * shape. */
+		{
+			float m[4][3];
+			int mv = 0;
+			for (k = 0; k < n; k++) {
+				m[k][0] = w[k][0] - x->last[k][0];
+				m[k][1] = w[k][1] - x->last[k][1];
+				m[k][2] = w[k][2] - x->last[k][2];
+				if (fabsf (m[k][0]) > tol || fabsf (m[k][1]) > tol || fabsf (m[k][2]) > tol)
+					mv |= 1 << k;
+			}
+			if (mv && hull_anim_mean ((const float (*)[3]) m, n, mv, c) > 2 * tol) {
+				/* or it changed shape by less than a fifth of its
+				 * size since last frame, or turned without changing
+				 * size (a part spinning), drawn by the same frame (a
+				 * copy at another size, a sign's smaller letter, is
+				 * neither) */
+				float s = hull_anim_mean ((const float (*)[3]) m, n, all, c);
+				if (x->a6 != a6 || frame - x->frame != 1) continue;
+				if (s > 0.2f * ext + 2 * tol && !hull_anim_same_size (w, x->last, n, 2 * tol + 0.01f * ext))
+					continue;
+				cost = 3 * near + s;
+			} else if (mv) {
+				cost = fabsf (c[0]) > fabsf (c[1]) ? fabsf (c[0]) : fabsf (c[1]);
+				if (fabsf (c[2]) > cost) cost = fabsf (c[2]);
+				if (cost > near) {
+					if (mv != all || x->a6 != a6 || frame - x->frame > 2) continue;
+					cost += near;
+				}
+			}
+		}
+		if (x->a6 == a6) cost -= 0.5f;		/* a tie goes to the same frame */
+		if (!e || cost < best) { e = x; best = cost; }
+	}
+	if (!e) {
+		if (!spare) return 0;
+		hull_anim_start (spare, key, seed, a6, n, (const float (*)[3]) w);
+		e = spare;
+	} else if (frame - e->frame > HULL_ANIM_GAP) {
+		hull_anim_start (e, key, seed, a6, n, (const float (*)[3]) w);
+	}
+	/* every corner moved by one c since last frame: the face moved as
+	 * a whole (its part's frame slipped under it, or the part moved),
+	 * and the tile goes with it */
+	{
+		float m[4][3];
+		int mv = 0;
+		for (i = 0; i < n; i++) {
+			for (k = 0; k < 3; k++) m[i][k] = w[i][k] - e->last[i][k];
+			if (fabsf (m[i][0]) > tol || fabsf (m[i][1]) > tol || fabsf (m[i][2]) > tol)
+				mv |= 1 << i;
+		}
+		if (mv == all && hull_anim_mean ((const float (*)[3]) m, n, all, c) <= 2 * tol)
+			for (k = 0; k < 3; k++) {
+				e->b[k] += c[k];
+				for (i = 0; i < n; i++) e->rest[i][k] += c[k];
+			}
+	}
+	for (i = 0; i < n; i++)
+		for (k = 0; k < 3; k++) D[i][k] = w[i][k] - e->rest[i][k];
+	/* the corners off rest: when they moved as one, the tile goes with
+	 * them (a door's edge sliding, a part moving); when they did not, the
+	 * face has changed shape and is drawn flat, until it has kept a
+	 * shape the tile follows for a while (a face that flickers from shape
+	 * to shape is not plated by turns) */
+	for (i = 0; i < n; i++)
+		if (fabsf (D[i][0]) > tol || fabsf (D[i][1]) > tol || fabsf (D[i][2]) > tol) S |= 1 << i;
+	t[0] = t[1] = t[2] = 0;
+	if (e->flat) e->flat--;
+	if (S) {
+		float lim = 4 * tol > 0.02f * ext ? 4 * tol : 0.02f * ext;
+		if (hull_anim_mean ((const float (*)[3]) D, n, S, t) > lim) {
+			e->flat = HULL_ANIM_CALM;
+			if (!(e->told & 2)) { e->told |= 2; r |= HULL_ANIM_TELL_FLAT; }
+		} else if (!(e->told & 1)) {
+			e->told |= 1;
+			r |= HULL_ANIM_TELL_MOVE;
+		}
+	}
+	memcpy (e->last, w, n * sizeof w[0]);
+	e->frame = frame;
+	e->a6 = a6;
+	if (e->flat) return r | HULL_ANIM_FLAT;
+	for (i = 0; i < n; i++)
+		for (k = 0; k < 3; k++) w[i][k] -= e->b[k] + t[k];
+	return r;
 }

@@ -64,6 +64,22 @@ and the reading of the model's frame). The art is in `art/hull/`.
      of sliding under them. Panels do not run on from a part across the
      object's faces around it. (Before, a part square to the object took
      the object's frame, so the plates stood still while the door moved.)
+   - **Faces moved by their vertices.** Some doors are not parts: the
+     hangar's bay doors (models 290, 294 and the bay's own 84) are one face
+     whose corners the model moves, the leading edge sliding while the rest
+     stands. `hull_anim_bind` in `hull.c` keeps, per face (model word, seed
+     and the face's address in the model, a6), its corners from the last
+     frame. Each frame it finds the corners that moved since the face was
+     first seen, and if they all moved by one step, it shifts the tile by
+     that step, so the plates ride on the moving edge. When every corner
+     moves together (the part's origin jumping, as when the closed door's
+     frame is moved), the tile follows the whole face and does not pop.
+     A face whose corners move apart (a spinning blade, a flickering beam
+     in the intro's station) has no one step and is drawn flat; it stays
+     flat for 16 frames after it last changed shape, so it does not flicker
+     between flat and plated. `wok` bit 2 in the context carries that flag
+     to `hull_paint`. Faces that do not move are not touched. The table
+     holds 8192 faces; a face unseen for 600 frames starts afresh.
 4. **Replace or keep flat.** `hull_paint5` decides, for each face:
    - **Lamps, windows and lit signs stay flat.** These are bright faces of
      nearly pure colour (the brightest channel above 191 and the darkest
@@ -145,6 +161,9 @@ and the reading of the model's frame). The art is in `art/hull/`.
     the game's, and its class or a note that it is not listed and is
     drawn flat
   - the 3D view's draw time averaged over 300 frames
+  - `hull: model M face S (a6 A) moves, tile bound to it` the first time a
+    face moved by its vertices is bound, and `... changes shape, drawn
+    flat` the first time one is drawn flat
 
 ## Classes
 
@@ -387,8 +406,13 @@ Known limits:
 - Only the station has a graze fade. A hangar wall seen edge on from the
   deck could still stripe.
 - A part's plates are its own, so they do not line up with the wall
-  around it. A face that moves by its vertices (not by a part's frame)
-  would still slide under its plates; none was found.
+  around it. A face moved by its vertices keeps its plates by matching its
+  corners frame to frame (above). The match is a heuristic: a new copy of
+  a face (same model, seed and address) that appears next to one just
+  drawn could borrow its offset for its first frame.
+- The binding of moving faces was checked from logged corner values (the
+  290 door's fixed edge stays at the same tile coordinate through the
+  slide and through the closed door's origin jump), not yet by eye.
 - The intro's ships fly inside its scene models, which are not listed, so
   they are flat.
 - The hyperspace and fade-in flashes were not captured with plating.
