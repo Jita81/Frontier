@@ -288,10 +288,36 @@ void Main_UnInit(void)
   SDL_Quit();
 }
 
-static Uint32 vbl_callback ()
+/* The VBL, 50 a second as on a PAL ST or Amiga.  The game's clock is counted
+ * in VBLs (its handler adds a fixed step per VBL at 1x), so 1x is real time
+ * only if 50 VBLs really arrive each second.  SDL's timer does not keep that
+ * rate: under sdl12-compat each callback is rescheduled from when it ran, so
+ * its lateness (several ms, more under load) adds to every period and the
+ * VBL ran at 30-40 a second.  So the callback keeps its own deadline on
+ * SDL_GetTicks' clock: it flags every VBL that is due (more than one if it
+ * ran late) and asks to run again at the next deadline.  A backlog longer than
+ * VBL_MAX_BACKLOG VBLs (5 s) means the host was stopped (sleep, a debugger): that
+ * gap is dropped, as if the machine had been switched off, and one VBL
+ * flagged.  Only this thread touches vbl_next after the timer starts. */
+#define VBL_MS			20
+#define VBL_MAX_BACKLOG		250
+static Uint32 vbl_next;
+
+static Uint32 vbl_callback (Uint32 interval, void *param)
 {
-	FlagException (0);
-	return 20;
+	Uint32 now = SDL_GetTicks (), due;
+
+	if ((Sint32) (now - vbl_next) >= 0) {
+		due = (now - vbl_next) / VBL_MS + 1;
+		if (due > VBL_MAX_BACKLOG) {
+			due = 1;
+			vbl_next = now;
+		}
+		vbl_next += due * VBL_MS;
+		while (due--) FlagException (0);
+	}
+	/* 1..VBL_MS ms; never 0, which would cancel the timer */
+	return vbl_next - now;
 }
 
 void sig_handler (int signum)
@@ -329,8 +355,10 @@ int main(int argc, char *argv[])
 
   oracle_install();             /* no-op unless an oracle flag was given */
 
-  if (!oracle_lockstep())
-    SDL_AddTimer (20, &vbl_callback, NULL);
+  if (!oracle_lockstep()) {
+    vbl_next = SDL_GetTicks() + VBL_MS;
+    SDL_AddTimer (VBL_MS, &vbl_callback, NULL);
+  }
   
   /* Run emulation */
   Main_UnPauseEmulation();
