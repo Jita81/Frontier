@@ -1294,7 +1294,7 @@ void CALLBACK vertexCallback(GLvoid *vertex, GLvoid *poly_data)
  * Nu_DrawComplexStart) instead of a malloc nothing ever freed. When the
  * pool runs out we return NULL, which makes GLU report
  * GLU_TESS_NEED_COMBINE_CALLBACK and drop the polygon. */
-#define MAX_COMBINE_VERTICES	1024
+#define MAX_COMBINE_VERTICES	4096
 static GLdouble combine_vertices[MAX_COMBINE_VERTICES][3];
 static int combine_vpos;
 
@@ -1315,7 +1315,10 @@ void CALLBACK combineCallback(GLdouble coords[3],
    vertex[2] = coords[2];
    *dataOut = vertex;
 }
-#define MAX_TESS_VERTICES	400
+/* Room for one complex shape. Curves and circles get more segments the
+ * bigger they are on screen (bezier_steps, oval_steps), so a shape that
+ * fills the view can use far more than the 10 per curve it used to. */
+#define MAX_TESS_VERTICES	4096
 static GLdouble tess_vertices[MAX_TESS_VERTICES][3];
 static int tess_vpos;
 
@@ -1625,6 +1628,39 @@ void Nu_ComplexBezier ()
 	znode_wrvertex (GetReg (REG_A2)+4);
 	znode_wrvertex (GetReg (REG_A3)+4);
 }
+/*
+ * Segments for one curve of a complex shape: 10 (as before) for a small
+ * curve, then one per 12 pixels of its control polygon on screen, at most
+ * BEZIER_STEPS_MAX. The intro's FRONTIER logo ring is two such curves a
+ * shape across most of the picture, and at a fixed 10 its ends showed
+ * corners 80-200 pixels apart. Only the GL renderer has the projection
+ * (tessProjMatrix, kept by Nu_DrawComplexStart: the ortho one is loaded
+ * by then); a curve reaching behind the near plane gets the maximum.
+ */
+#define BEZIER_STEPS_MAX	64
+static int bezier_steps_for (GLfloat cp[4][3])
+{
+	GLdouble w[4][3], len = 0.0;
+	int i, n;
+
+	if (use_renderer != R_GL) return BEZIER_STEPS;
+	for (i = 0; i < 4; i++) {
+		if (cp[i][2] > -(double) GL_NEAR_PLANE) return BEZIER_STEPS_MAX;
+		if (!gluProject (cp[i][0], cp[i][1], cp[i][2],
+				 tessModelMatrix, tessProjMatrix, tessViewport,
+				 &w[i][0], &w[i][1], &w[i][2]))
+			return BEZIER_STEPS_MAX;
+	}
+	for (i = 1; i < 4; i++) {
+		double dx = w[i][0] - w[i-1][0], dy = w[i][1] - w[i-1][1];
+		len += sqrt (dx*dx + dy*dy);
+	}
+	n = (int) (len / 12.0);
+	if (n <= BEZIER_STEPS) return BEZIER_STEPS;
+	if (n >= BEZIER_STEPS_MAX) return BEZIER_STEPS_MAX;
+	return n;
+}
+
 void Nu_DrawComplexBezier (void **data)
 {
 	int i, bezier_steps;
@@ -1637,12 +1673,7 @@ void Nu_DrawComplexBezier (void **data)
 	znode_rdvertexf (data, ctrlpoints[2]);
 	znode_rdvertexf (data, ctrlpoints[3]);
 	
-	/*float poo = MAX (abs (ctrlpoints[0][0]-ctrlpoints[3][0]),
-			 abs (ctrlpoints[0][1]-ctrlpoints[3][1]));
-	poo /= MIN (ctrlpoints[0][2], ctrlpoints[3][2]);
-	bezier_steps = MIN (6 - 20*poo, 16);*/
-	//printf ("%d ", bezier_steps);
-	bezier_steps = 10;
+	bezier_steps = bezier_steps_for (ctrlpoints);
 	
 	/* S-6: was an assert. The GL path is bounded in
 	 * push_contour_vertex; the wireframe one stores one vertex below */
@@ -3273,8 +3304,9 @@ void Nu_PutPlanet ()
 
 /*
  * Edges for a filled circle of eye-space radius size at depth z: 32 (as
- * before) up to about 80 pixels across the view, then one edge per 16
- * pixels of rim, at most 256. The intro's blue star fills the screen
+ * before) up to a radius of about 80 pixels, then one edge per 16 pixels
+ * of rim, at most 256. Circles are drawn outside complex shapes, so the
+ * projection loaded here is the perspective one. The intro's blue star fills the screen
  * (about 800 pixels radius at 1600 wide) and was a visible 32-gon.
  */
 static int circle_slices (double size, double z)
@@ -3441,8 +3473,10 @@ void Nu_PutOval ()
 
 /* Segments per circle: one per 16 pixels of rim, from 64 up to 180. The
  * orbit ring passes the camera wider than the picture, where a fixed
- * 64-gon showed its corners. Two circles a shape (the ring) stay inside
- * MAX_TESS_VERTICES. */
+ * 64-gon showed its corners. An oval is always drawn inside a complex
+ * shape, where Nu_DrawComplexStart has loaded an ortho projection: the
+ * perspective one is the copy it kept in tessProjMatrix (GL renderer;
+ * the wireframe one leaves the perspective loaded). */
 #define OVAL_STEPS_MIN	64
 #define OVAL_STEPS_MAX	180
 
@@ -3452,7 +3486,8 @@ static int oval_steps (const GLdouble c[3], double r)
 	double rpx, n;
 
 	if (-c[2] <= r) return OVAL_STEPS_MAX;	/* at or around the eye */
-	glGetDoublev (GL_PROJECTION_MATRIX, pm);
+	if (use_renderer == R_GL) pm[0] = tessProjMatrix[0];
+	else glGetDoublev (GL_PROJECTION_MATRIX, pm);
 	rpx = r / -c[2] * pm[0] * pic_w * 0.5;
 	n = rpx * 2.0 * M_PI / 16.0;
 	if (n <= OVAL_STEPS_MIN) return OVAL_STEPS_MIN;
@@ -3489,6 +3524,10 @@ void Nu_DrawComplexOval (void **data)
 		flush_contour ();
 		gluTessEndContour (tobj);
 		gluTessBeginContour (tobj);
+	} else if (use_renderer == R_GLWIRE) {
+		/* its own line loop, not joined to the outline before it */
+		glEnd ();
+		glBegin (GL_LINE_STRIP);
 	}
 	for (i = 0; i <= steps; i++) {
 		double a = 2.0 * M_PI * (i % steps) / steps;
@@ -3501,6 +3540,9 @@ void Nu_DrawComplexOval (void **data)
 		flush_contour ();
 		gluTessEndContour (tobj);
 		gluTessBeginContour (tobj);
+	} else if (use_renderer == R_GLWIRE) {
+		glEnd ();
+		glBegin (GL_LINE_STRIP);
 	}
 }
 
