@@ -14,6 +14,10 @@
 #include <signal.h>
 
 #include <SDL.h>
+#ifdef __APPLE__
+#include <pthread.h>
+#include <sys/qos.h>
+#endif
 
 #include "main.h"
 #include "audio.h"
@@ -274,50 +278,71 @@ void Main_Init(void)
 }
 
 
+/* The VBL, 50 a second as on a PAL ST or Amiga.  The game's clock is counted
+ * in VBLs (its handler adds a fixed step per VBL at 1x), so 1x is real time
+ * only if 50 VBLs really arrive each second.  SDL's timer cannot keep that
+ * rate: under sdl12-compat it fires on a coarse ~10 ms grid, so a callback
+ * asking for 20 ms runs every 25-35 ms and the VBL ran at 30-40 a second.
+ *
+ * So a thread of its own keeps the deadlines on SDL_GetTicks' clock, sleeping
+ * with SDL_Delay, and flags one VBL per deadline, within a few ms of it (on
+ * macOS at user-interactive QoS, so a busy machine does not starve it).  It
+ * never flags two at once: the game ends each frame by waiting for one VBL
+ * (L41bc4_LimitFrameRate), and two together let the frame after the wait take
+ * both steps of time and the next frame none, so that frame redraws nothing
+ * that tracks the time (the clock) and shows the other buffer's old picture,
+ * and motion jerks.  If it falls behind it catches up one VBL every VBL_GAP
+ * ms.  A backlog longer than VBL_MAX_BACKLOG VBLs (5 s) means the host was
+ * stopped (sleep, a debugger): that gap is dropped, as if the machine had been
+ * switched off.  Not started under the oracle, which steps VBLs itself. */
+#define VBL_MS			20
+#define VBL_GAP			5
+#define VBL_MAX_BACKLOG		250
+static SDL_Thread *vbl_thread;
+static volatile int vbl_quit;
+
+static int vbl_run (void *unused)
+{
+	Uint32 next = SDL_GetTicks () + VBL_MS;
+
+	(void) unused;
+#ifdef __APPLE__
+	pthread_set_qos_class_self_np (QOS_CLASS_USER_INTERACTIVE, 0);
+#endif
+	while (!vbl_quit) {
+		Uint32 now = SDL_GetTicks ();
+		Sint32 wait = (Sint32) (next - now);
+
+		if (wait > 0) {
+			SDL_Delay (wait);
+			continue;
+		}
+		if (-wait >= VBL_MS * VBL_MAX_BACKLOG)
+			next = now;
+		next += VBL_MS;
+		FlagException (0);
+		SDL_Delay (VBL_GAP);
+	}
+	return 0;
+}
+
+
 /*-----------------------------------------------------------------------*/
 /*
   Un-Initialise emulation
 */
 void Main_UnInit(void)
 {
+  if (vbl_thread) {
+    vbl_quit = 1;
+    SDL_WaitThread (vbl_thread, NULL);
+  }
   Keymap_UnInit();
   Audio_UnInit();
   Screen_UnInit();
 
   /* SDL uninit: */
   SDL_Quit();
-}
-
-/* The VBL, 50 a second as on a PAL ST or Amiga.  The game's clock is counted
- * in VBLs (its handler adds a fixed step per VBL at 1x), so 1x is real time
- * only if 50 VBLs really arrive each second.  SDL's timer does not keep that
- * rate: under sdl12-compat each callback is rescheduled from when it ran, so
- * its lateness (several ms, more under load) adds to every period and the
- * VBL ran at 30-40 a second.  So the callback keeps its own deadline on
- * SDL_GetTicks' clock: it flags every VBL that is due (more than one if it
- * ran late) and asks to run again at the next deadline.  A backlog longer than
- * VBL_MAX_BACKLOG VBLs (5 s) means the host was stopped (sleep, a debugger): that
- * gap is dropped, as if the machine had been switched off, and one VBL
- * flagged.  Only this thread touches vbl_next after the timer starts. */
-#define VBL_MS			20
-#define VBL_MAX_BACKLOG		250
-static Uint32 vbl_next;
-
-static Uint32 vbl_callback (Uint32 interval, void *param)
-{
-	Uint32 now = SDL_GetTicks (), due;
-
-	if ((Sint32) (now - vbl_next) >= 0) {
-		due = (now - vbl_next) / VBL_MS + 1;
-		if (due > VBL_MAX_BACKLOG) {
-			due = 1;
-			vbl_next = now;
-		}
-		vbl_next += due * VBL_MS;
-		while (due--) FlagException (0);
-	}
-	/* 1..VBL_MS ms; never 0, which would cancel the timer */
-	return vbl_next - now;
 }
 
 void sig_handler (int signum)
@@ -355,10 +380,8 @@ int main(int argc, char *argv[])
 
   oracle_install();             /* no-op unless an oracle flag was given */
 
-  if (!oracle_lockstep()) {
-    vbl_next = SDL_GetTicks() + VBL_MS;
-    SDL_AddTimer (VBL_MS, &vbl_callback, NULL);
-  }
+  if (!oracle_lockstep())
+    vbl_thread = SDL_CreateThread (vbl_run, NULL);
   
   /* Run emulation */
   Main_UnPauseEmulation();
