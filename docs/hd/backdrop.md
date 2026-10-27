@@ -284,6 +284,6 @@ turning ship.
   itself, with a shadow, so they look embossed on the flat page (for
   example the column headings on the F3 cargo page). Over a picture they
   stay readable, but as ordinary text in that colour, not embossed.
-- **Window shape.** The picture covers the window and is cropped to fit,
-  never stretched. On a window wider than 4:3 the game's own screen is
-  stretched as it always was; that is the renderer's existing behaviour.
+- **Window shape.** The picture covers the whole window, the black bars
+  beside a letterboxed screen included, and is cropped to fit, never
+  stretched. The game's own screen keeps its 4:3 shape inside it.
