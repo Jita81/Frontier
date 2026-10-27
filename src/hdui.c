@@ -431,6 +431,17 @@ static void take_out_more (const unsigned char *r, unsigned char *out, int x, in
 		}
 }
 
+/* Where the text layer painted a letter out in the page colour (the
+ * colour it found round it, near a box's square), the backdrop shows
+ * instead: on these pages the page colour is the backdrop's now */
+static void text_bg_out (const unsigned char *r, unsigned char *out)
+{
+	int o;
+
+	for (o = 0; o < CTRL_Y * ST_W; o++)
+		if (out[o] == BG && r[o] != BG) out[o] = 255;
+}
+
 static void find_buttons (const unsigned char *r)
 {
 	int x, y;
@@ -2016,7 +2027,7 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 	for (i = 0; i < n_runs && cash_lab; i++) {
 		struct hdtext_run *r = &runs[i];
 		if (r != cash_lab && (r->kind & HDT_K_NUMERIC) && r->x0 < 118 && r->y >= cash_lab->y + 8 &&
-		    r->y <= cash_lab->y + 12 && abs (r->ink1 - cash_lab->ink1) <= 3)
+		    r->y <= cash_lab->y + 12 && r->ink0 <= cash_lab->ink1 && r->ink1 >= cash_lab->ink0)
 			cash = r;
 	}
 	e = add (E_GLASS, L_BACK, 0.5f, 0.5f, inplace ? 120.5f : COL_X1, HEAD_Y1);
@@ -2064,8 +2075,14 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 		if (!ON_PAGE (r) || r->x0 >= 118 || r->role || r == cash || r == cash_lab || hide_bg (r)) continue;
 		if (r->y >= 134 && r->y <= 142)
 			style (r, HDT_SECTION, C_TEXT2);
-		else if (r->y > 142 && r->col == 13)
+		else if (r->y > 142 && r->col == 13) {
 			style (r, HDT_LABEL, C_TEXT2);
+			/* off the card's edge */
+			if (r->x0 <= 3 && !inplace) {
+				r->align = HDT_LEFT;
+				r->ax = 5;
+			}
+		}
 		else if (r->y > 142 && r->col == 12)
 			style (r, HDT_VALUE, C_TEXT);
 		else
@@ -2236,6 +2253,27 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 	if (!inplace) add_hot (118, 0, ST_W, foot ? FOOT_Y : CTRL_Y, 1, 1, 1);
 }
 
+/* A label and its value the game printed with nothing between them
+ * ("Name:value"): two runs, the value a little clear of the colon */
+static void split_colons (float right)
+{
+	int i, k, n;
+	char c[96];
+	unsigned char sp[96];
+
+	for (i = n_runs - 1; i >= 0; i--) {
+		const struct hdtext_run *r = &runs[i];
+		if (!ON_PAGE (r) || r->x0 >= right || r->y < 10 || !(r->kind & HDT_K_COLON)) continue;
+		n = hdtext_chars (r, c, sp, 96);
+		for (k = 1; k < n - 1; k++)
+			if (c[k] == ':') break;
+		if (k >= n - 1 || sp[k + 1] || !hdtext_split (i, k + 1)) continue;
+		n_runs = hdtext_runs (&runs);
+		runs[i + 1].align = HDT_LEFT;
+		runs[i + 1].ax = runs[i + 1].ink0 + 3;
+	}
+}
+
 /* The ship's status pages (F3): one glass sheet, the 3D view framed */
 static void layout_f3 (unsigned char *out)
 {
@@ -2250,6 +2288,7 @@ static void layout_f3 (unsigned char *out)
 		right = fr_ca[view][0] - 2.5f;
 		add (E_FRAME, L_OVER, fr_ca[view][0], fr_ca[view][1], fr_ca[view][2] + 1, fr_ca[view][3] + 1);
 	}
+	split_colons (right);
 	e = add (E_GLASS, L_BACK, 1, 0.5f, right, 166.5f);
 	e->flags = F_ALL;
 	e->a = 14;
@@ -2269,7 +2308,13 @@ static void layout_f3 (unsigned char *out)
 			}
 	for (i = 0; i < n_runs; i++) {
 		struct hdtext_run *r = &runs[i];
-		if (!ON_PAGE (r) || hide_bg (r)) continue;
+		if (!ON_PAGE (r)) continue;
+		if (r->col == BG && r->shadow && r->x0 < right) {
+			/* in the page colour, seen by its shadow alone: a column's heading */
+			style (r, HDT_SECTION, C_TEXT2);
+			continue;
+		}
+		if (hide_bg (r)) continue;
 		if (r->x0 >= right) {
 			if (r->y >= 132 && r->y <= 142) style (r, HDT_SECTION, C_TEXT2);
 			else if (r->kind & HDT_K_NUMERIC) style (r, HDT_VALUE, C_TEXT);
@@ -2497,6 +2542,7 @@ void hdui_frame (const unsigned char *raster, unsigned char *out,
 	}
 	for (i = 0; i < n_btn; i++)
 		if (btn[i].used) take_out (raster, out, &btn[i]);
+	if (page == P_STATION || page == P_F3 || page == P_PREFS) text_bg_out (raster, out);
 	page_bg = pal[BG];
 	key = page == P_NONE ? 0 : layout_key ();
 	if (key != page_key) {
