@@ -97,6 +97,9 @@ int hdtext_runs (struct hdtext_run **runs);
  * space comes before each; returns how many (at most max). */
 int hdtext_chars (const struct hdtext_run *r, char *c, unsigned char *sp, int max);
 
+/* Where the game drew run r's glyph k (ST x) */
+int hdtext_glyph_x (const struct hdtext_run *r, int k);
+
 /* Make run i two runs, before its glyph k: each keeps its place (left
  * aligned at its first ink) and the runs after it move up one.  Call
  * hdtext_runs again for the count.  Returns 0 when it cannot. */
