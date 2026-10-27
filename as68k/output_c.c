@@ -265,18 +265,18 @@ void c_end (const char *src_filename)
 	
 	cout ("handle_exception:\n");
 	cln ("for (i=0; i<32; i++) {");
-	cln ("	if (exceptions_pending & ((1<<i))) {");
+	/* the exceptions are flagged on other threads: host.h TakeException */
+	cln ("	if (TakeException (i)) {");
 	cln ("		jdest = exception_handlers[i];");
-	cln ("		if (!--exceptions_pending_nums[i]) {");
-	cln ("			exceptions_pending ^= 1<<i;");
-	cln ("		}");
 	/* save flags */
 	cln ("		bN=N; bnZ=nZ; bV=V; bC=C; bX=X;");
 	cln ("		goto jumptable;");
 	cln ("	}");
 	cln ("}");
-	cln ("/* shouldn't get here... */");
+	cln ("/* only a pending bit set after its count was taken gets here: no");
+	cln ("   exception after all, so carry on to the jump's destination */");
 	cln ("jdest = rdest;");
+	cln ("rdest = 0;");
 	cln ("goto jumptable;\n");
 	
 	cout ("end_:\treturn;\n}\n");
@@ -610,7 +610,7 @@ void c_jump_e (ea_t *ea)
 	if (gen_mode != GEN_CALL) return;
 	c_ea_get_address (ea, buf);
 	cln ("{");
-	cln ("if ((exceptions_pending) && (rdest == 0)) {");
+	cln ("if ((ExceptionsPending ()) && (rdest == 0)) {");
 	
 	if (((ea->mode == 7) && (ea->reg == 1)) ||
 	    ((ea->mode == 7) && (ea->reg == 2))) {
