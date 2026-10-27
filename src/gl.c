@@ -40,6 +40,7 @@ typedef void (*_GLUfuncptr)();
 #include "hdface.h"
 #include "hdui.h"
 #include "hdback.h"
+#include "fx.h"
 #include "bindings.h"
 /* MEM_SIZE, and the engine's variables by label address (__D<label>) */
 #include "../host.h"
@@ -228,6 +229,7 @@ static void change_vidmode ()
 	hdui_forget ();
 	controls_page_forget ();
 	hdback_forget ();
+	fx_forget ();
 	if (screen_tex) {
 		glDeleteTextures (1, &screen_tex);
 		screen_tex = 0;
@@ -969,8 +971,15 @@ enum NuPrimitive {
 	NU_2DLINE,
 	NU_SUBTREE,
 	NU_ATMOSPHERE,
+	NU_FX,		/* fx.c's tag for the primitive that follows */
 	NU_MAX
 };
+/* the next primitive belongs to a weapon, missile, explosion...: say which (fx.c) */
+static void put_fx (void)
+{
+	unsigned int tag[3];
+	if (use_renderer == R_GL && fx_tag_for (tag)) { znode_wrlong (NU_FX); znode_wrblock (tag, sizeof (tag)); }
+}
 
 static inline void end_node ()
 {
@@ -1135,6 +1144,7 @@ void Nu_InsertZNode ()
 
 void Nu_3DViewInit ()
 {
+	fx_frame_begin ();
 	queued_string_pos = 0;
 	//printf ("3dviewinit()\n");
 	znode_buf_pos = 0;
@@ -1342,6 +1352,7 @@ static unsigned int complex_st_start;
 static void put_complex_start_4real ()
 {
 	complex_data_start = obj_data_pos;
+	put_fx ();
 	znode_wrlong (NU_COMPLEX_START);
 	znode_wrcolor (complex_col_rgb444);
 	no_znodes_kthx = TRUE;
@@ -2031,6 +2042,7 @@ static int hull_use (double p[][3], int n, float st[][2])
 void Nu_PutTriangle ()
 {
 	if (use_renderer == R_OLD) return;
+	put_fx ();
 	znode_wrlong (NU_TRIANGLE);
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrvertex (GetReg (REG_A1)+4);
@@ -2046,6 +2058,7 @@ void Nu_DrawTriangle (void **data)
 	znode_rdvertexf (data, v2);
 	znode_rdvertexf (data, v3);
 	znode_rdcolorv (data, rgb);
+	if (fx_tri (v1, v2, v3, rgb)) return;
 	glColor3ub (rgb[0], rgb[1], rgb[2]);
 	if (use_renderer == R_GLWIRE) {
 		glBegin (GL_LINE_STRIP);
@@ -2073,6 +2086,7 @@ void Nu_DrawTriangle (void **data)
 void Nu_PutQuad ()
 {
 	if (use_renderer == R_OLD) return;
+	if (use_renderer == R_GL && fx_laser_quad ()) return;	/* a laser beam: fx draws it */
 	znode_wrlong (NU_QUAD);
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrvertex (GetReg (REG_A1)+4);
@@ -3298,6 +3312,7 @@ void Nu_PutPlanet ()
 void Nu_PutCircle ()
 {
 	if (use_renderer == R_OLD) return;
+	put_fx ();
 	znode_wrlong (NU_CIRCLE);
 	znode_wrlong (GetReg (REG_D2));
 	znode_wrvertex (GetReg (REG_A0)+4);
@@ -3320,6 +3335,7 @@ void Nu_DrawCircle (void **data)
 	//printf ("%x (%x)\n", GetReg (2), isize);
 	
 	size = -0.002*((short)dreg2)*v1[2];
+	if (fx_circle (v1, dreg2, r, g, b)) return;
 	
 	/* billboard: this is used for distant planets/stars rendered as a
 	 * flat shaded dot, which must always face the camera. */
@@ -3455,6 +3471,7 @@ void Nu_DrawOval (void **data)
 void Nu_PutBlob ()
 {
 	if (use_renderer == R_OLD) return;
+	put_fx ();
 	znode_wrlong (NU_BLOB);
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrlong (GetReg (REG_D0));
@@ -3471,6 +3488,7 @@ void Nu_DrawBlob (void **data)
 	split_rgb444i (znode_rdlong (data), &r, &g, &b);
 	rad = znode_rdlong (data) & 0xffff;
 	edges = rad+4;
+	if (fx_blob (v1, rad, r >> 24, g >> 24, b >> 24)) return;
 	
 	glColor3ui (r, g, b);
 	if (rad < 3) {
@@ -3522,6 +3540,7 @@ void Nu_DrawPoint (void **data)
 void Nu_PutLine ()
 {
 	if (use_renderer == R_OLD) return;
+	put_fx ();
 	znode_wrlong (NU_LINE);
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrvertex (GetReg (REG_A1)+4);
@@ -3535,6 +3554,7 @@ void Nu_DrawLine (void **data)
 	znode_rdvertex (data, v1);
 	znode_rdvertex (data, v2);
 	znode_rdcolor (data, &r, &g, &b);
+	if (fx_line (v1, v2, r, g, b)) return;
 	
 	glColor3ub (r, g, b);
 	glBegin (GL_LINES);
@@ -3615,7 +3635,8 @@ NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	&Nu_DrawPoint,
 	&Nu_Draw2DLine,
 	NULL,	/* NU_SUBTREE, see Nu_DrawPrimitive */
-	&Nu_DrawAtmosphere
+	&Nu_DrawAtmosphere,
+	&fx_draw_tag
 };
 
 /*
@@ -3640,6 +3661,7 @@ static void Nu_DrawPrimitive (void *data)
 			continue;
 		}
 		nu_drawfuncs[fnum] (&data);
+		if (fnum != NU_FX) fx_prim_done (fnum == NU_COMPLEX_START ? 1 : fnum == NU_COMPLEX_END ? 2 : 0);
 	}
 }
 
@@ -3725,6 +3747,7 @@ void Nu_DrawScreen ()
 		draw_3dview (znode_start);
 	}
 	hull_end ();
+	fx_frame_end ();	/* beams and flashes that outlive the frame they were put in */
 	//fprintf (stderr, "\n");
 
 #if PRIM_DEBUG

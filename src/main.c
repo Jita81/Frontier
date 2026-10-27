@@ -207,6 +207,7 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --pixel-art           Keep the game's own bitmaps (no HD stills).\n"
                "  --pixel-faces         Keep the game's own faces (no HD portraits).\n"
                "  --classic-ui          Keep the game's own flat 2D screens.\n"
+               "  --flat-fx             Flat lasers, missiles and explosions (no HD effects).\n"
               );
         exit(0);
       }
@@ -230,6 +231,8 @@ void Main_ReadParameters(int argc, char *argv[])
 		pixel_faces = 1;
 	  else if (!strcmp(argv[i], "--classic-ui"))
 		classic_ui = 1;
+	  else if (!strcmp(argv[i], "--flat-fx"))
+		flat_fx = 1;
       else if ( !strcmp(argv[i],"--size") )
       {
 	screen_h = 0;
