@@ -545,10 +545,12 @@ static unsigned char auto_align[MAX_RUNS];
 static float auto_ax[MAX_RUNS];
 static const unsigned char *runs_font;
 
+/* 0x7b and 0x7c are units, a letter with a superscript minus one: they
+ * belong to the run they follow and are typeset with it (unit_letter) */
 static int is_icon (int chr)
 {
 	int c = chr + 0x20;
-	return (c >= 0x7b && c <= 0x81) || c >= 0x8b;
+	return (c >= 0x7d && c <= 0x81) || c >= 0x8b;
 }
 
 static int cmp_run_x0 (const void *a, const void *b)
@@ -749,10 +751,11 @@ static const struct role role_tab[HDT_NROLES] = {
 };
 
 /* the characters the fonts are asked for: printable ASCII, the font's
- * accented letters and their capitals */
+ * accented letters and their capitals, and the minus sign */
 static const UniChar extra_chars[] = {
 	0xf6, 0xf1, 0xe8, 0xa9, 0xdc, 0xdf, 0xb0, 0xe4, 0xe7, 0xe9, 0xf9, 0xee, 0xe2, 0xf4, 0xea, 0xfb, 0xe0,
 	0xd6, 0xd1, 0xc8, 0xc4, 0xc7, 0xc9, 0xd9, 0xce, 0xc2, 0xd4, 0xca, 0xdb, 0xc0,
+	0x2212,		/* minus, for a unit's superscript */
 };
 #define N_ASCII		94	/* 0x21..0x7e */
 #define NCH		(N_ASCII + (int) (sizeof (extra_chars) / sizeof (extra_chars[0])))
@@ -1041,6 +1044,30 @@ static struct atlas *atlas_get (int f, int key)
 /* the size the last frame was drawn at, framebuffer pixels to an ST pixel */
 static float last_sx = 5, last_sy = 6;
 
+/* The superscript of a unit (per hour, per second): a minus sign and a
+ * one at SUP of the run's size, their baseline SUP_RISE cap heights up */
+#define SUP_MINUS	0xe000
+#define SUP_ONE		0xe001
+#define SUP		0.62f
+#define SUP_RISE	0.52f
+
+static UniChar unit_letter (int chr)
+{
+	int c = chr + 0x20;
+	return c == 0x7b ? 'h' : c == 0x7c ? 's' : 0;
+}
+
+/* the slot a character is set from, and its size */
+static int set_slot (UniChar u, float *z)
+{
+	*z = 1;
+	if (u == SUP_MINUS || u == SUP_ONE) {
+		*z = SUP;
+		return slot_of (u == SUP_MINUS ? 0x2212 : '1');
+	}
+	return slot_of (u);
+}
+
 /* A run as the characters to set: the game's glyphs as letters, a word
  * space where it left a gap.  Returns how many; src is the glyph each
  * came from (-1 for a space). */
@@ -1051,14 +1078,24 @@ static int run_chars (const struct hdtext_run *r, int upper, UniChar *u, short *
 	int space = font && font[9] > 0 ? font[9] : 4;
 	int k, n = 0;
 
-	for (k = r->first; k < r->first + r->n && n < MAX_CHARS - 2; k++) {
-		UniChar c = letter (shown[k].chr);
+	for (k = r->first; k < r->first + r->n && n < MAX_CHARS - 4; k++) {
+		UniChar c = letter (shown[k].chr), unit = unit_letter (shown[k].chr);
 		if (k > r->first && font) {
 			int gap = shown[k].x - (shown[k - 1].x + font[shown[k - 1].chr * 10 + 9]);
 			if (gap >= space - 1 && gap > 1) {
 				u[n] = ' ';
 				src[n++] = -1;
 			}
+		}
+		if (unit) {
+			/* a unit keeps its small letter, even in capitals */
+			u[n] = unit;
+			src[n++] = k;
+			u[n] = SUP_MINUS;
+			src[n++] = k;
+			u[n] = SUP_ONE;
+			src[n++] = k;
+			continue;
 		}
 		if (!c) continue;
 		u[n] = upper ? upper_of (c) : c;
@@ -1083,24 +1120,24 @@ static float run_width (const struct face *fc, const struct role *ro, const UniC
 
 	*lsb = 0;
 	for (i = 0; i < n; i++) {
-		int s = slot_of (u[i]);
-		float adv, off = 0;
+		float z, adv, off = 0;
+		int s = set_slot (u[i], &z);
 		if (u[i] == ' ' || s < 0 || !fc->has[s]) {
 			pen += fc->space * k + ro->track * cap;
 			continue;
 		}
 		adv = fc->adv[s];
 		/* a tabular digit is centred in the widest digit's advance */
-		if (ro->tabular && u[i] >= '0' && u[i] <= '9') {
+		if (ro->tabular && z == 1 && u[i] >= '0' && u[i] <= '9') {
 			off = (fc->digit - adv) / 2;
 			adv = fc->digit;
 		}
 		if (first) {
-			*lsb = pen + (off + fc->lsb[s]) * k;
+			*lsb = pen + (off + fc->lsb[s]) * k * z;
 			first = 0;
 		}
-		right = pen + (off + fc->rink[s]) * k;
-		pen += adv * k + ro->track * cap;
+		right = pen + (off + fc->rink[s]) * k * z;
+		pen += (adv * k + ro->track * cap) * z;
 	}
 	return right - *lsb;
 }
@@ -1160,7 +1197,7 @@ static void place_run (int i, float sx, float sy, const unsigned int *pal, const
 	int rl = resolve_role (r), align = r->align ? r->align : auto_align[i];
 	const struct role *ro = &role_tab[rl];
 	struct face *fc = face_load (ro->face);
-	struct atlas *a;
+	struct atlas *a, *sup = NULL;
 	UniChar u[MAX_CHARS];
 	short src[MAX_CHARS];
 	float cap, w, lsb, avail, ax, left, pen, Y, sq = 1, k, alpha = r->alpha > 0 ? r->alpha : 1;
@@ -1217,30 +1254,37 @@ static void place_run (int i, float sx, float sy, const unsigned int *pal, const
 	k = cap / 100.0f;
 	pen = left - lsb * sq;
 	for (c = 0; c < n && n_placed < MAX_PLACED; c++) {
-		int s = slot_of (u[c]);
 		struct placed *p;
-		float adv, off = 0;
-		if (u[c] == ' ' || s < 0 || !fc->has[s] || !a->g[s].w) {
+		struct atlas *ga = a;
+		float z, adv, off = 0, rise = 0;
+		int s = set_slot (u[c], &z);
+		if (z != 1) {
+			/* a superscript, from the atlas at its own size */
+			if (!sup) sup = atlas_get (ro->face, (int) (cap * z * 4 + 0.5f));
+			ga = sup;
+			rise = floorf (SUP_RISE * cap + 0.5f);
+		}
+		if (u[c] == ' ' || s < 0 || !fc->has[s] || !ga || !ga->g[s].w) {
 			pen += (fc->space * k + ro->track * cap) * sq;
 			continue;
 		}
 		adv = fc->adv[s];
-		if (ro->tabular && u[c] >= '0' && u[c] <= '9') {
+		if (ro->tabular && z == 1 && u[c] >= '0' && u[c] <= '9') {
 			off = (fc->digit - adv) / 2 * k;
 			adv = fc->digit;
 		}
 		p = &placed[n_placed++];
-		p->a = a;
+		p->a = ga;
 		p->slot = s;
-		p->X = floorf (pen + off * sq + 0.5f) + a->g[s].left * sq;
-		p->Y = Y - a->g[s].top;
-		p->w = a->g[s].w * sq;
+		p->X = floorf (pen + off * sq + 0.5f) + ga->g[s].left * sq;
+		p->Y = Y - ga->g[s].top - rise;
+		p->w = ga->g[s].w * sq;
 		p->rgb = rgb;
 		p->alpha = alpha;
 		p->shadow = ro->shadow * alpha;
 		p->drop = floorf (ro->drop * cap + 0.5f);
 		if (p->drop < 1) p->drop = 1;
-		pen += (adv * k + ro->track * cap) * sq;
+		pen += (adv * k + ro->track * cap) * z * sq;
 	}
 }
 
