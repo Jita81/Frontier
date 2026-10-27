@@ -196,7 +196,15 @@ land as before.
   show as `unknown` under `FE2_HD_DEBUG=1`.
 - List keys were seen only in their normal state. A pressed or other variant would show
   as `unknown` under `FE2_HD_DEBUG=1` until it is added.
-- A review run saw the host's clock run about 10^4 times too fast after F3 and then F4
-  while docked. That is in the host's timing, not in this layer, and belongs to the
-  owner of that seam.
+- A review run saw the game clock run thousands of times too fast while the time key
+  showed 1x. This is not this layer:
+  - The same build without the layer did it just as often (4 of 4 runs). So did
+    `--pixel-art` (2 of 2).
+  - It started at random, 9 to 226 s into a run, sometimes before any key was pressed.
+  - The cause is in the host. The 20 ms VBL timer thread and the 68000's exception
+    handler both update `exceptions_pending_nums` with no lock (`host.c`
+    `FlagException`, and the handler `as68k/output_c.c` generates). The count can go
+    below zero; the pending bit then never clears, and the VBL handler runs on every
+    check.
+  - The fix belongs to the host's timing code, not this layer.
 - macOS only (CoreGraphics).
