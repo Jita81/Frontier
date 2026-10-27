@@ -64,6 +64,7 @@ typedef void (*press_st_key_fn)(unsigned char scancode, int press);
 static press_st_key_fn g_press;
 static unsigned char  *g_input;
 static int            *g_screen_w, *g_screen_h;
+static int            *g_view[4];       /* view_x, view_y, view_w, view_h (src/screen.h) */
 static unsigned short *g_shortcut_key;  /* &ShortCutKey.Key (src/shortcut.h) */
 
 /* ---- logging ------------------------------------------------------------ */
@@ -602,10 +603,14 @@ static void *driver_main(void *arg)
 			break;
 		}
 		case OP_MOUSE: {
-			int w = *g_screen_w, h = *g_screen_h;
-			/* Call_GetMouseInput reports 320*abs_x/screen_w: invert it,
-			 * rounding up so that integer division gives back x. */
-			action a = { ACT_MOUSE, (s->a * w + 319) / 320, (s->b * h + 199) / 200, {0} };
+			int x0 = 0, y0 = 0, w = *g_screen_w, h = *g_screen_h;
+			/* Call_GetMouseInput reports 320*(abs_x-view_x)/view_w
+			 * (320*abs_x/screen_w with no view): invert it, rounding up
+			 * so that integer division gives back x. */
+			if (g_view[3] && *g_view[2] > 0 && *g_view[3] > 0) {
+				x0 = *g_view[0]; y0 = *g_view[1]; w = *g_view[2]; h = *g_view[3];
+			}
+			action a = { ACT_MOUSE, x0 + (s->a * w + 319) / 320, y0 + (s->b * h + 199) / 200, {0} };
 			post(&a);
 			dlog("mouse ST (%d,%d) = host (%d,%d) for screen %dx%d", s->a, s->b, a.a, a.b, w, h);
 			break;
@@ -690,6 +695,13 @@ __attribute__((constructor)) static void drive_init(void)
 	g_input = need("input");
 	g_screen_w = need("screen_w");
 	g_screen_h = need("screen_h");
+	{
+		/* optional: games before the 4:3 picture rect have none */
+		static const char *vn[4] = { "view_x", "view_y", "view_w", "view_h" };
+		int k;
+		for (k = 0; k < 4; k++) g_view[k] = dlsym(RTLD_DEFAULT, vn[k]);
+		if (!g_view[0] || !g_view[1] || !g_view[2]) g_view[3] = NULL;
+	}
 	g_shortcut_key = dlsym(RTLD_DEFAULT, "ShortCutKey");   /* optional: log only */
 	parse_script(script);
 	if (rq && ak) {
