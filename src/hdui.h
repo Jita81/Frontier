@@ -62,4 +62,8 @@ void hdui_mouse (short *ax, short *ay, int buttons);
 /* The GL context is going away: drop this layer's textures. */
 void hdui_forget (void);
 
+/* From gl.c: the game's 4:3 picture in the framebuffer, in pixels from
+ * the bottom left; the whole window unless it is letterboxed. */
+void gl_picture_rect (int *x, int *y, int *w, int *h);
+
 #endif /* _HDUI_H */

@@ -552,23 +552,21 @@ static int find_blob (const unsigned char *out, int x0, int y0, int x1, int y1, 
 /* ---------------------------------------------------------------- */
 /* Drawing: framebuffer pixels, y down */
 
-static int fbw = 1600, fbh = 1200;	/* the framebuffer */
+static int fbx, fby;	/* the picture's bottom-left corner in the framebuffer */
+static int fbw = 1600, fbh = 1200;	/* the picture: the game's 4:3 screen, no letterbox bars */
 static float sx = 5, sy = 6, uu = 1;	/* pixels per ST pixel; the design unit (a pixel at 1200 high) */
 static unsigned int frame_no;
 
 static float PX (float x) { return floorf (x * sx + 0.5f); }
 static float PY (float y) { return floorf (y * sy + 0.5f); }
 
-/* Set up to draw in framebuffer pixels over the whole window, whatever
+/* Set up to draw in framebuffer pixels over the game's picture (the
+ * whole window, or the 4:3 part of it between letterbox bars), whatever
  * viewport and matrices the caller has; end_2d puts it all back. */
 static void begin_2d (void)
 {
-	GLint vp[4];
-
-	glGetIntegerv (GL_VIEWPORT, vp);
-	fbw = vp[2];
-	fbh = vp[1] + vp[3];
-	if (fbw < 32 || fbh < 32) fbw = 1600, fbh = 1200;
+	gl_picture_rect (&fbx, &fby, &fbw, &fbh);
+	if (fbw < 32 || fbh < 32) fbx = fby = 0, fbw = 1600, fbh = 1200;
 	sx = fbw / (float) ST_W;
 	sy = fbh / (float) ST_H;
 	uu = fbh / 1200.0f;
@@ -576,7 +574,7 @@ static void begin_2d (void)
 	glPushAttrib (GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_VIEWPORT_BIT | GL_TEXTURE_BIT |
 		      GL_CURRENT_BIT | GL_DEPTH_BUFFER_BIT | GL_TRANSFORM_BIT | GL_POLYGON_BIT |
 		      GL_SCISSOR_BIT);
-	glViewport (0, 0, fbw, fbh);
+	glViewport (fbx, fby, fbw, fbh);
 	glMatrixMode (GL_PROJECTION);
 	glPushMatrix ();
 	glLoadIdentity ();
@@ -592,7 +590,7 @@ static void begin_2d (void)
 	glDisable (GL_FOG);
 	/* never over the control panel's rows */
 	glEnable (GL_SCISSOR_TEST);
-	glScissor (0, fbh - (int) PY (CTRL_Y), fbw, (int) PY (CTRL_Y));
+	glScissor (fbx, fby + fbh - (int) PY (CTRL_Y), fbw, (int) PY (CTRL_Y));
 	glPolygonMode (GL_FRONT_AND_BACK, GL_FILL);
 	glDisable (GL_TEXTURE_2D);
 	glEnable (GL_BLEND);

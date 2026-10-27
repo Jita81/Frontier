@@ -156,6 +156,14 @@ static void set_picture_rect ()
 	view_h = pic_h * screen_h / fb_h;
 }
 
+void gl_picture_rect (int *x, int *y, int *w, int *h)
+{
+	*x = pic_x;
+	*y = pic_y;
+	*w = pic_w;
+	*h = pic_h;
+}
+
 /* Point sizes were chosen for a 640x480 window: keep them the same share
  * of the view at any picture size. */
 static float px_scale (void)

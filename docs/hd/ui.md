@@ -171,6 +171,10 @@ instead.
 3. `hdui_draw_under`, then the screen texture.
 4. `hdtext_draw`, then `hdui_draw_over`.
 
+The layer draws in the game's 4:3 picture (`gl_picture_rect`), not the
+whole window, so on a wider window its panels sit between the letterbox
+bars on the same pixels as the game's screen and the HD text.
+
 ### The backdrop under the glass
 
 When a docked picture is up (`hdback_active`, see `docs/hd/backdrops.md`)
