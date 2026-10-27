@@ -39,6 +39,7 @@ typedef void (*_GLUfuncptr)();
 #include "hdstill.h"
 #include "hdface.h"
 #include "hdui.h"
+#include "hdback.h"
 /* MEM_SIZE, and the engine's variables by label address (__D<label>) */
 #include "../host.h"
 #include "../fixups.h"
@@ -155,6 +156,14 @@ static void set_picture_rect ()
 	view_h = pic_h * screen_h / fb_h;
 }
 
+void gl_picture_rect (int *x, int *y, int *w, int *h)
+{
+	*x = pic_x;
+	*y = pic_y;
+	*w = pic_w;
+	*h = pic_h;
+}
+
 /* Point sizes were chosen for a 640x480 window: keep them the same share
  * of the view at any picture size. */
 static float px_scale (void)
@@ -216,6 +225,7 @@ static void change_vidmode ()
 	hdstill_forget ();
 	hdface_forget ();
 	hdui_forget ();
+	hdback_forget ();
 	if (screen_tex) {
 		glDeleteTextures (1, &screen_tex);
 		screen_tex = 0;
@@ -615,6 +625,7 @@ static void draw_control_panel ()
 		hdui_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
 		hdstill_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
 		hdface_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
+		hdback_frame (VideoRaster, hd_screen);
 		scr = hd_screen;
 	}
 	
@@ -3526,6 +3537,7 @@ void Nu_GLClearArea ()
 	y1 = GetReg (1)&0xffff;
 	x2 = GetReg (2)&0xffff;
 	y2 = GetReg (3)&0xffff;
+	hdui_clear_area (x1, y1, x2, y2);
 	
 	push_ortho ();
 	set_ctrl_viewport ();
@@ -3727,7 +3739,10 @@ void Nu_DrawScreen ()
 	} else {
 		glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	}
+	if (use_renderer == R_GL) hdback_draw (fb_w, fb_h);
 	glLoadIdentity ();
 	
 	set_main_viewport ();
+	/* a 2D page's backdrop, under everything the next frame draws */
+	hdui_backdrop (MainRGBPalette, fe2_bgcol);
 }
