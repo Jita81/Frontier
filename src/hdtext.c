@@ -557,6 +557,47 @@ static int cmp_run_x0 (const void *a, const void *b)
 	return p->x0 != q->x0 ? p->x0 - q->x0 : p->y - q->y;
 }
 
+/* run r is glyphs i..j-1 of the frame's list: what it is and holds */
+static void fill_run (struct hdtext_run *r, const unsigned char *font, int i, int j)
+{
+	int k, lo, hi, letters = 0, upper = 0, lower = 0, digits = 0, numeric = 0;
+	unsigned int h = 2166136261u;
+
+	memset (r, 0, sizeof (*r));
+	r->x0 = shown[i].x;
+	r->x1 = shown[j - 1].x + font[shown[j - 1].chr * 10 + 9];
+	r->y = shown[i].y;
+	ink_cols (font + shown[i].chr * 10, &lo, &hi);
+	r->ink0 = shown[i].x + (hi >= 0 ? lo : 0);
+	ink_cols (font + shown[j - 1].chr * 10, &lo, &hi);
+	r->ink1 = shown[j - 1].x + (hi >= 0 ? hi + 1 : 0);
+	r->first = i;
+	r->n = j - i;
+	r->col = shown[i].col;
+	r->shadow = shown[i].shadow;
+	r->chr0 = shown[i].chr;
+	for (k = i; k < j; k++) {
+		int c = shown[k].chr + 0x20;
+		if (c >= '0' && c <= '9') digits++;
+		else if (c >= 'A' && c <= 'Z') upper++;
+		else if (c >= 'a' && c <= 'z') lower++;
+		else if (c == '$' || c == '.' || c == ',' || c == '-' || c == '%' || c == '+' || c == ':' || c == '/')
+			numeric++;
+		if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) {
+			h = (h ^ (unsigned char) (c >= 'A' && c <= 'Z' ? c + 32 : c)) * 16777619u;
+			letters++;
+		}
+	}
+	r->hash = h;
+	r->letters = letters;
+	if (digits) r->kind |= HDT_K_DIGIT;
+	if (upper + lower) r->kind |= HDT_K_LETTER;
+	if (digits && upper + lower <= 2 && digits >= 2 * (upper + lower)) r->kind |= HDT_K_NUMERIC;
+	if (upper >= 2 && !lower) r->kind |= HDT_K_CAPS;
+	if (shown[j - 1].chr + 0x20 == ':') r->kind |= HDT_K_COLON;
+	if (is_icon (shown[i].chr)) r->kind |= HDT_K_ICON;
+}
+
 /* Glyphs on one line in one colour, each starting where the one before
  * ended or a word space on, are a run; an icon is a run of its own. */
 static void build_runs (const unsigned char *font)
@@ -569,10 +610,6 @@ static void build_runs (const unsigned char *font)
 	n_runs = 0;
 	qsort (shown, n_shown, sizeof (shown[0]), cmp_shown);
 	for (i = 0; i < n_shown && n_runs < MAX_RUNS; i = j) {
-		struct hdtext_run *r = &runs[n_runs];
-		int lo, hi, letters = 0, upper = 0, lower = 0, digits = 0, numeric = 0;
-		unsigned int h = 2166136261u;
-
 		j = i + 1;
 		if (!is_icon (shown[i].chr))
 			while (j < n_shown && shown[j].y == shown[i].y && shown[j].col == shown[i].col &&
@@ -580,41 +617,9 @@ static void build_runs (const unsigned char *font)
 			       shown[j].x >= shown[j - 1].x + font[shown[j - 1].chr * 10 + 9] &&
 			       shown[j].x <= shown[j - 1].x + font[shown[j - 1].chr * 10 + 9] + space + 1)
 				j++;
-		memset (r, 0, sizeof (*r));
-		r->x0 = shown[i].x;
-		r->x1 = shown[j - 1].x + font[shown[j - 1].chr * 10 + 9];
-		r->y = shown[i].y;
-		ink_cols (font + shown[i].chr * 10, &lo, &hi);
-		r->ink0 = shown[i].x + (hi >= 0 ? lo : 0);
-		ink_cols (font + shown[j - 1].chr * 10, &lo, &hi);
-		r->ink1 = shown[j - 1].x + (hi >= 0 ? hi + 1 : 0);
-		r->first = i;
-		r->n = j - i;
-		r->col = shown[i].col;
-		r->shadow = shown[i].shadow;
-		r->chr0 = shown[i].chr;
-		for (k = i; k < j; k++) {
-			int c = shown[k].chr + 0x20;
-			if (c >= '0' && c <= '9') digits++;
-			else if (c >= 'A' && c <= 'Z') upper++;
-			else if (c >= 'a' && c <= 'z') lower++;
-			else if (c == '$' || c == '.' || c == ',' || c == '-' || c == '%' || c == '+' || c == ':' || c == '/')
-				numeric++;
-			if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) {
-				h = (h ^ (unsigned char) (c >= 'A' && c <= 'Z' ? c + 32 : c)) * 16777619u;
-				letters++;
-			}
-		}
-		r->hash = h;
-		r->letters = letters;
-		if (digits) r->kind |= HDT_K_DIGIT;
-		if (upper + lower) r->kind |= HDT_K_LETTER;
-		if (digits && upper + lower <= 2 && digits >= 2 * (upper + lower)) r->kind |= HDT_K_NUMERIC;
-		if (upper >= 2 && !lower) r->kind |= HDT_K_CAPS;
-		if (shown[j - 1].chr + 0x20 == ':') r->kind |= HDT_K_COLON;
-		if (is_icon (shown[i].chr)) r->kind |= HDT_K_ICON;
+		fill_run (&runs[n_runs], font, i, j);
 		auto_align[n_runs] = HDT_LEFT;
-		auto_ax[n_runs] = r->ink0;
+		auto_ax[n_runs] = runs[n_runs].ink0;
 		n_runs++;
 	}
 
@@ -655,6 +660,45 @@ int hdtext_runs (struct hdtext_run **r)
 {
 	*r = runs;
 	return n_runs;
+}
+
+int hdtext_chars (const struct hdtext_run *r, char *c, unsigned char *sp, int max)
+{
+	const unsigned char *font = runs_font;
+	int space = font && font[9] > 0 ? font[9] : 4;
+	int k, n = 0;
+
+	for (k = r->first; k < r->first + r->n && n < max; k++, n++) {
+		int ch = shown[k].chr + 0x20;
+		c[n] = ch > 0x20 && ch < 0x7f ? ch : '?';
+		sp[n] = 0;
+		if (k > r->first && font) {
+			int gap = shown[k].x - (shown[k - 1].x + font[shown[k - 1].chr * 10 + 9]);
+			sp[n] = gap >= space - 1 && gap > 1;
+		}
+	}
+	return n;
+}
+
+int hdtext_split (int i, int k)
+{
+	int first, n, tail;
+
+	if (i < 0 || i >= n_runs || n_runs >= MAX_RUNS || !runs_font) return 0;
+	first = runs[i].first;
+	n = runs[i].n;
+	if (k < 1 || k >= n) return 0;
+	tail = n_runs - i - 1;
+	memmove (&runs[i + 2], &runs[i + 1], tail * sizeof (runs[0]));
+	memmove (&auto_align[i + 2], &auto_align[i + 1], tail * sizeof (auto_align[0]));
+	memmove (&auto_ax[i + 2], &auto_ax[i + 1], tail * sizeof (auto_ax[0]));
+	n_runs++;
+	fill_run (&runs[i], runs_font, first, first + k);
+	fill_run (&runs[i + 1], runs_font, first + k, first + n);
+	auto_align[i] = auto_align[i + 1] = HDT_LEFT;
+	auto_ax[i] = runs[i].ink0;
+	auto_ax[i + 1] = runs[i + 1].ink0;
+	return 1;
 }
 
 /* ---------------------------------------------------------------- */
@@ -1125,6 +1169,7 @@ static void place_run (int i, float sx, float sy, const unsigned int *pal, const
 		if (r->align == auto_align[i]) ax = auto_ax[i];
 	} else
 		ax = auto_ax[i];
+	if (r->ax > 0) ax = r->ax;
 	ax += r->dx;
 	if (r->maxw > 0)
 		avail = r->maxw;

@@ -37,6 +37,22 @@ void hdui_draw_under (const unsigned int *pal, const unsigned int *ctrl_pal);
  * the colour white. */
 void hdui_draw_over (const unsigned int *pal, const unsigned int *ctrl_pal);
 
+/* Just after the frame's glClear (the page colour): the dark base and the
+ * glass panels of the page the last hdui_frame recognised, so a photo
+ * backdrop another layer draws over the base shows through the glass. */
+void hdui_backdrop (const unsigned int *pal, int bgcol);
+
+/* The game cleared the ST area (x1, y1)-(x2, y2) for a 3D viewer this
+ * frame: the next hdui_frame leaves it alone and frames it. */
+void hdui_clear_area (int x1, int y1, int x2, int y2);
+
+/* The pointer, in ST pixels, as input.c is about to give it to the game,
+ * and the buttons held (2: the left one).  While the left button is held
+ * on a control this layer moved, *ax and *ay are changed to a point inside
+ * that control's original click region; otherwise they are left alone.
+ * Never called by an oracle replay (it writes the tape's values itself). */
+void hdui_mouse (short *ax, short *ay, int buttons);
+
 /* The GL context is going away: drop this layer's textures. */
 void hdui_forget (void);
 

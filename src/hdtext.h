@@ -82,6 +82,7 @@ struct hdtext_run {
 	unsigned char hide;	/* not drawn (hdui draws something in its place) */
 	unsigned char upper;	/* set in capitals */
 	float dx, dy;		/* move, ST pixels */
+	float ax;		/* anchored here (ST x) whatever the align; 0: by its align */
 	float maxw;		/* the most width it may take, ST pixels; 0: to the next run */
 	float scale;		/* of the role's size; 0: 1 */
 	unsigned int rgb;	/* 0xff000000 | 0xBBGGRR: drawn in this colour; 0: the game's */
@@ -91,6 +92,15 @@ struct hdtext_run {
 /* After hdtext_frame: the runs it found, top to bottom and left to right
  * on each line, for hdui to style.  Valid until the next hdtext_frame. */
 int hdtext_runs (struct hdtext_run **runs);
+
+/* Run r's glyphs as ASCII ('?' for anything else), and whether a word
+ * space comes before each; returns how many (at most max). */
+int hdtext_chars (const struct hdtext_run *r, char *c, unsigned char *sp, int max);
+
+/* Make run i two runs, before its glyph k: each keeps its place (left
+ * aligned at its first ink) and the runs after it move up one.  Call
+ * hdtext_runs again for the count.  Returns 0 when it cannot. */
+int hdtext_split (int i, int k);
 
 /* A run's width set in its role (and scale), ST pixels, at the size the
  * last frame was drawn (1600x1200 before the first) */
