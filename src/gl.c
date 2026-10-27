@@ -40,6 +40,7 @@ typedef void (*_GLUfuncptr)();
 #include "hdface.h"
 #include "hdui.h"
 #include "hdback.h"
+#include "procfx.h"
 /* MEM_SIZE, and the engine's variables by label address (__D<label>) */
 #include "../host.h"
 #include "../fixups.h"
@@ -966,6 +967,7 @@ enum NuPrimitive {
 	NU_2DLINE,
 	NU_SUBTREE,
 	NU_ATMOSPHERE,
+	NU_SKYBAND,
 	NU_MAX
 };
 
@@ -1332,9 +1334,26 @@ static bool complex_aborted;
  * Nu_ComplexStart), 0 if there is no shape */
 static unsigned int complex_st_start;
 
+/* procfx sky band: set by Nu_ComplexStart for the background object */
+static int complex_sky;
+static float complex_sky_m[9];
+/* and on the draw side: the next complex polygon is the Milky Way */
+static int sky_pending, sky_active;
+static float sky_m[9];
+
 static void put_complex_start_4real ()
 {
 	complex_data_start = obj_data_pos;
+	if (complex_sky) {
+		/* inside the shape's data, so an abort forgets it too */
+		int i;
+		znode_wrlong (NU_SKYBAND);
+		for (i = 0; i < 9; i++) {
+			int w;
+			memcpy (&w, &complex_sky_m[i], 4);
+			znode_wrlong (w);
+		}
+	}
 	znode_wrlong (NU_COMPLEX_START);
 	znode_wrcolor (complex_col_rgb444);
 	no_znodes_kthx = TRUE;
@@ -1435,7 +1454,7 @@ static int clip_contour_near (GLdouble in[][3], int n, GLdouble out[][3], int ma
 static void flush_contour ()
 {
 	static GLdouble clipped[MAX_TESS_VERTICES+1][3];
-	int n, i;
+	int n, i, first = tess_vpos;
 
 	n = clip_contour_near (contour_v, contour_n, clipped, MAX_TESS_VERTICES+1);
 	contour_n = 0;
@@ -1455,6 +1474,7 @@ static void flush_contour ()
 		tess_vpos++;
 		gluTessVertex (tobj, d, d);
 	}
+	if (sky_active) procfx_sky_feather (tess_vertices + first, tess_vpos - first);
 }
 
 void Nu_ComplexSNext ()
@@ -1493,7 +1513,18 @@ void Nu_ComplexStart ()
 	complex_aborted = FALSE;
 	complex_st_start = STMemory_ReadLong (__DL385c8_primitives_end);
 	complex_starts++;
+	complex_sky = procfx_sky_put (complex_sky_m);
 }
+void Nu_DrawSkyBand (void **data)
+{
+	int i, w;
+	for (i = 0; i < 9; i++) {
+		w = znode_rdlong (data);
+		memcpy (&sky_m[i], &w, 4);
+	}
+	sky_pending = 1;
+}
+
 void Nu_DrawComplexStart (void **data)
 {
 	tess_vpos = 0;
@@ -1518,6 +1549,7 @@ void Nu_DrawComplexStart (void **data)
 		gluTessBeginPolygon (tobj, NULL);
 		gluTessBeginContour (tobj);
 		contour_n = 0;
+		if (sky_pending) sky_active = procfx_sky_begin (sky_m, tessProjMatrix, tessViewport);
 	} else {
 		glBegin (GL_LINE_STRIP);
 	}
@@ -1558,6 +1590,8 @@ void Nu_DrawComplexEnd (void **data)
 		glVertex3dv (tess_vertices[0]);
 		glEnd ();
 	}
+	if (sky_active) procfx_sky_end ();
+	sky_pending = sky_active = 0;
 }
 
 void Nu_ComplexStartInner ()
@@ -3590,7 +3624,8 @@ NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	&Nu_DrawPoint,
 	&Nu_Draw2DLine,
 	NULL,	/* NU_SUBTREE, see Nu_DrawPrimitive */
-	&Nu_DrawAtmosphere
+	&Nu_DrawAtmosphere,
+	&Nu_DrawSkyBand
 };
 
 /*
