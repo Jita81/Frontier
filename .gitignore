@@ -22,3 +22,6 @@ docs/screenshots/
 /dist/
 /build/
 __pycache__/
+# the player's own key and mouse bindings (src/bindings.c)
+controls.ini
+controls.ini.tmp
