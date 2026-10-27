@@ -1804,6 +1804,7 @@ void Nu_DrawBezierLine (void **data)
 	znode_rdcolor (data, &r, &g, &b);
 	
 	delta = 1.0f/20;
+	glLineWidth (px_scale ());	/* as Nu_DrawLine */
 	glColor3ub (r, g, b);
 	glBegin (GL_LINE_STRIP);
 	for (i=0; i<=20; i++) {
@@ -1811,6 +1812,7 @@ void Nu_DrawBezierLine (void **data)
 		glVertex3dv (out);
 	}
 	glEnd ();
+	glLineWidth (1.0f);
 }
 
 /*
@@ -3658,11 +3660,16 @@ void Nu_DrawLine (void **data)
 	znode_rdvertex (data, v2);
 	znode_rdcolor (data, &r, &g, &b);
 	
+	/* the engine's lines (lasers, aerials, wires) are one ST pixel wide;
+	 * keep them the same share of the view at any picture size, as the
+	 * points are, instead of a hairline at 1600x1200 */
+	glLineWidth (px_scale ());
 	glColor3ub (r, g, b);
 	glBegin (GL_LINES);
 		glVertex3iv (v1);
 		glVertex3iv (v2);
 	glEnd ();
+	glLineWidth (1.0f);
 }
 
 void Nu_IsGLRenderer ()
