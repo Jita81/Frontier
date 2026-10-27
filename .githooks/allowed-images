@@ -13,4 +13,12 @@ cursor.png
 # art/ui/ (hdui.c: panels and markers)
 
 # art/hull/ (hull plating and interiors)
+art/hull/armour.png
+art/hull/civilian.png
+art/hull/fighter.png
+art/hull/freighter.png
+art/hull/generic.png
+art/hull/hangar.png
+art/hull/police.png
+art/hull/station.png
 

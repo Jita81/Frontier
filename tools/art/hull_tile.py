@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Turn a picture of hull plating into a hull detail tile for the GL renderer.
 
-    python3 -I tools/art/hull_tile.py IN.jpg OUT [--std 0.09]
+    python3 -I tools/art/hull_tile.py IN.jpg OUT [--std 0.09] [--size 512]
 
-writes OUT.lum (512x512 bytes, the format FE2_HULL_TILE loads) and
-OUT.png and OUT-2x2.png to look at.  The game multiplies each ship face's
-flat colour by the tile (texel 128 = x1.0), so the tile must:
+writes OUT.png (an 8-bit grey PNG: the per-class tiles of --hull-style 5
+are these, art/hull/*.png), OUT-2x2.png to look at the repeat, and at
+--size 512 also OUT.lum (512x512 raw bytes, the format FE2_HULL_TILE
+loads).  The game multiplies each ship face's flat colour by the tile
+(texel 128 = x1.0), so the tile must:
 
   - be grey: the face colour comes from the game, the tile only adds detail;
   - have no light falloff: a high-pass takes out anything broader than a
@@ -17,12 +19,26 @@ flat colour by the tile (texel 128 = x1.0), so the tile must:
 import argparse
 import math
 import os
+import struct
 import sys
+import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bmp  # noqa: E402
 
 N = 512
+
+
+def save_png_grey(path, n, lum):
+    """An 8-bit greyscale PNG (a third the size of the RGB one sips writes)."""
+    raw = b"".join(b"\x00" + bytes(lum[y * n:(y + 1) * n]) for y in range(n))
+
+    def chunk(tag, data):
+        c = struct.pack(">I", len(data)) + tag + data
+        return c + struct.pack(">I", zlib.crc32(tag + data) & 0xffffffff)
+    with open(path, "wb") as f:
+        f.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", n, n, 8, 0, 0, 0, 0))
+                + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
 
 
 def box_blur(v, n, r):
@@ -59,8 +75,15 @@ def main():
     ap.add_argument("out", help="output path without extension")
     ap.add_argument("--std", type=float, default=0.09,
                     help="spread of the multiplier about 1.0 (the procedural tile is about 0.07)")
-    ap.add_argument("--radius", type=int, default=40, help="high-pass radius in texels")
+    ap.add_argument("--radius", type=int, default=0,
+                    help="high-pass radius in texels (default 40 per 512 texels)")
+    ap.add_argument("--size", type=int, default=512, choices=(256, 512, 1024, 2048),
+                    help="tile side in texels")
     a = ap.parse_args()
+    global N
+    N = a.size
+    if not a.radius:
+        a.radius = 40 * N // 512
 
     w, h, rows = bmp.load(a.src, N)
     v = []
@@ -97,9 +120,10 @@ def main():
         lum.append(max(0, min(255, int(128 * f + 0.5))))
     after = seam_error([float(x) for x in lum], N)
 
-    with open(a.out + ".lum", "wb") as f:
-        f.write(bytes(lum))
-    bmp.save_png(a.out + ".png", N, N, bmp.grey_rows(N, N, lum))
+    if N == 512:
+        with open(a.out + ".lum", "wb") as f:
+            f.write(bytes(lum))
+    save_png_grey(a.out + ".png", N, lum)
     big = [lum[(y % N) * N + (x % N)] for y in range(2 * N) for x in range(2 * N)]
     bmp.save_png(a.out + "-2x2.png", 2 * N, 2 * N, bmp.grey_rows(2 * N, 2 * N, big))
     print(f"{a.out}: seam step {before:.2f}x the inner step before, {after:.2f}x after; "
