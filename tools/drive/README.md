@@ -93,10 +93,28 @@ string is one word and may use `\n` and `\t`.
 | `text "<ascii>"` | type with US layout; shifted characters hold left Shift; `\n` is Return and `\t` is Tab; 60 ms per press and 60 ms between keys |
 | `mouse <x> <y>` | move the pointer to ST screen coordinates, x 0–319 and y 0–199, whatever the window size |
 | `click [left\|right] [hold_ms]` | press and release a mouse button (left, 100 ms) |
+| `press [left\|right]` / `release [left\|right]` | press or release only (left); a button held across steps, e.g. the right button that steers in flight |
+| `move <dx> <dy> [count] [every_ms]` | relative mouse motion, as the game reads from a real mouse: add `dx`,`dy` (each -100 to 100) to the motion the game has not read yet, `count` times (1), `every_ms` apart (20) |
 | `sdlkey <name> [modifier...] [hold_ms]` | send an SDL key event through the port's keymap, as a Mac keyboard would; modifiers go down first and up last, 30 ms apart |
 | `shot <name>` | screenshot to `<name>.png`; names use `[A-Za-z0-9._-]`; the script waits until the file is written |
 | `log <text>` | write a note to `game.log` |
 | `quit` | post `SDL_QUIT`; the game should exit 0 |
+
+`mouse` sets the pointer's position; `move` does not move the pointer, it
+only feeds the relative motion (`INPUT.motion_x`/`motion_y`) that the game
+turns into steering while the right button is held. The game drops the
+whole pending motion when it exceeds 100 in either axis before it is read
+(`Call_GetMouseInput` in `src/input.c`), so prefer several small steps a
+frame or more apart over one large one. Steering in flight, after a launch:
+
+    press right          # hold the right button: the mouse steers
+    move 8 0 50 20       # 50 steps of +8 in x, 20 ms apart: yaw for 1 s
+    move 0 -8 50 20      # then pitch
+    release right
+    mouse 8 193          # the view icon
+    press left           # press ... release is a click with a chosen hold
+    wait 200
+    release left
 
 `key`, `keydown`, `keyup` and `text` hand an ST scancode straight to the
 game's `Input_PressSTKey`, skipping the port's keymap. `sdlkey` goes through
@@ -137,6 +155,7 @@ Each script's header says what it covers (`Verifies:`), how to run it
 | `fi12-main-keys.drv` | Space, digits, F1–F4 and Esc on the main screens | 11 |
 | `fi15-fi16-stardreamer-pause.drv` | time acceleration 1x–10000x, pause and resume, read from the panel clock | 10 |
 | `s19-menu-timeout.drv` | the start menu returns to the intro when left alone | 15 |
+| `mouse-steer.drv` | icon clicks to launch, steering with `press right` + `move`, `press`/`release left` on the view icon | 7 |
 
 The time-acceleration script reads the clock 3 s after each key. A key that
 lands while 10000x is still running can move the clock by minutes, so judge

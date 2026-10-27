@@ -1,0 +1,53 @@
+# mouse-steer.drv - launch with icon clicks, then steer with the mouse.
+#
+# Verifies: the mouse steps: `mouse` + `click` on the panel icons (comms,
+#           request launch), `press right` + `move` + `release right` steering
+#           in flight, and `press left` / `release left` as a click on the
+#           view icon.
+# Screen positions are ST coordinates (320x200): the comms icon is at
+#           (57,193), the launch request at (130,19), the view icon at (8,193).
+# Run:  python3 tools/drive/drive.py --script tools/drive/scripts/mouse-steer.drv \
+#           --out RUN_DIR --timeout 120
+# Expect: exit 0; 7 shots: docked, station services, two flight shots 2 s
+#         apart that match (no steering), one after a yaw and one after a
+#         pitch that each show a different part of the sky, and the next
+#         view after the view icon.
+
+wait 6000
+key space
+wait 2000
+key 3             # start position 3: docked
+wait 11000
+shot 01-docked
+mouse 57 193      # comms icon
+wait 300
+click 200
+wait 2000
+shot 02-comms
+mouse 130 19      # request launch
+wait 300
+click 200
+wait 3000
+sdlkey f1
+wait 30000        # the launch
+shot 03-flight-a
+wait 2000
+shot 04-flight-b-nosteer
+press right       # the right button held: mouse motion steers
+move 8 0 50 20    # yaw, about 1 s
+release right
+wait 500
+shot 05-after-yaw
+press right
+move 0 -8 50 20   # pitch, about 1 s
+release right
+wait 500
+shot 06-after-pitch
+mouse 8 193       # view icon
+wait 300
+press left
+wait 200
+release left
+wait 1500
+shot 07-view-cycled
+quit

@@ -56,6 +56,8 @@ extern int SDL_PollEvent(void *event);   /* bound at load time, see Makefile */
 #define IN_KEYBUF_SIZE  16
 #define IN_BUF_TAIL     360     /* int buf_tail: next write index */
 #define IN_CUR_MOUSEBUT 372
+#define IN_MOTION_X     376     /* int motion_x, motion_y: relative motion */
+#define IN_MOTION_Y     380     /* since Call_GetMouseInput last read it */
 #define IN_ABS_X        384
 #define IN_ABS_Y        388
 #define IN_SIZE         400
@@ -199,11 +201,11 @@ static int ascii_to_st(int ch, int *shift)
 
 /* ---- steps -------------------------------------------------------------- */
 enum op { OP_WAIT, OP_KEY, OP_KEYDOWN, OP_KEYUP, OP_TEXT, OP_MOUSE, OP_CLICK,
-          OP_SHOT, OP_QUIT, OP_SDLKEY, OP_LOG };
+          OP_SHOT, OP_QUIT, OP_SDLKEY, OP_LOG, OP_PRESS, OP_RELEASE, OP_MOVE };
 typedef struct {
 	enum op op;
 	int line;
-	int a, b, c;          /* op-specific integers */
+	int a, b, c, d;       /* op-specific integers */
 	char s[128];          /* text, shot name, log text */
 	char src[160];        /* source line, for the log */
 } step;
@@ -212,7 +214,7 @@ static step *g_steps;
 static int g_nsteps;
 
 /* ---- game-thread mailbox ------------------------------------------------ */
-enum act { ACT_STKEY, ACT_MOUSE, ACT_BUTTON, ACT_EVENT };
+enum act { ACT_STKEY, ACT_MOUSE, ACT_BUTTON, ACT_EVENT, ACT_MOVE };
 typedef struct { enum act kind; int a, b; drv_event ev; } action;
 
 static pthread_mutex_t g_mx = PTHREAD_MUTEX_INITIALIZER;
@@ -283,6 +285,11 @@ static int drive_poll(void *event)
 				set_int(IN_CUR_MOUSEBUT, st);
 				break;
 			}
+			case ACT_MOVE:
+				/* what main.c does with an SDL_MOUSEMOTION's xrel/yrel */
+				set_int(IN_MOTION_X, get_int(IN_MOTION_X) + g_act.a);
+				set_int(IN_MOTION_Y, get_int(IN_MOTION_Y) + g_act.b);
+				break;
 			case ACT_EVENT:
 				if (!event) {      /* SDL_PollEvent(NULL): only "is one pending?" */
 					pthread_mutex_unlock(&g_mx);
@@ -450,6 +457,22 @@ static void parse_script(const char *path)
 			if (i < ntok && (!parse_int(tok[i++], &st.b) || st.b < 0))
 				syntax(line, st.src, "usage: click [left|right] [hold_ms]");
 			if (i != ntok) syntax(line, st.src, "usage: click [left|right] [hold_ms]");
+		} else if (!strcmp(tok[0], "press") || !strcmp(tok[0], "release")) {
+			st.op = tok[0][0] == 'p' ? OP_PRESS : OP_RELEASE;
+			st.a = 0x2;                 /* left (input.c: left=0x2, right=0x1) */
+			if (ntok == 2 && !strcmp(tok[1], "right")) st.a = 0x1;
+			else if (!(ntok == 1 || (ntok == 2 && !strcmp(tok[1], "left"))))
+				syntax(line, st.src, "usage: press|release [left|right]");
+		} else if (!strcmp(tok[0], "move")) {
+			/* Call_GetMouseInput drops a motion over 100 in either axis */
+			st.op = OP_MOVE;
+			st.c = 1;
+			st.d = 20;
+			if (ntok < 3 || ntok > 5 || !parse_int(tok[1], &st.a) || !parse_int(tok[2], &st.b) ||
+			    st.a < -100 || st.a > 100 || st.b < -100 || st.b > 100 ||
+			    (ntok >= 4 && (!parse_int(tok[3], &st.c) || st.c < 1)) ||
+			    (ntok == 5 && (!parse_int(tok[4], &st.d) || st.d < 0)))
+				syntax(line, st.src, "usage: move <dx -100..100> <dy -100..100> [count] [every_ms]");
 		} else if (!strcmp(tok[0], "shot")) {
 			st.op = OP_SHOT;
 			if (ntok != 2) syntax(line, st.src, "usage: shot <name>");
@@ -621,6 +644,21 @@ static void *driver_main(void *arg)
 			sleep_ms(s->b);
 			a.b = 0;
 			post(&a);
+			break;
+		}
+		case OP_PRESS:
+		case OP_RELEASE: {
+			action a = { ACT_BUTTON, s->a, s->op == OP_PRESS, {0} };
+			post(&a);
+			break;
+		}
+		case OP_MOVE: {
+			int i;
+			for (i = 0; i < s->c; i++) {
+				action a = { ACT_MOVE, s->a, s->b, {0} };
+				post(&a);
+				if (i + 1 < s->c) sleep_ms(s->d);
+			}
 			break;
 		}
 		case OP_SHOT:
