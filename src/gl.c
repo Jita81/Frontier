@@ -129,10 +129,18 @@ void CALLBACK combineCallback(GLdouble coords[3],
                      GLdouble *vertex_data[4],
                      GLfloat weight[4], GLdouble **dataOut );
 
+/* The 3D view, framebuffer pixels: the picture's top 168 rows, or past
+ * the picture (wide_3d) while draw_sky_strips draws the sky there. */
+static int wide_3d, v3d_x, v3d_y, v3d_w, v3d_h;
+/* Set when this frame's 3D view went under the panel's rows: no black
+ * strip there. draw_control_panel takes it. */
+static int v3d_under;
+
 static void set_main_viewport ()
 {
 	int ctrl_h = 32*pic_h/200;
-	glViewport (pic_x, pic_y + ctrl_h, pic_w, pic_h - ctrl_h);
+	if (wide_3d) glViewport (v3d_x, v3d_y, v3d_w, v3d_h);
+	else glViewport (pic_x, pic_y + ctrl_h, pic_w, pic_h - ctrl_h);
 }
 
 static void set_ctrl_viewport ()
@@ -634,13 +642,16 @@ static void draw_control_panel ()
 	/* intro likes black at the bottom */
 	/* hack hack hack what a pile of shite this is */
 	push_ortho ();
-	glColor3f (0.0f, 0.0f, 0.0f);
-	glBegin (GL_TRIANGLE_STRIP);
-		glVertex3f (0, 32, 0);
-		glVertex3f (319, 32, 0);
-		glVertex3f (0, 0, 0);
-		glVertex3f (319, 0, 0);
-	glEnd ();
+	if (!v3d_under) {
+		glColor3f (0.0f, 0.0f, 0.0f);
+		glBegin (GL_TRIANGLE_STRIP);
+			glVertex3f (0, 32, 0);
+			glVertex3f (319, 32, 0);
+			glVertex3f (0, 0, 0);
+			glVertex3f (319, 0, 0);
+		glEnd ();
+	}
+	v3d_under = 0;
 	
 	hdui_draw_under (MainRGBPalette, CtrlRGBPalette);
 	
@@ -743,6 +754,7 @@ struct ZNode {
 	unsigned int z;
 	struct ZNode *less, *more;
 	void *data;
+	int sky;	/* the background or a planet: see draw_sky_strips */
 };
 
 #define MAX_OBJ_DATA	(4<<20)
@@ -980,6 +992,17 @@ static inline void end_node ()
 /* where the writers point once znode_buf is full (S-6) */
 static struct ZNode znode_dummy;
 
+/* The object being drawn is the star background: L44200_DrawBGStars sets
+ * model 0xb0 in its record (a6-212, word 90). */
+static int obj_is_sky (void)
+{
+	unsigned int a6 = GetReg (REG_A6), rec;
+
+	if (a6 < 212 || a6 > 0x110000u) return 0;
+	rec = STMemory_ReadLong (a6 - 212);
+	return rec < 0x110000u - 92 && (STMemory_ReadWord (rec + 90) & 0xffff) == 0xb0;
+}
+
 static void add_node (struct ZNode **node, unsigned int zval)
 {
 	/* end previous znode display list!!!!!!! */
@@ -996,6 +1019,7 @@ static void add_node (struct ZNode **node, unsigned int zval)
 	znode_cur->z = zval;
 	znode_cur->less = NULL;
 	znode_cur->more = NULL;
+	znode_cur->sky = obj_is_sky ();
 	znode_databegin ();
 }
 
@@ -1036,6 +1060,7 @@ static void *add_detached_node (struct ZNode **root, unsigned int zval, int size
 	n = &znode_buf[znode_buf_pos++];
 	n->z = zval;
 	n->less = n->more = NULL;
+	n->sky = 1;	/* only atmospheres, see Nu_PutPlanet */
 	n->data = data = &detached_data[detached_pos];
 	detached_pos += size + 4;
 	/* the list end */
@@ -3278,6 +3303,7 @@ void Nu_PutPlanet ()
 	planet_atmosphere_band (&p);
 
 	znode_wrlong (NU_PLANET);
+	znode_cur->sky = 1;
 	/* S-7: through the checked writer */
 	znode_wrblock (&p, sizeof (p));
 
@@ -3625,6 +3651,8 @@ NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
  * order - see draw_3dview for why there is no depth test to fight with.
  */
 static void draw_3dview (struct ZNode *node);
+/* drawing the strips past the picture: sky nodes only */
+static int sky_pass;
 
 static void Nu_DrawPrimitive (void *data)
 {
@@ -3636,7 +3664,11 @@ static void Nu_DrawPrimitive (void *data)
 		if (!fnum) return;
 		if (fnum != NU_TRIANGLE && fnum != NU_QUAD) hull_end ();
 		if (fnum == NU_SUBTREE) {
+			/* all of a sky node's sub-tree is sky too */
+			int sp = sky_pass;
+			sky_pass = 0;
 			draw_3dview (subtree_root[znode_rdlong (&data)]);
+			sky_pass = sp;
 			continue;
 		}
 		nu_drawfuncs[fnum] (&data);
@@ -3677,7 +3709,7 @@ static void draw_3dview (struct ZNode *node)
 	if (node == NULL) return;
 	if (node->more) draw_3dview (node->more);
 	
-	if (use_renderer) {
+	if (use_renderer && (node->sky || !sky_pass)) {
 		//fprintf (stderr, "Z=%d ", node->z);
 		Nu_DrawPrimitive (node->data);
 	}
@@ -3692,6 +3724,68 @@ static void set_gl_clear_col (int rgb)
 	g = (rgb&0xff00)/65280.0f;
 	b = (rgb&0xff0000)/16711680.0f;
 	glClearColor (r,g,b,0);
+}
+
+/*
+ * The sky past the 4:3 picture: into the side bars of a wider window and,
+ * with no control panel (the intro, a death), down into the panel's rows.
+ * Same centre and scale, only a wider frustum, so the picture inside the
+ * 4:3 rect is not touched. Only sky nodes (the star background, planets
+ * and their atmospheres) go out there: the core drops lines and circles
+ * that are wholly off its 320x168 screen before they reach us
+ * (L3ace2_project_line, L3a93c_project_real_circle), so a station's arms
+ * and lights would vanish at the old edge while its hull went on. Ships
+ * and stations stay inside the picture. The strips stop at the core's
+ * object cull cone (L39646_3DObjClipOffscreen: |x| <= z, 2|y| <= z), so a
+ * planet cannot pop in at their edge; wider windows keep the rest of their
+ * bars. With the panel shown the panel band stays black.
+ */
+static void draw_sky_strips (void)
+{
+	int ctrl_h = 32*pic_h/200, i;
+	int ox = pic_x, oy = pic_y + ctrl_h, ow = pic_w, oh = pic_h - ctrl_h;
+	double t = tan (36.5 * M_PI / 360.0);		/* gluPerspective's */
+	double cx = ox + ow/2.0, cy = oy + oh/2.0, hx = ow/2.0, hy = oh/2.0;
+	int x0 = MAX (0, (int) ceil (cx - hx/(1.9*t)));
+	int x1 = MIN (fb_w, (int) floor (cx + hx/(1.9*t)));
+	int y1 = MIN (fb_h, (int) floor (cy + hy*0.5/t)), y0 = oy;
+	int r[4][4];
+
+	if (!STMemory_ReadByte (__DL60cf_hblank_do_pal)) {
+		y0 = MAX (0, (int) ceil (cy - hy*0.5/t));
+		v3d_under = 1;
+	}
+	r[0][0] = x0;      r[0][1] = y0;      r[0][2] = ox - x0;           r[0][3] = y1 - y0;
+	r[1][0] = ox + ow; r[1][1] = y0;      r[1][2] = x1 - ox - ow;      r[1][3] = y1 - y0;
+	r[2][0] = ox;      r[2][1] = y0;      r[2][2] = ow;                r[2][3] = oy - y0;
+	r[3][0] = ox;      r[3][1] = oy + oh; r[3][2] = ow;                r[3][3] = y1 - oy - oh;
+	wide_3d = 1;
+	v3d_x = x0; v3d_y = y0; v3d_w = x1 - x0; v3d_h = y1 - y0;
+	glMatrixMode (GL_PROJECTION);
+	glLoadIdentity ();
+	glFrustum (1.9*t*GL_NEAR_PLANE*(x0 - cx)/hx, 1.9*t*GL_NEAR_PLANE*(x1 - cx)/hx,
+		   t*GL_NEAR_PLANE*(y0 - cy)/hy, t*GL_NEAR_PLANE*(y1 - cy)/hy,
+		   GL_NEAR_PLANE, GL_FAR_PLANE);
+	glMatrixMode (GL_MODELVIEW);
+	set_main_viewport ();
+	glEnable (GL_SCISSOR_TEST);
+	sky_pass = 1;
+	for (i = 0; i < 4; i++) {
+		if (r[i][2] <= 0 || r[i][3] <= 0) continue;
+		glScissor (r[i][0], r[i][1], r[i][2], r[i][3]);
+		/* the sky colour (still the clear colour) where the bars were */
+		glClear (GL_COLOR_BUFFER_BIT);
+		draw_3dview (znode_start);
+		hull_end ();
+	}
+	sky_pass = 0;
+	glDisable (GL_SCISSOR_TEST);
+	wide_3d = 0;
+	glMatrixMode (GL_PROJECTION);
+	glLoadIdentity ();
+	gluPerspective (36.5f, 1.9f, GL_NEAR_PLANE, GL_FAR_PLANE);
+	glMatrixMode (GL_MODELVIEW);
+	set_main_viewport ();
 }
 
 /*
@@ -3722,6 +3816,9 @@ void Nu_DrawScreen ()
 			fprintf (stderr, "GL: 3D scene too big for the scene buffers, frame dropped (%u so far)\n",
 				 scene_overflows);
 	} else {
+		if (use_renderer == R_GL && !classic_ui && znode_start
+		    && !hdback_active ())
+			draw_sky_strips ();
 		draw_3dview (znode_start);
 	}
 	hull_end ();
