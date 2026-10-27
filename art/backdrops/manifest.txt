@@ -1,0 +1,45 @@
+# hdback.c: KIND CLASS LIGHT FILE, one per picture (see docs/hd/backdrop.md)
+# a light with no picture of its own borrows another and is tinted (r g b)
+borrow orange yellow
+borrow white yellow
+borrow blue yellow
+tint orange 1.00 0.85 0.68
+tint white 0.93 0.97 1.00
+tint blue 0.80 0.89 1.00
+orbital terran yellow orbital-terran-yellow-a.jpg
+orbital terran red orbital-terran-red-a.jpg
+orbital ice yellow orbital-ice-yellow-a.jpg
+orbital ice red orbital-ice-red-a.jpg
+orbital rocky yellow orbital-rocky-yellow-a.jpg
+orbital rocky red orbital-rocky-red-a.jpg
+orbital airless yellow orbital-airless-yellow-a.jpg
+orbital airless red orbital-airless-red-a.jpg
+orbital corrosive yellow orbital-corrosive-yellow-a.jpg
+orbital corrosive red orbital-corrosive-red-a.jpg
+orbital methane yellow orbital-methane-yellow-a.jpg
+orbital methane red orbital-methane-red-a.jpg
+orbital ocean yellow orbital-ocean-yellow-a.jpg
+orbital ocean red orbital-ocean-red-a.jpg
+orbital gasgiant yellow orbital-gasgiant-yellow-a.jpg
+orbital gasgiant red orbital-gasgiant-red-a.jpg
+surface terran yellow surface-terran-yellow-a.jpg
+surface terran red surface-terran-red-a.jpg
+surface ice yellow surface-ice-yellow-a.jpg
+surface ice red surface-ice-red-a.jpg
+surface rocky yellow surface-rocky-yellow-a.jpg
+surface rocky red surface-rocky-red-a.jpg
+surface airless yellow surface-airless-yellow-a.jpg
+surface airless red surface-airless-red-a.jpg
+surface corrosive yellow surface-corrosive-yellow-a.jpg
+surface corrosive red surface-corrosive-red-a.jpg
+surface methane yellow surface-methane-yellow-a.jpg
+surface methane red surface-methane-red-a.jpg
+surface ocean yellow surface-ocean-yellow-a.jpg
+surface ocean red surface-ocean-red-a.jpg
+orbital terran orange orbital-terran-orange-a.jpg
+surface terran orange surface-terran-orange-a.jpg
+orbital terran yellow orbital-terran-yellow-b.jpg
+orbital terran red orbital-terran-red-b.jpg
+surface terran yellow surface-terran-yellow-b.jpg
+surface terran red surface-terran-red-b.jpg
+surface ice-moon red surface-ice-moon-red-a.jpg

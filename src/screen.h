@@ -85,6 +85,9 @@ extern void Nu_Put2DLine ();
 
 extern int screen_w;
 extern int screen_h;
+/* The 4:3 picture inside the window, in SDL coordinates; 0 wide when it
+ * fills the window */
+extern int view_x, view_y, view_w, view_h;
 extern int mouse_shown;
 extern float hack;
 

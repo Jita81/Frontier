@@ -7,6 +7,9 @@
 #include "../m68000.h"
 #include "shortcut.h"
 #include "screen.h"
+#ifdef WITH_GL
+#include "hdui.h"
+#endif
 
 INPUT input;
 
@@ -35,8 +38,19 @@ void Call_GetMouseInput ()
 	mouse_mov[0] = SDL_SwapBE16 (SDL_SwapBE16 (mouse_mov[0]) + input.motion_x);
 	mouse_mov[1] = SDL_SwapBE16 (SDL_SwapBE16 (mouse_mov[1]) + input.motion_y);
 	
-	mouse_abs[0] = SDL_SwapBE16 (320*input.abs_x/screen_w);
-	mouse_abs[1] = SDL_SwapBE16 (200*input.abs_y/screen_h);
+	/* through the picture, which may have black bars beside it */
+	{
+		int x = view_w > 0 ? 320*(input.abs_x - view_x)/view_w : 320*input.abs_x/screen_w;
+		int y = view_h > 0 ? 200*(input.abs_y - view_y)/view_h : 200*input.abs_y/screen_h;
+		short ax = x < 0 ? 0 : x > 319 ? 319 : x;
+		short ay = y < 0 ? 0 : y > 199 ? 199 : y;
+#ifdef WITH_GL
+		/* a control the restyled screens moved: its original place */
+		hdui_mouse (&ax, &ay, input.cur_mousebut_state);
+#endif
+		mouse_abs[0] = SDL_SwapBE16 (ax);
+		mouse_abs[1] = SDL_SwapBE16 (ay);
+	}
 	
 	//if (input.mbuf_head != input.mbuf_tail) {
 	//	mouse_mov[2] = SDL_SwapBE16 (0xf8 | input.mousebut_buf [input.mbuf_head++]);

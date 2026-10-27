@@ -47,6 +47,7 @@ typedef void (*_GLUfuncptr)();
 #include "hdui.h"
 #include "hull.h"
 #include "art.h"
+#include "hdback.h"
 /* MEM_SIZE, and the engine's variables by label address (__D<label>) */
 #include "../host.h"
 #include "../fixups.h"
@@ -128,6 +129,15 @@ int screen_h = 0;
  * (sdl12-compat with SDL12COMPAT_HIGHDPI=1 and SDL12COMPAT_OPENGL_SCALING=0
  * on a Retina Mac). */
 static int fb_w = 640, fb_h = 480;
+/* The windowed size (from --size, or picked) and the desktop's, taken
+ * before the first mode set: fullscreen uses the whole desktop. */
+static int win_w, win_h, desk_w, desk_h;
+/* The picture: the largest 4:3 rectangle that fits the framebuffer,
+ * centred, in framebuffer pixels from the bottom left (pic_*) and in SDL
+ * coordinates from the top left (view_*, for the mouse). On a wider
+ * screen the sides are black bars. */
+static int pic_x, pic_y, pic_w = 640, pic_h = 480;
+int view_x = 0, view_y = 0, view_w = 0, view_h = 0;
 #define GLERR { printf ("GL: %s\n", gluErrorString (glGetError ()));}
 
 #ifndef CALLBACK
@@ -148,36 +158,62 @@ void CALLBACK combineCallback(GLdouble coords[3],
 
 static void set_main_viewport ()
 {
-	int ctrl_h = 32*fb_h/200;
-	glViewport (0, ctrl_h, fb_w, fb_h - ctrl_h);
+	int ctrl_h = 32*pic_h/200;
+	glViewport (pic_x, pic_y + ctrl_h, pic_w, pic_h - ctrl_h);
 }
 
 static void set_ctrl_viewport ()
 {
-	glViewport (0, 0, fb_w, fb_h);
+	glViewport (pic_x, pic_y, pic_w, pic_h);
+}
+
+static void set_picture_rect ()
+{
+	if (fb_w * 3 > fb_h * 4) {
+		pic_h = fb_h;
+		pic_w = fb_h * 4 / 3;
+	} else {
+		pic_w = fb_w;
+		pic_h = fb_w * 3 / 4;
+	}
+	pic_x = (fb_w - pic_w) / 2;
+	pic_y = (fb_h - pic_h) / 2;
+	view_x = pic_x * screen_w / fb_w;
+	view_y = pic_y * screen_h / fb_h;
+	view_w = pic_w * screen_w / fb_w;
+	view_h = pic_h * screen_h / fb_h;
+}
+
+void gl_picture_rect (int *x, int *y, int *w, int *h)
+{
+	*x = pic_x;
+	*y = pic_y;
+	*w = pic_w;
+	*h = pic_h;
 }
 
 /* Point sizes were chosen for a 640x480 window: keep them the same share
- * of the view at any framebuffer size. */
+ * of the view at any picture size. */
 static float px_scale (void)
 {
-	return fb_h > 480 ? fb_h / 480.0f : 1.0f;
+	return pic_h > 480 ? pic_h / 480.0f : 1.0f;
 }
 
-/* The original's 4:3 shape (640x480) as large as fits in 85% of the
- * desktop, in whole steps of 64x48 and never smaller than 640x480. */
-static void pick_window_size (const SDL_VideoInfo *info)
+/* The original's 4:3 shape (640x480) as large as fits on the desktop
+ * below the menu bar, title bar and dock (128 pixels kept free), in whole
+ * steps of 64x48 and never smaller than 640x480. */
+static void pick_window_size ()
 {
 	int k = 10;
 
-	if (info->current_w > 0 && info->current_h > 0) {
-		int kw = info->current_w * 85 / 100 / 64;
-		int kh = info->current_h * 85 / 100 / 48;
+	if (desk_w > 0 && desk_h > 0) {
+		int kw = desk_w / 64;
+		int kh = (desk_h - 128) / 48;
 		k = kw < kh ? kw : kh;
 		if (k < 10) k = 10;
 	}
-	screen_w = 64 * k;
-	screen_h = 48 * k;
+	win_w = 64 * k;
+	win_h = 48 * k;
 }
 
 /*
@@ -217,6 +253,7 @@ static void change_vidmode ()
 	hdstill_forget ();
 	hdface_forget ();
 	hdui_forget ();
+	hdback_forget ();
 	if (screen_tex) {
 		glDeleteTextures (1, &screen_tex);
 		screen_tex = 0;
@@ -229,7 +266,27 @@ static void change_vidmode ()
 		exit (-1);
 	}
 
-	if (screen_w <= 0 || screen_h <= 0) pick_window_size (info);
+	if (desk_w <= 0) {
+		desk_w = info->current_w;
+		desk_h = info->current_h;
+	}
+	if (win_w <= 0) {
+		if (screen_w > 0 && screen_h > 0) {
+			win_w = screen_w;
+			win_h = screen_h;
+		} else {
+			pick_window_size ();
+		}
+	}
+	/* Fullscreen at the desktop's own size: the picture is drawn 1:1,
+	 * not scaled up from a smaller mode. */
+	if (bInFullScreen && desk_w > 0 && desk_h > 0) {
+		screen_w = desk_w;
+		screen_h = desk_h;
+	} else {
+		screen_w = win_w;
+		screen_h = win_h;
+	}
 
 	SDL_GL_SetAttribute (SDL_GL_DOUBLEBUFFER, 1);
 	/* No depth buffer is requested: the 3D view is drawn with a pure
@@ -263,11 +320,13 @@ static void change_vidmode ()
 		fb_w = vp[2] > 0 ? vp[2] : screen_w;
 		fb_h = vp[3] > 0 ? vp[3] : screen_h;
 	}
+	set_picture_rect ();
 	if (getenv ("FE2_GL_INFO")) {
 		GLint samples = 0;
 		glGetIntegerv (GL_SAMPLES, &samples);
-		fprintf (stderr, "gl: window %dx%d, framebuffer %dx%d, %d samples\n",
-			 screen_w, screen_h, fb_w, fb_h, (int) samples);
+		fprintf (stderr, "gl: %s %dx%d, framebuffer %dx%d, picture %dx%d at %d,%d, %d samples\n",
+			 bInFullScreen ? "fullscreen" : "window", screen_w, screen_h,
+			 fb_w, fb_h, pic_w, pic_h, pic_x, pic_y, (int) samples);
 	}
 	glEnable (GL_MULTISAMPLE);
 
@@ -594,6 +653,7 @@ static void draw_control_panel ()
 		hdui_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
 		hdstill_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
 		hdface_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
+		hdback_frame (VideoRaster, hd_screen);
 		scr = hd_screen;
 	}
 	
@@ -4622,6 +4682,7 @@ void Nu_GLClearArea ()
 	y1 = GetReg (1)&0xffff;
 	x2 = GetReg (2)&0xffff;
 	y2 = GetReg (3)&0xffff;
+	hdui_clear_area (x1, y1, x2, y2);
 	
 	push_ortho ();
 	set_ctrl_viewport ();
@@ -4811,8 +4872,24 @@ void Nu_DrawScreen ()
 	}
 	
 	glMatrixMode (GL_MODELVIEW);
-	glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	if (pic_w < fb_w || pic_h < fb_h) {
+		/* black bars beside the picture, the sky colour inside it */
+		GLfloat sky[4];
+		glGetFloatv (GL_COLOR_CLEAR_VALUE, sky);
+		glClearColor (0, 0, 0, 0);
+		glClear (GL_COLOR_BUFFER_BIT);
+		glClearColor (sky[0], sky[1], sky[2], sky[3]);
+		glScissor (pic_x, pic_y, pic_w, pic_h);
+		glEnable (GL_SCISSOR_TEST);
+		glClear (GL_COLOR_BUFFER_BIT);
+		glDisable (GL_SCISSOR_TEST);
+	} else {
+		glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	}
+	if (use_renderer == R_GL) hdback_draw (fb_w, fb_h);
 	glLoadIdentity ();
 	
 	set_main_viewport ();
+	/* a 2D page's backdrop, under everything the next frame draws */
+	hdui_backdrop (MainRGBPalette, fe2_bgcol);
 }
