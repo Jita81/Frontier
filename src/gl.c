@@ -40,6 +40,7 @@ typedef void (*_GLUfuncptr)();
 #include "hdface.h"
 #include "hdui.h"
 #include "hdback.h"
+#include "bindings.h"
 /* MEM_SIZE, and the engine's variables by label address (__D<label>) */
 #include "../host.h"
 #include "../fixups.h"
@@ -225,6 +226,7 @@ static void change_vidmode ()
 	hdstill_forget ();
 	hdface_forget ();
 	hdui_forget ();
+	controls_page_forget ();
 	hdback_forget ();
 	if (screen_tex) {
 		glDeleteTextures (1, &screen_tex);
@@ -695,6 +697,7 @@ static void draw_control_panel ()
 	hdface_draw (MainRGBPalette, CtrlRGBPalette);
 	hdtext_draw (font_bmp, MainRGBPalette, CtrlRGBPalette);
 	hdui_draw_over (MainRGBPalette, CtrlRGBPalette);
+	controls_page_draw ();
 	
 	glDisable (GL_TEXTURE_2D);
 	
@@ -1235,18 +1238,22 @@ static void billboard_end ()
 	glPopMatrix ();
 }
 
-/* Object-space direction that corresponds to the camera's eye-space Z
- * axis (roughly "towards the viewer"). Cheap approximation of a full
- * look-at billboard, good enough to keep a thin axis-aligned ribbon
- * (teardrop engine flares) from turning edge-on to the camera. */
-static void get_view_axis (float axis[3])
+/* Object-space position of the eye, i.e. the inverse modelview applied
+ * to the origin (rotation plus uniform scale and translation assumed).
+ * The scene's vertices arrive already in eye space, so this is normally
+ * the origin; it is computed rather than assumed so that a flare still
+ * faces the viewer under any modelview it is drawn with. */
+static void get_eye_point (float eye[3])
 {
 	GLfloat m[16];
+	float s2;
+	int i;
 
 	glGetFloatv (GL_MODELVIEW_MATRIX, m);
-	axis[0] = m[2];
-	axis[1] = m[6];
-	axis[2] = m[10];
+	s2 = m[0]*m[0] + m[1]*m[1] + m[2]*m[2];
+	if (!(s2 > 0.0f)) s2 = 1.0f;
+	for (i = 0; i < 3; i++)
+		eye[i] = -(m[4*i]*m[12] + m[4*i+1]*m[13] + m[4*i+2]*m[14]) / s2;
 }
 
 static void cross3 (const float a[3], const float b[3], float out[3])
@@ -1666,7 +1673,26 @@ void Nu_DrawComplexBezier (void **data)
 
 
 /* For engines and industry chimney flares.
- * This is a bit crap, as you will see by panning around the effect. */
+ *
+ * fe2.s draws this teardrop in 2D (the code after the Nu_PutTeardrop
+ * hostcall): a closed Bezier that starts and ends at the projected tail,
+ * with both control points a third of the plume's length beyond the
+ * projected engine, offset to either side by HALF THE ENGINE'S PROJECTED
+ * RADIUS. That radius is in D7 at the hostcall: radius * 256 / engine z,
+ * in ST pixels (256 is also the ST's projection constant, which the GL
+ * projection matches: 36.5 degrees over the 168-line view).
+ *
+ * The GL path rebuilds the same teardrop in eye space so it is drawn in
+ * perspective. Its width used to be a fraction of the plume's 3D LENGTH,
+ * broadened across the eye's Z axis. Seen end-on - your own exhaust in the
+ * Rear View, which points straight away from the camera - the plume is
+ * tens of thousands of units long but crosses only a few pixels, so the
+ * flare ballooned into large cyan blobs that span the screen and spin
+ * frame to frame (the cross product with the eye Z axis then depends on
+ * the plume's tiny sideways jitter). The width now comes from the game's
+ * own radius, and the side vector is perpendicular to both the plume and
+ * the line of sight to the engine, so the flare faces the viewer the way
+ * the ST's screen-space one does. */
 void Nu_PutTeardrop ()
 {
 	if (use_renderer == R_OLD) return;
@@ -1674,67 +1700,66 @@ void Nu_PutTeardrop ()
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrvertex (GetReg (REG_A1)+4);
 	znode_wrcolor (GetReg (REG_D6));
+	/* projected engine radius, ST pixels (fe2.s only gets here with > 8) */
+	znode_wrlong ((short) (GetReg (REG_D7) & 0xffff));
 }
 void Nu_DrawTeardrop (void **data)
 {
 	int i;
 	float delta;
 	GLfloat ctrlpoints[4][3];
-	GLfloat dir[3], ppd[3];
+	GLfloat eng[3], dir[3], ppd[3], sight[3];
 	GLdouble out[3];
-	int r, g, b;
+	int r, g, b, rad_st;
+	float len_dir, len_ppd, half_w;
 
 #define TD_STRETCH	1.3333333333
-#define TD_BROADEN	0.33
 #define TD_BEZIER_STEPS	40
 	
 	if (use_renderer == R_OLD) return;
-	znode_rdvertexf (data, dir);
+	znode_rdvertexf (data, eng);
 	znode_rdvertexf (data, ctrlpoints[0]);
 	znode_rdcolor (data, &r, &g, &b);
+	rad_st = znode_rdlong (data);
 	
-	dir[0] -= ctrlpoints[0][0];
-	dir[1] -= ctrlpoints[0][1];
-	dir[2] -= ctrlpoints[0][2];
+	/* dir: tail -> engine (ctrlpoints[0] is the pointed tail) */
+	dir[0] = eng[0] - ctrlpoints[0][0];
+	dir[1] = eng[1] - ctrlpoints[0][1];
+	dir[2] = eng[2] - ctrlpoints[0][2];
+	len_dir = sqrt (dir[0]*dir[0] + dir[1]*dir[1] + dir[2]*dir[2]);
 	
-	/* Broaden the flare perpendicular to both its own axis (dir) and the
-	 * camera's viewing direction, so it stays roughly face-on to the
-	 * viewer instead of being pancake-thin from some angles (the "bit of
-	 * crap" the original author warned about). Falls back to the old
-	 * fixed in-plane perpendicular if degenerate (dir parallel to the
-	 * view axis). */
-	{
-		float view_axis[3], len_dir, len_ppd;
-
-		get_view_axis (view_axis);
-		cross3 (dir, view_axis, ppd);
+	/* Side vector: across the plume and across the line of sight to the
+	 * engine (eye at the origin), i.e. the 3D direction that projects
+	 * perpendicular to the plume's on-screen axis. Looking straight down
+	 * the plume it is degenerate: any vector across the plume will do. */
+	get_eye_point (sight);
+	sight[0] = eng[0] - sight[0];
+	sight[1] = eng[1] - sight[1];
+	sight[2] = eng[2] - sight[2];
+	cross3 (dir, sight, ppd);
+	len_ppd = sqrt (ppd[0]*ppd[0] + ppd[1]*ppd[1] + ppd[2]*ppd[2]);
+	if (len_ppd <= 1e-6f * (len_dir * sqrt (sight[0]*sight[0] + sight[1]*sight[1] + sight[2]*sight[2]) + 1.0f)) {
+		const float up[3] = { 0.0f, 1.0f, 0.0f }, side[3] = { 1.0f, 0.0f, 0.0f };
+		cross3 (dir, (fabsf (dir[1]) < 0.9f * len_dir) ? up : side, ppd);
 		len_ppd = sqrt (ppd[0]*ppd[0] + ppd[1]*ppd[1] + ppd[2]*ppd[2]);
-		len_dir = sqrt (dir[0]*dir[0] + dir[1]*dir[1] + dir[2]*dir[2]);
-		if (len_ppd > 0.0001f * (len_dir + 1.0f)) {
-			float scale = len_dir / len_ppd;
-			ppd[0] *= scale;
-			ppd[1] *= scale;
-			ppd[2] *= scale;
-		} else {
-			ppd[0] = -dir[1];
-			ppd[1] = dir[0];
-			ppd[2] = dir[2];
-		}
 	}
+	if (len_ppd <= 0.0f) return;
+	
+	/* Half the projected radius, taken back to eye space at the engine's
+	 * depth (the distance along the line of sight; with the usual identity
+	 * modelview that is -eng[2], znode_wrvertex having negated z). Capped at the
+	 * plume's length so a bad radius cannot fill the screen. */
+	half_w = 0.5f * (float) rad_st * fabsf (sight[2]) / 256.0f;
+	if (!(half_w > 0.0f) || half_w > len_dir) half_w = len_dir;
+	ppd[0] *= half_w / len_ppd;
+	ppd[1] *= half_w / len_ppd;
+	ppd[2] *= half_w / len_ppd;
 
-	//h = sqrt (dir[0]*dir[0] + dir[1]*dir[1] + dir[2]*dir[2]);
-	
-	ctrlpoints[1][0] = ctrlpoints[0][0] + TD_STRETCH*dir[0] + TD_BROADEN*ppd[0];
-	ctrlpoints[1][1] = ctrlpoints[0][1] + TD_STRETCH*dir[1] + TD_BROADEN*ppd[1];
-	ctrlpoints[1][2] = ctrlpoints[0][2] + dir[2];
-	
-	ctrlpoints[2][0] = ctrlpoints[0][0] + TD_STRETCH*dir[0] - TD_BROADEN*ppd[0];
-	ctrlpoints[2][1] = ctrlpoints[0][1] + TD_STRETCH*dir[1] - TD_BROADEN*ppd[1];
-	ctrlpoints[2][2] = ctrlpoints[0][2] + dir[2];
-	
-	ctrlpoints[3][0] = ctrlpoints[0][0];
-	ctrlpoints[3][1] = ctrlpoints[0][1];
-	ctrlpoints[3][2] = ctrlpoints[0][2];
+	for (i = 0; i < 3; i++) {
+		ctrlpoints[1][i] = ctrlpoints[0][i] + TD_STRETCH*dir[i] + ppd[i];
+		ctrlpoints[2][i] = ctrlpoints[0][i] + TD_STRETCH*dir[i] - ppd[i];
+		ctrlpoints[3][i] = ctrlpoints[0][i];
+	}
 
 	delta = 1.0f/TD_BEZIER_STEPS;
 	glColor3ub (r, g, b);

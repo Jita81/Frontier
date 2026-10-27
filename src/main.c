@@ -25,6 +25,7 @@
 #include "screen.h"
 #include "shortcut.h"
 #include "oracle.h"
+#include "bindings.h"
 
 
 #define FORCE_WORKING_DIR                 /* Set default directory to cwd */
@@ -148,10 +149,12 @@ void Main_EventHandler()
 	   }
 	   break;
     case SDL_MOUSEBUTTONDOWN:
-       Input_MousePress (event.button.button);
+       if (!bindings_mouse_event (event.button.button, 1))
+         Input_MousePress (event.button.button);
        break;
     case SDL_MOUSEBUTTONUP:
-       Input_MouseRelease (event.button.button);
+       if (!bindings_mouse_event (event.button.button, 0))
+         Input_MouseRelease (event.button.button);
        break;
     case SDL_KEYDOWN:
        Keymap_KeyDown(&event.key.keysym);
@@ -319,6 +322,9 @@ int main(int argc, char *argv[])
 
   /* Check for any passed parameters */
   Main_ReadParameters(argc, argv);
+
+  /* controls.ini (never with an oracle flag) */
+  bindings_init();
 
   /* Init emulator system */
   Main_Init();
