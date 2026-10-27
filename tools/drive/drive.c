@@ -24,6 +24,7 @@
 #include <ctype.h>
 #include <dlfcn.h>
 #include <errno.h>
+#include <limits.h>
 #include <poll.h>
 #include <pthread.h>
 #include <stdarg.h>
@@ -337,7 +338,7 @@ static int parse_int(const char *s, int *out)
 	if (!s || !*s) return 0;
 	errno = 0;
 	v = strtol(s, &end, 0);
-	if (errno || *end) return 0;
+	if (errno || *end || v < INT_MIN || v > INT_MAX) return 0;
 	*out = (int)v;
 	return 1;
 }
