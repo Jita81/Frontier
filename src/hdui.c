@@ -41,6 +41,7 @@
 #include <math.h>
 #include "hdui.h"
 #include "hdtext.h"
+#include "hdback.h"
 
 /* screen.h's renderers (it needs SDL): only what this file uses */
 enum RENDERERS { R_OLD, R_GLWIRE, R_GL, R_MAX };
@@ -68,6 +69,24 @@ extern int fe2_bgcol;
 #define C_RED		0xff4d4d	/* danger */
 #define C_TEXT		0xe8eef5
 #define C_TEXT2		0x8fa3b8
+#define C_TEXT2_SEE	0xc2d0e0	/* C_TEXT2 on frosted glass (see SEE_GLASS_A0) */
+
+/* With a photographic backdrop under the page (hdback_active) the opaque
+ * base becomes a thin wash and the panels turn to see-through glass: the
+ * wash's alpha, then the glass's alpha at its top and bottom edge and the
+ * cards' (the backdrop is already dimmed by hdback, so these stay low) */
+#define WASH_A		0.30f
+#define SEE_GLASS_A0	0.30f
+#define SEE_GLASS_A1	0.22f
+#define SEE_CARD_A0	0.32f
+#define SEE_CARD_A1	0.24f
+/* Under see-through glass and cards hdback's frost is laid first (frost_shape):
+ * the picture blurred, its luma held near a fixed mid grey whatever is in it.
+ * Over that, the glass is light, and C_TEXT2 (made for the dark opaque
+ * glass) is lifted to C_TEXT2_SEE to keep its contrast: on these values,
+ * measured on the docked pages at 1600x1200, C_TEXT stays at 5:1 or more
+ * and C_TEXT2_SEE at 3.7:1 or more against the glass, over any part of the
+ * picture; a hovered row's accent wash costs C_TEXT about 0.8 of that. */
 
 /* a token as hdtext's colour (0xff000000 | 0xBBGGRR) */
 static unsigned int text_rgb (unsigned int c)
@@ -615,6 +634,7 @@ static void rect_px (float x0, float y0, float x1, float y1, unsigned int rgb, f
 
 struct paint {
 	int kind, state, icon, flags;
+	int see;		/* a photographic backdrop is under the page: thinner glass */
 	int w, h, pad;		/* the element and the room round it for shadows, pixels */
 	float a, b, c;		/* glass: header band height; others: icon centre x, y, size (pixels from the element's top left) */
 	float u;
@@ -884,7 +904,8 @@ static void paint_glass (CGContextRef g, const struct paint *p)
 	CGContextSaveGState (g);
 	CGContextAddPath (g, path);
 	CGContextClip (g);
-	vgrad (g, 0, h, C_GLASS, 0.84f, C_GLASS, 0.72f);
+	if (p->see) vgrad (g, 0, h, C_GLASS, SEE_GLASS_A0, C_GLASS, SEE_GLASS_A1);
+	else vgrad (g, 0, h, C_GLASS, 0.84f, C_GLASS, 0.72f);
 	/* a sheen at the top */
 	vgrad (g, 0, h * 0.35f, 0xffffff, 0.055f, 0xffffff, 0);
 	if (p->a > 0) {
@@ -967,7 +988,8 @@ static void paint_card (CGContextRef g, const struct paint *p)
 	CGContextSaveGState (g);
 	CGContextAddPath (g, path);
 	CGContextClip (g);
-	vgrad (g, 0, h, C_CARD, 0.82f, C_CARD, 0.72f);
+	if (p->see) vgrad (g, 0, h, C_CARD, SEE_CARD_A0, C_CARD, SEE_CARD_A1);
+	else vgrad (g, 0, h, C_CARD, 0.82f, C_CARD, 0.72f);
 	if (prs) {
 		fill_col (g, C_ACCENT, 0.20f);
 		CGContextFillRect (g, CGRectMake (0, 0, w, h));
@@ -1004,7 +1026,7 @@ static void paint_card (CGContextRef g, const struct paint *p)
 		icon (g, p->icon, p->a, p->b, s * 0.62f, 2.2f * u, hov ? C_TEXT : C_ACCENT, 1);
 	}
 	if (p->flags & F_CHEVRON)
-		icon (g, I_CHEVRON, w - 16 * u, h / 2, 18 * u, 2 * u, hov ? C_ACCENT : C_TEXT2, hov ? 1 : 0.8f);
+		icon (g, I_CHEVRON, w - 16 * u, h / 2, 18 * u, 2 * u, hov ? C_ACCENT : p->see ? C_TEXT2_SEE : C_TEXT2, hov ? 1 : 0.8f);
 	CGPathRelease (path);
 }
 
@@ -1032,7 +1054,7 @@ static void paint_row (CGContextRef g, const struct paint *p)
 		CGPathRelease (in);
 	}
 	if (p->flags & F_CHEVRON)
-		icon (g, I_CHEVRON, w - 14 * u, h / 2, 16 * u, 2 * u, hov ? C_ACCENT : C_TEXT2, hov ? 1 : 0.7f);
+		icon (g, I_CHEVRON, w - 14 * u, h / 2, 16 * u, 2 * u, hov ? C_ACCENT : p->see ? C_TEXT2_SEE : C_TEXT2, hov ? 1 : 0.7f);
 	CGPathRelease (path);
 }
 
@@ -1388,11 +1410,14 @@ static void draw_photo (void)
  * out the clear areas (the 3D views) when skip_views */
 static void draw_base (int skip_views)
 {
-	float xs[64], ys[64], c[4][3];
+	float xs[64], ys[64], c[4][3], a = 1;
 	int nx, ny, i, j, k;
 
+	/* a photographic backdrop is already under the page: the same
+	 * gradient, but only a wash over it (premultiplied, see begin_2d) */
+	if (hdback_active ()) a = WASH_A;
 #ifdef __APPLE__
-	if (load_photo ()) {
+	if (a == 1 && load_photo ()) {
 		draw_photo ();
 		return;
 	}
@@ -1411,7 +1436,7 @@ static void draw_base (int skip_views)
 			base_rgb (x1, y1, c[3]);
 			for (k = 0; k < 6; k++) {
 				int v = order[k];
-				glColor4f (c[v][0], c[v][1], c[v][2], 1);
+				glColor4f (c[v][0] * a, c[v][1] * a, c[v][2] * a, a);
 				glVertex2f (PX (v & 1 ? x1 : x0), PY (v & 2 ? y1 : y0));
 			}
 		}
@@ -1450,9 +1475,74 @@ static void frame_px (float x0, float y0, float x1, float y1)
 	rect_px (x1, y1 - L, x1 + T, y1, C_ACCENT, 0.9f);
 }
 
+#ifdef __APPLE__
+/* Frosted glass: the shape of a glass panel's or a card's path (rrect: x,
+ * y, w, h framebuffer pixels, y down, the corners in `corners` rounded to
+ * r), filled with hdback's frost, the blurred picture registered with the
+ * sharp one round it.  CoreGraphics antialiases the path's edge in the
+ * sprite; here a ramp one pixel wide, from inside the edge (opaque) to
+ * outside it (clear), does the same.  The glass's tint sprite goes on top. */
+#define FROST_SEGS	6	/* segments in a rounded corner */
+
+/* the path's outline pushed out by d (in when d < 0): 4 (FROST_SEGS + 1)
+ * points, clockwise on the screen from the top right corner */
+static void frost_outline (float x, float y, float w, float h, float r, int corners,
+			   float d, float *pt)
+{
+	static const int bit[4] = { F_TR, F_BR, F_BL, F_TL };
+	static const float ox[4] = { 1, 1, -1, -1 }, oy[4] = { -1, 1, 1, -1 };
+	const float cx[4] = { x + w - r, x + w - r, x + r, x + r };
+	const float cy[4] = { y + r, y + h - r, y + h - r, y + r };
+	const float kx[4] = { x + w, x + w, x, x }, ky[4] = { y, y + h, y + h, y };
+	int c, i, n = 0;
+
+	for (c = 0; c < 4; c++)
+		for (i = 0; i <= FROST_SEGS; i++, n++) {
+			if (corners & bit[c]) {
+				float t = (float) M_PI * (c - 1 + i / (float) FROST_SEGS) / 2;
+				pt[2 * n] = cx[c] + (r + d) * cosf (t);
+				pt[2 * n + 1] = cy[c] + (r + d) * sinf (t);
+			} else {
+				pt[2 * n] = kx[c] + d * ox[c];
+				pt[2 * n + 1] = ky[c] + d * oy[c];
+			}
+		}
+}
+
+static void frost_shape (float x, float y, float w, float h, float r, int corners)
+{
+	float in[8 * (FROST_SEGS + 1)], out[8 * (FROST_SEGS + 1)], rgb[3];
+	int i, n = 4 * (FROST_SEGS + 1);
+
+	if (w < 2 || h < 2 || !hdback_frost_begin (rgb)) return;
+	if (r > w / 2) r = w / 2;
+	if (r > h / 2) r = h / 2;
+	frost_outline (x, y, w, h, r, corners, -0.5f, in);
+	frost_outline (x, y, w, h, r, corners, 0.5f, out);
+	glColor4f (rgb[0], rgb[1], rgb[2], 1);
+	glBegin (GL_TRIANGLE_FAN);
+	glVertex2f (x + w / 2, y + h / 2);
+	for (i = 0; i <= n; i++) glVertex2f (in[2 * (i % n)], in[2 * (i % n) + 1]);
+	glEnd ();
+	/* the edge's ramp: premultiplied, so clear is all zero */
+	glBegin (GL_TRIANGLE_STRIP);
+	for (i = 0; i <= n; i++) {
+		glColor4f (rgb[0], rgb[1], rgb[2], 1);
+		glVertex2f (in[2 * (i % n)], in[2 * (i % n) + 1]);
+		glColor4f (0, 0, 0, 0);
+		glVertex2f (out[2 * (i % n)], out[2 * (i % n) + 1]);
+	}
+	glEnd ();
+	hdback_frost_end ();
+}
+#endif
+
 static void draw_elems (int layer)
 {
-	int i;
+	int i, see = hdback_active ();
+#ifdef __APPLE__
+	int frost = see && hdui_owns_page ();
+#endif
 
 	for (i = 0; i < n_el; i++) {
 		const struct elem *e = &el[i];
@@ -1498,6 +1588,7 @@ static void draw_elems (int layer)
 			p.w = (int) floorf ((e->x1 - e->x0) * sx + 0.5f);
 			p.h = (int) floorf ((e->y1 - e->y0) * sy + 0.5f);
 			p.u = uu;
+			p.see = see;
 			switch (e->kind) {
 			case E_GLASS: p.pad = (int) ceilf (26 * uu); p.a = floorf (e->a * sy + 0.5f); break;
 			case E_CARD: p.pad = (int) ceilf ((e->flags & F_BIG ? 32 : 22) * uu); break;
@@ -1512,6 +1603,11 @@ static void draw_elems (int layer)
 				p.c = floorf (e->c * uu + 0.5f);
 			}
 			s = sprite (&p);
+			/* see-through glass and cards: the frost first, in their shape */
+			if (s && frost && e->kind == E_GLASS)
+				frost_shape (PX (e->x0), PY (e->y0), p.w, p.h, 8 * uu, e->flags & F_ALL);
+			else if (s && frost && e->kind == E_CARD)
+				frost_shape (PX (e->x0), PY (e->y0), p.w, p.h, 6 * uu, F_ALL);
 			if (s) draw_sprite (s, PX (e->x0), PY (e->y0), 1);
 		}
 #endif
@@ -1577,8 +1673,12 @@ static int add_hot (float x0, float y0, float x1, float y1, int tx, int ty, int 
 	return n_hot++;
 }
 
+static int backdrop_page (void);
+
 static void style (struct hdtext_run *r, int role, unsigned int tok)
 {
+	/* see-through glass is lighter than the opaque: secondary text lifted */
+	if (tok == C_TEXT2 && hdback_active () && backdrop_page ()) tok = C_TEXT2_SEE;
 	r->role = role;
 	r->rgb = text_rgb (tok);
 }
@@ -2819,10 +2919,15 @@ static int backdrop_page (void)
 	return page == P_STATION || page == P_F3 || page == P_PREFS;
 }
 
+int hdui_owns_page (void)
+{
+	return layer_on () && !pixel_text && page_key && backdrop_page ();
+}
+
 void hdui_backdrop (const unsigned int *pal, int bgcol)
 {
 	back_drawn = 0;
-	if (!layer_on () || pixel_text || !page_key || !backdrop_page ()) return;
+	if (!hdui_owns_page ()) return;
 	if (bgcol != BG || pal[BG] != page_bg) return;
 	begin_2d ();
 	draw_base (0);

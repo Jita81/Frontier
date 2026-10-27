@@ -42,6 +42,12 @@ void hdui_draw_over (const unsigned int *pal, const unsigned int *ctrl_pal);
  * backdrop another layer draws over the base shows through the glass. */
 void hdui_backdrop (const unsigned int *pal, int bgcol);
 
+/* Nonzero when the next hdui_backdrop will draw a page's base and glass
+ * (the page the last hdui_frame recognised).  hdback asks, just before it
+ * draws its picture: when this layer owns the page, its wash and glass
+ * dim the picture and hdback adds no scrim of its own. */
+int hdui_owns_page (void);
+
 /* The game cleared the ST area (x1, y1)-(x2, y2) for a 3D viewer this
  * frame: the next hdui_frame leaves it alone and frames it. */
 void hdui_clear_area (int x1, int y1, int x2, int y2);

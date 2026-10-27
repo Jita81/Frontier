@@ -164,10 +164,37 @@ instead.
 
 ### Frame order (gl.c)
 
-1. `hdtext_frame`, then `hdui_frame`, on the new picture.
-2. `glClear`, then `hdui_backdrop`.
+1. `hdtext_frame`, then `hdui_frame`, then `hdback_frame`, on the new
+   picture.
+2. `glClear`, then `hdback_draw` (the docked picture, over the whole
+   window, letterbox bars included), then `hdui_backdrop`.
 3. `hdui_draw_under`, then the screen texture.
 4. `hdtext_draw`, then `hdui_draw_over`.
+
+### The backdrop under the glass
+
+When a docked picture is up (`hdback_active`, see `docs/hd/backdrops.md`)
+and the layer owns the page (`hdui_owns_page`), the page is drawn as
+frosted glass over that picture instead of over the dark base:
+
+- `hdui_backdrop` lays a 0.30 wash (`WASH_A`) instead of the opaque base,
+  so the picture shows through.
+- Panels and cards drop to 0.30 to 0.22 and 0.32 to 0.24 alpha
+  (`SEE_GLASS_A0/A1`, `SEE_CARD_A0/A1`).
+- Behind each panel `hdback_frost_begin` draws a blurred copy of the
+  picture. It is made once per picture, never per frame, in `make_frost`:
+  boxed down by 4, Gaussian blur with sigma 24 pixels of a 1600-pixel
+  window, its luma pulled to 0.33 and held within 0.14 of it
+  (`FROST_MID`, `FROST_SPAN`, `FROST_FLAT` 0.75), colour kept
+  (`FROST_SAT` 1.00). A dark hangar and a sunlit planet therefore give
+  glass of about the same brightness, so the text tokens keep their
+  contrast.
+- The frost's texture coordinates map window pixels through the same
+  picture area the letterbox uses, so the blur stays under the panel at
+  any window shape.
+- Secondary text on that glass uses `C_TEXT2_SEE` (#c2d0e0) in place of
+  `C_TEXT2`, which keeps it at 3.7:1 or more over the brightest part of
+  any picture measured. Primary text stays at about 5:1 or more.
 
 ## Clicks
 
@@ -223,7 +250,8 @@ repository.
 
 | Switch | Effect |
 |---|---|
-| `--classic-ui` | the game's own flat pages, exactly the old picture (hdtext keeps its old per-glyph typesetting) |
+| `--classic-ui` | the game's own flat pages, exactly the old picture (hdtext keeps its old per-glyph typesetting); no docked backdrop either |
+| `FE2_HD_BACKDROP=0` | the restyled pages over the dark base, without the docked picture or the frost |
 | `--pixel-text` | the original bitmap font and pages; no hdtext, no hdui |
 | `FE2_HDUI_LOG=1` | each new page's boxes (B), runs (R, hashes and places only), clear areas (C) and hot regions (H, with targets) on stderr |
 | `FE2_HDUI_DUMP=dir` | each new picture's raster, palettes and uploaded copy, raw, for offline study (keep it out of the repository) |

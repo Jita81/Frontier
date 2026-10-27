@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #ifdef __APPLE__
 #include <OpenGL/gl.h>
 #else
@@ -11,6 +12,7 @@
 #endif
 
 #include "hdback.h"
+#include "hdui.h"
 #include "art.h"
 #include "../m68000.h"
 #include "../fixups.h"
@@ -299,14 +301,22 @@ static const struct art *pick (const struct where *w, enum light *drawn)
 
 /* --- the texture ------------------------------------------------------ */
 
+static int debug = -1;	/* FE2_HD_DEBUG, read by hdback_draw */
+
 static GLuint tex;
 static int tex_w, tex_h, img_w, img_h;
 static char tex_file[64];	/* what tex holds, or failed to load */
 
+/* the frost under hdui's glass: the same picture, a quarter the size,
+ * blurred and graded (make_frost), in a texture of its own */
+static GLuint frost_tex;
+static int frost_tw, frost_th;
+
 void hdback_forget (void)
 {
 	if (tex) glDeleteTextures (1, &tex);
-	tex = 0;
+	if (frost_tex) glDeleteTextures (1, &frost_tex);
+	tex = frost_tex = 0;
 	tex_file[0] = 0;
 }
 
@@ -315,6 +325,132 @@ static int pow2 (int n)
 	int p = 1;
 	while (p < n) p <<= 1;
 	return p;
+}
+
+/* --- the frost ---------------------------------------------------------
+ *
+ * Frosted glass shows what is behind it blurred.  The blur is made once
+ * per picture, here, never per frame: the picture boxed down by FROST_DOWN,
+ * then three box blurs each way (three boxes are close to a gaussian), the
+ * edges clamped.  The radius is chosen so the blur's sigma is FROST_SIGMA
+ * pixels of a FROST_REF_W wide window, the picture covering it (it scales
+ * with the window, like the picture): wide enough that what is left of the
+ * picture is soft shapes and colour, not things.
+ *
+ * Then the grade, which holds the brightness and lets the colour through.
+ * Each texel's brightness (Rec. 709 luma) is taken as its swing from the
+ * whole frost's mean, scaled by FROST_FLAT and rolled off (tanh) so it never
+ * passes FROST_SPAN, around a fixed FROST_MID: whatever the picture, a dark
+ * hangar or a sunlit planet, the frost's luma stays within FROST_MID +-
+ * FROST_SPAN (times the light's tint, which only darkens).  That bound is
+ * what hdui's text contrast on the glass rests on.  The colour (each
+ * channel's difference from the luma) is kept at FROST_SAT, so the planet
+ * shows through as blue and the hangar as grey, at the same brightness. */
+#define FROST_DOWN	4
+#define FROST_SIGMA	24.0f	/* window pixels ... */
+#define FROST_REF_W	1600.0f	/* ... at this window width */
+#define FROST_MID	0.33f	/* the frost's luma (0..1) ... */
+#define FROST_SPAN	0.14f	/* ... never further than this from it ... */
+#define FROST_FLAT	0.75f	/* ... the picture's swings scaled by this first */
+#define FROST_SAT	1.00f	/* the colour kept */
+
+/* one line of n RGB texels, every stride floats: a box 2r+1 wide, edges clamped */
+static void box_line (float *p, int n, int stride, int r, float *tmp)
+{
+	float s[3] = { 0, 0, 0 }, k = 1.0f / (2 * r + 1);
+	int i, c, j;
+
+	for (j = -r; j <= r; j++) {
+		int q = j < 0 ? 0 : j >= n ? n - 1 : j;
+		for (c = 0; c < 3; c++) s[c] += p[q * stride + c];
+	}
+	for (i = 0; i < n; i++) {
+		int add = i + r + 1, sub = i - r;
+		if (add > n - 1) add = n - 1;
+		if (sub < 0) sub = 0;
+		for (c = 0; c < 3; c++) {
+			tmp[i * 3 + c] = s[c] * k;
+			s[c] += p[add * stride + c] - p[sub * stride + c];
+		}
+	}
+	for (i = 0; i < n; i++)
+		for (c = 0; c < 3; c++) p[i * stride + c] = tmp[i * 3 + c];
+}
+
+static void make_frost (const unsigned char *rgba, int w, int h)
+{
+	int bw = (w + FROST_DOWN - 1) / FROST_DOWN, bh = (h + FROST_DOWN - 1) / FROST_DOWN;
+	float sigma, *f, *tmp;
+	double mean;
+	unsigned char *out;
+	int x, y, i, c, r, pass;
+	GLint bound;
+
+	/* sigma in downsampled texels; three boxes of 2r+1 give sigma^2 = ((2r+1)^2 - 1) / 4 */
+	sigma = FROST_SIGMA * w / FROST_REF_W / FROST_DOWN;
+	r = (int) floor ((sqrt (4 * sigma * sigma + 1) - 1) / 2 + 0.5);
+	if (r < 1) r = 1;
+	frost_tw = pow2 (bw);
+	frost_th = pow2 (bh);
+	f = malloc ((size_t) bw * bh * 3 * sizeof (float));
+	tmp = malloc ((size_t) (bw > bh ? bw : bh) * 3 * sizeof (float));
+	out = malloc ((size_t) frost_tw * frost_th * 4);
+	if (!f || !tmp || !out) {
+		free (f); free (tmp); free (out);
+		return;
+	}
+
+	/* box down */
+	for (y = 0; y < bh; y++)
+		for (x = 0; x < bw; x++) {
+			float s[3] = { 0, 0, 0 };
+			int n = 0, px, py;
+			for (py = y * FROST_DOWN; py < (y + 1) * FROST_DOWN && py < h; py++)
+				for (px = x * FROST_DOWN; px < (x + 1) * FROST_DOWN && px < w; px++, n++)
+					for (c = 0; c < 3; c++)
+						s[c] += rgba[((size_t) py * w + px) * 4 + c];
+			for (c = 0; c < 3; c++) f[(y * bw + x) * 3 + c] = s[c] / (n * 255.0f);
+		}
+	/* blur: rows, then columns, three times */
+	for (pass = 0; pass < 3; pass++) {
+		for (y = 0; y < bh; y++) box_line (f + y * bw * 3, bw, 3, r, tmp);
+		for (x = 0; x < bw; x++) box_line (f + x * 3, bh, bw * 3, r, tmp);
+	}
+	/* the frost's mean brightness, then grade (see above), and fill the
+	 * power-of-two texture, the last row and column carried on into the
+	 * spare so the edge clamps to the picture's edge */
+	for (i = 0, mean = 0; i < bw * bh; i++)
+		mean += 0.2126 * f[i * 3] + 0.7152 * f[i * 3 + 1] + 0.0722 * f[i * 3 + 2];
+	mean /= (double) bw * bh;
+	for (y = 0; y < frost_th; y++)
+		for (x = 0; x < frost_tw; x++) {
+			const float *s = f + ((y < bh ? y : bh - 1) * bw + (x < bw ? x : bw - 1)) * 3;
+			float l = 0.2126f * s[0] + 0.7152f * s[1] + 0.0722f * s[2];
+			float g = FROST_MID + FROST_SPAN * tanhf (FROST_FLAT * (l - (float) mean) / FROST_SPAN);
+			unsigned char *o = out + ((size_t) y * frost_tw + x) * 4;
+			for (c = 0; c < 3; c++) {
+				float v = g + (s[c] - l) * FROST_SAT;
+				o[c] = (unsigned char) (v <= 0 ? 0 : v >= 1 ? 255 : v * 255 + 0.5f);
+			}
+			o[3] = 255;
+		}
+	glGetIntegerv (GL_TEXTURE_BINDING_2D, &bound);
+	glGenTextures (1, &frost_tex);
+	glBindTexture (GL_TEXTURE_2D, frost_tex);
+	glPixelStorei (GL_UNPACK_ALIGNMENT, 1);
+	glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA, frost_tw, frost_th, 0, GL_RGBA, GL_UNSIGNED_BYTE, out);
+	glPixelStorei (GL_UNPACK_ALIGNMENT, 4);
+	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glBindTexture (GL_TEXTURE_2D, (GLuint) bound);
+	if (debug > 0)
+		fprintf (stderr, "hdback: frost %dx%d (texture %dx%d), box radius %d x3, sigma %.1f texels, mean luma %.3f\n",
+			 bw, bh, frost_tw, frost_th, r, sqrt (((2 * r + 1) * (2 * r + 1) - 1) / 4.0), mean);
+	free (f);
+	free (tmp);
+	free (out);
 }
 
 static int load (const char *file)
@@ -349,6 +485,9 @@ static int load (const char *file)
 	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	glBindTexture (GL_TEXTURE_2D, (GLuint) bound);
+	/* the frost is for hdui's glass, and hdui is off under --classic-ui
+	 * (set once, at start): no frost to make there */
+	make_frost (rgba, w, h);
 	free (rgba);
 	return 1;
 }
@@ -360,8 +499,79 @@ static int load (const char *file)
 #define BACK_GAIN	0.80f
 #define SCRIM_ALPHA	0.50f
 
-static int debug = -1;
+/* ... and when hdui owns the page (its wash and glass dim it instead) */
+#define UI_GAIN		0.95f
+#define UI_SCRIM_ALPHA	0.0f
+
 static int drew;	/* hdback_draw put the picture down for this frame */
+static int shown;	/* the same, kept until the next hdback_draw (hdback_active) */
+
+/* where hdback_draw put the picture, window pixels (y up), and the tint
+ * of the light it drew it under (the frost's colour) */
+static float pic_x0, pic_y0, pic_dw, pic_dh, pic_tint[3];
+
+int hdback_active (void)
+{
+	return shown;
+}
+
+int hdback_frost_begin (float *rgb)
+{
+	GLdouble P[16], M[16], C[16];
+	GLint vp[4];
+	GLdouble ax, ay, az, aw, bx, by, bz, bw, su, tv, sp[4], tp[4];
+	int i, j, k;
+
+	if (!shown || !frost_tex) return 0;
+
+	/* object to window pixels for what the caller draws now: the
+	 * viewport after projection x modelview, an affine (orthographic) map */
+	glGetDoublev (GL_PROJECTION_MATRIX, P);
+	glGetDoublev (GL_MODELVIEW_MATRIX, M);
+	glGetIntegerv (GL_VIEWPORT, vp);
+	for (i = 0; i < 4; i++)
+		for (j = 0; j < 4; j++) {
+			C[i * 4 + j] = 0;
+			for (k = 0; k < 4; k++) C[i * 4 + j] += P[k * 4 + j] * M[i * 4 + k];
+		}
+	/* window x = ax x + ay y + az z + aw, window y = bx x + by y + bz z + bw */
+	ax = vp[2] * 0.5 * C[0];
+	ay = vp[2] * 0.5 * C[4];
+	az = vp[2] * 0.5 * C[8];
+	aw = vp[0] + vp[2] * 0.5 * (C[12] + 1);
+	bx = vp[3] * 0.5 * C[1];
+	by = vp[3] * 0.5 * C[5];
+	bz = vp[3] * 0.5 * C[9];
+	bw = vp[1] + vp[3] * 0.5 * (C[13] + 1);
+
+	/* hdback_draw's texture coordinates at a window pixel: across the
+	 * picture from its left, and down it from its top (the picture's
+	 * first row is its top), in the frost texture's own size and padding */
+	su = (double) img_w / FROST_DOWN / frost_tw / pic_dw;
+	tv = (double) img_h / FROST_DOWN / frost_th / pic_dh;
+	sp[0] = ax * su; sp[1] = ay * su; sp[2] = az * su; sp[3] = (aw - pic_x0) * su;
+	tp[0] = -bx * tv; tp[1] = -by * tv; tp[2] = -bz * tv; tp[3] = (pic_y0 + pic_dh - bw) * tv;
+
+	glPushAttrib (GL_ENABLE_BIT | GL_TEXTURE_BIT | GL_CURRENT_BIT);
+	glEnable (GL_TEXTURE_2D);
+	glBindTexture (GL_TEXTURE_2D, frost_tex);
+	glTexEnvi (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+	glTexGeni (GL_S, GL_TEXTURE_GEN_MODE, GL_OBJECT_LINEAR);
+	glTexGeni (GL_T, GL_TEXTURE_GEN_MODE, GL_OBJECT_LINEAR);
+	glTexGendv (GL_S, GL_OBJECT_PLANE, sp);
+	glTexGendv (GL_T, GL_OBJECT_PLANE, tp);
+	glEnable (GL_TEXTURE_GEN_S);
+	glEnable (GL_TEXTURE_GEN_T);
+	glDisable (GL_TEXTURE_GEN_R);
+	glDisable (GL_TEXTURE_GEN_Q);
+	for (i = 0; i < 3; i++) rgb[i] = pic_tint[i];
+	return 1;
+}
+
+void hdback_frost_end (void)
+{
+	glPopAttrib ();		/* texgen, binding, enables, env, colour */
+}
 
 static void log_where (const struct where *w, int page,
 		       const struct art *a, enum light drawn)
@@ -395,7 +605,7 @@ void hdback_draw (int fb_w, int fb_h)
 	enum light drawn = L_NONE;
 	static const float no_tint[3] = { 1.0f, 1.0f, 1.0f };
 	const float *t;
-	float s, dw, dh, x0, y0, u, v, k;
+	float s, dw, dh, x0, y0, u, v, k, scrim;
 	GLint env;
 	int page;
 
@@ -405,8 +615,9 @@ void hdback_draw (int fb_w, int fb_h)
 		off = e && !strcmp (e, "0");
 		debug = d && *d && strcmp (d, "0");
 	}
-	drew = 0;
-	if (pixel_art || off) return;
+	drew = shown = 0;
+	/* --classic-ui keeps the game's own flat pages */
+	if (pixel_art || classic_ui || off) return;
 
 	locate (&w);
 	/* a flat page: the page colour fill, and no 3D view filling the
@@ -415,7 +626,7 @@ void hdback_draw (int fb_w, int fb_h)
 	if (w.kind) a = pick (&w, &drawn);
 	if (debug && w.state) log_where (&w, page, a, drawn);
 	if (!page || !a || !load (a->file)) return;
-	drew = 1;
+	drew = shown = 1;
 
 	/* the light the picture was made under, graded to the star's */
 	t = drawn != w.light ? tint[w.light] : no_tint;
@@ -448,6 +659,18 @@ void hdback_draw (int fb_w, int fb_h)
 	u = (float) img_w / tex_w;
 	v = (float) img_h / tex_h;
 	k = BACK_GAIN;
+	scrim = SCRIM_ALPHA;
+	if (hdui_owns_page ()) {
+		k = UI_GAIN;
+		scrim = UI_SCRIM_ALPHA;
+	}
+	pic_x0 = x0;
+	pic_y0 = y0;
+	pic_dw = dw;
+	pic_dh = dh;
+	pic_tint[0] = t[0];
+	pic_tint[1] = t[1];
+	pic_tint[2] = t[2];
 
 	glEnable (GL_TEXTURE_2D);
 	glBindTexture (GL_TEXTURE_2D, tex);
@@ -461,15 +684,17 @@ void hdback_draw (int fb_w, int fb_h)
 	glEnd ();
 	glDisable (GL_TEXTURE_2D);
 
-	glEnable (GL_BLEND);
-	glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	glColor4f (0x0b / 255.0f, 0x10 / 255.0f, 0x16 / 255.0f, SCRIM_ALPHA);
-	glBegin (GL_TRIANGLE_STRIP);
-		glVertex2f (0, 0);
-		glVertex2f (fb_w, 0);
-		glVertex2f (0, fb_h);
-		glVertex2f (fb_w, fb_h);
-	glEnd ();
+	if (scrim > 0) {
+		glEnable (GL_BLEND);
+		glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		glColor4f (0x0b / 255.0f, 0x10 / 255.0f, 0x16 / 255.0f, scrim);
+		glBegin (GL_TRIANGLE_STRIP);
+			glVertex2f (0, 0);
+			glVertex2f (fb_w, 0);
+			glVertex2f (0, fb_h);
+			glVertex2f (fb_w, fb_h);
+		glEnd ();
+	}
 
 	glTexEnvi (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, env);
 	glMatrixMode (GL_PROJECTION);
