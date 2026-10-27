@@ -40,6 +40,7 @@ typedef void (*_GLUfuncptr)();
 #include "hdface.h"
 #include "hdui.h"
 #include "hdback.h"
+#include "hdtip.h"
 /* MEM_SIZE, and the engine's variables by label address (__D<label>) */
 #include "../host.h"
 #include "../fixups.h"
@@ -226,6 +227,7 @@ static void change_vidmode ()
 	hdface_forget ();
 	hdui_forget ();
 	hdback_forget ();
+	hdtip_forget ();
 	if (screen_tex) {
 		glDeleteTextures (1, &screen_tex);
 		screen_tex = 0;
@@ -695,6 +697,7 @@ static void draw_control_panel ()
 	hdface_draw (MainRGBPalette, CtrlRGBPalette);
 	hdtext_draw (font_bmp, MainRGBPalette, CtrlRGBPalette);
 	hdui_draw_over (MainRGBPalette, CtrlRGBPalette);
+	hdtip_draw ();
 	
 	glDisable (GL_TEXTURE_2D);
 	

@@ -82,26 +82,19 @@ static int n_shown;
 
 static int debug = -1;
 
+/* the control panel as the last hdstill_frame found it (hdstill_panel) */
+static struct hdstill_panel panel_now;
+
 /* ------------------------------------------------------------------ */
 /* what each bitmap is */
 
-/* the icons in the function keys */
-enum {
-	G_ABSENT, G_EMPTY, G_FRONT, G_REAR, G_EXT, G_GALMAP, G_SYSMAP, G_SHIP,
-	G_CARGO, G_CMDR, G_PHONE, G_TARGET, G_CROSS, G_WRENCH, G_HYPER,
-	G_PERSON, G_LAUNCH, G_LIST, G_ARM, G_BEAM, G_BURST, G_ORRERY,
-	G_LOAD, G_SAVE, G_DELETE, G_EXIT, G_SECTOR, G_ROUTE, G_TAKEOFF,
-	G_DOC, G_ALPHA
-};
-#define G_OFF		0x80	/* with an icon: crossed out, not to be had now */
+/* the icons in the function keys (G_ in hdstill.h) */
 #define GX(g)		((g) | G_OFF)
 
 enum { K_PANEL, K_LOGO, K_MISSILE, K_SELECT, K_MORE, K_OPT_ON, K_OPT_OFF };
 #define ON_MAIN(k)	((k) >= K_SELECT)	/* in the main screen's rows, on its background */
 #define IS_OPT(k)	((k) >= K_OPT_ON)	/* an option's key, its own colours */
-#define F_MAPKEYS	1	/* the map's time keys where the second display is */
-#define F_SCANNER	2	/* the scanner in the bay */
-#define F_BUTTONS	4	/* the row of keys along the bay's floor */
+/* F_MAPKEYS, F_SCANNER, F_BUTTONS: hdstill.h */
 
 struct art {
 	u64 hash;
@@ -221,6 +214,15 @@ static struct tex {
 } texs[MAX_TEX];
 static float built_sx, built_sy;
 static unsigned frame_no;
+
+/* which function key is at (x, y): 1..4 left, 5..6 in the bay, 7..10 right */
+static int slot_at (int x, int y)
+{
+	if (y >= 186 && x >= 224 && x < 256) return 5 + (x - 224) / 16;
+	if (x < 64) return 1 + x / 16;
+	if (x >= 256) return 7 + (x - 256) / 16;
+	return 0;
+}
 
 /* ------------------------------------------------------------------ */
 /* the art, drawn in code */
@@ -1921,15 +1923,6 @@ static void logo (void)
 	}
 }
 
-/* which function key is at (x, y): 1..4 left, 5..6 in the bay, 7..10 right */
-static int slot_at (int x, int y)
-{
-	if (y >= 186 && x >= 224 && x < 256) return 5 + (x - 224) / 16;
-	if (x < 64) return 1 + x / 16;
-	if (x >= 256) return 7 + (x - 256) / 16;
-	return 0;
-}
-
 static void draw_art (const struct art *a, int x, int y)
 {
 	int i, s;
@@ -2281,6 +2274,49 @@ static int get_tex (int a, int x, int y)
 	return slot;
 }
 
+/* hdstill_frame found r on the screen (newest first): what it shows of
+ * the control panel, unless a newer bitmap already said */
+static void note_panel (const struct rec *r)
+{
+	const struct art *a = &arts[r->art];
+	int i, s;
+
+	if (a->kind == K_MISSILE) {
+		if (panel_now.n_missiles < 8) {
+			short *m = panel_now.missile[panel_now.n_missiles++];
+			m[0] = r->x;
+			m[1] = r->y;
+			m[2] = r->x + r->w - 1;
+			m[3] = r->y + r->h - 1;
+		}
+		return;
+	}
+	if (a->kind != K_PANEL) return;
+	panel_now.valid = 1;
+	s = r->y >= CTRL_Y ? slot_at (r->x, r->y) : 0;
+	for (i = 0; i < 4 && s > 0 && s + i <= 10; i++)
+		if (a->g[i] != G_ABSENT && !panel_now.slot[s + i]) panel_now.slot[s + i] = a->g[i];
+	/* the bay (its middle) and the second display (the map's keys) */
+	if (!(panel_now.seen & 1) && r->x <= 160 && r->x + r->w > 160 && r->y <= 180 && r->y + r->h > 180) {
+		panel_now.seen |= 1;
+		panel_now.flags |= a->flags & F_SCANNER;
+	}
+	if (!(panel_now.seen & 2) && r->x <= 290 && r->x + r->w > 290 && r->y <= 181 && r->y + r->h > 181) {
+		panel_now.seen |= 2;
+		panel_now.flags |= a->flags & F_MAPKEYS;
+	}
+	if (a->v >= 0 && a->w == 64 && a->h == 7 && !(panel_now.seen & 4)) {
+		panel_now.seen |= 4;
+		panel_now.time = a->v + 1;
+	}
+}
+
+int hdstill_panel (struct hdstill_panel *p)
+{
+	*p = panel_now;
+	return panel_now.valid;
+}
+
 void hdstill_frame (const unsigned char *raster, unsigned char *out,
 		    const unsigned int *pal, const unsigned int *ctrl_pal)
 {
@@ -2290,6 +2326,7 @@ void hdstill_frame (const unsigned char *raster, unsigned char *out,
 	int i, j, xx, yy;
 
 	n_shown = 0;
+	memset (&panel_now, 0, sizeof (panel_now));
 	if (pixel_art) return;
 	if (debug < 0) debug = getenv ("FE2_HD_DEBUG") ? atoi (getenv ("FE2_HD_DEBUG")) : 0;
 	frame_no++;
@@ -2352,6 +2389,7 @@ void hdstill_frame (const unsigned char *raster, unsigned char *out,
 			continue;
 		}
 		r->misses = 0;
+		if (r->art >= 0) note_panel (r);
 		/* a layer before this one (the restyled screens) has taken
 		 * it out: theirs */
 		defer = taken * 100 > vis * DEFER_PCT;

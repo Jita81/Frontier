@@ -37,6 +37,34 @@ void hdstill_frame (const unsigned char *raster, unsigned char *out,
  * GL_REPLACE and the colour white, as hdtext_draw leaves them. */
 void hdstill_draw (const unsigned int *pal, const unsigned int *ctrl_pal);
 
+/* The icons in the function keys, as this layer names them */
+enum {
+	G_ABSENT, G_EMPTY, G_FRONT, G_REAR, G_EXT, G_GALMAP, G_SYSMAP, G_SHIP,
+	G_CARGO, G_CMDR, G_PHONE, G_TARGET, G_CROSS, G_WRENCH, G_HYPER,
+	G_PERSON, G_LAUNCH, G_LIST, G_ARM, G_BEAM, G_BURST, G_ORRERY,
+	G_LOAD, G_SAVE, G_DELETE, G_EXIT, G_SECTOR, G_ROUTE, G_TAKEOFF,
+	G_DOC, G_ALPHA
+};
+#define G_OFF		0x80	/* with an icon: drawn crossed out */
+
+#define F_MAPKEYS	1	/* the map's time keys where the second display is */
+#define F_SCANNER	2	/* the scanner in the bay */
+#define F_BUTTONS	4	/* the row of keys along the bay's floor */
+
+/* The control panel as the last hdstill_frame found it on the screen:
+ * the icon in each function key (slot[1..10], G_ABSENT where none was
+ * found), F_ flags of the bay and the second display, the time key lit
+ * (time: 0 none found, 1 paused, 2..6 1x..10000x) and the missiles on
+ * the pylons (ST rectangles x0, y0, x1, y1).  Read only, for hdtip. */
+struct hdstill_panel {
+	int valid, flags, seen, time;
+	unsigned char slot[11];
+	int n_missiles;
+	short missile[8][4];
+};
+/* Fills *p; returns p->valid (0 with --pixel-art or no panel seen) */
+int hdstill_panel (struct hdstill_panel *p);
+
 /* The GL context is going away: drop this layer's textures. */
 void hdstill_forget (void);
 
