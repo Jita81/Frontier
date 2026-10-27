@@ -55,6 +55,23 @@ No hard black outlines, no dithering, no pixel edges.
 Every run has a soft shadow instead of the game's hard one. If a bundled
 font cannot be loaded the system falls back to DIN Alternate Bold.
 
+Setting rules that keep the pages tidy:
+
+- A left-set run is placed by the side bearing of a straight capital
+  stem, not by the ink of its first letter. Letters such as A, T and W
+  hang a little into the margin, as in print, and a column's stems line
+  up.
+- A table's figures are right-aligned on their column heading's right
+  edge. Where they sit does not depend on the widest figure on the page,
+  so a column stays put between the pages of a list. A heading that is
+  wider than its figures still claims them. A heading set narrower than
+  the game's sits centred where the game's sat, so the room it leaves
+  goes to the columns on both sides.
+- Card blurbs break one sentence at a time into lines of nearly equal
+  length, so no line ends on a single word.
+- Text over a picture (the video link's own captions) keeps the game's
+  colour.
+
 The game's font also holds icons. The tick box, the four diagonal arrows
 and the small hex letters are drawn as vectors at full resolution. The
 two unit glyphs (per hour and per second) are set in the run they follow,
@@ -75,8 +92,16 @@ smoothed copy of the original glyph.
 - **check box / radio** (`E_CHECK`, `E_RADIO`): the preferences and
   the start menu.
 - **pill** (`E_PILL`): next page, go back, refuel and similar foot actions.
+- **pager**: the next-page pill of a long list (the market, upgrades,
+  the bulletin board). Two round buttons, a down chevron and an up
+  chevron, sit in front of its label. Both are always
+  there, so the pill keeps its shape as the list moves. A direction the
+  game does not offer right now is dimmed and does nothing.
 - **frame** (`E_FRAME`): a hairline frame with accent corners round a 3D
-  view.
+  view or a portrait. Round a portrait, the gap between the frame and the
+  picture is the same on all four sides at every window size. The
+  portrait's glass card sits flush with the left edge of the window, and
+  a faint band with a hairline fills the strip above the portrait.
 - **rule**, **quad**: hairlines and accent underlines.
 - **line icons**: launch, ship, document, market, shield, chip, wrench,
   swap, back, more, plus, minus, eye, chevron, check, drop, speech, eject,
@@ -129,6 +154,14 @@ The layout is rebuilt every frame, and the click map goes live only after
 the layout has been the same for a frame. A page that changes under the
 pointer never sends a click to a stale place.
 
+The page's layout key holds the page, its components and its hot
+regions, but not the palette's page colour. During a palette fade that
+colour changes every frame while the layout stands still, and a key that
+held it would keep the click map from ever going live. The backdrop
+checks the colour itself (point 5 above). When the colour has changed,
+`hdui_draw_under` draws the base and the glass under the picture
+instead.
+
 ### Frame order (gl.c)
 
 1. `hdtext_frame`, then `hdui_frame`, on the new picture.
@@ -149,6 +182,10 @@ mouse-to-ST conversion (`Call_GetMouseInput` in `src/input.c`) calls
 - A press elsewhere in the station pages' right column goes to an inert
   point (1,1), because the game's own boxes there are no longer where
   they are drawn.
+- A list's pager: a press on the down button or on the label goes to
+  the game's down arrow, a press on the up button to its up arrow, at
+  each arrow's centre. A button the game does not show right now, and the
+  label when there is no next page, go to the inert point.
 - The left panel, the control panel (rows 168 and below) and pages the
   layer does not know pass through unchanged.
 
@@ -202,8 +239,8 @@ The other HD streams have their own switches: `--pixel-art` (stills) and
 | Page | Status |
 |---|---|
 | start menu: start-position picker | done: cards with vector radio rings. The text that did not look HD there was the tick boxes and arrows, a smoothed upscale of the font's icon glyphs; they are vectors now. The logo belongs to the stills stream |
-| station services | done: header bar, portrait card, 2x2 grid of large cards |
-| stock market (both pages) | done: glass table, plus and minus buttons, next-page pill |
+| station services | done: header bar, flush-left portrait card with an evenly framed portrait, 2x2 grid of large cards |
+| stock market (both pages) | done: glass table, plus and minus buttons, pager pill with down and up buttons |
 | shipyard menu | done: 2x2 grid |
 | shipyard: upgrades (fit and remove) | done: table, next page and go back pills |
 | shipyard: repairs and servicing | done: table |
@@ -211,7 +248,7 @@ The other HD streams have their own switches: `--pixel-art` (stills) and
 | police | done |
 | bulletin board | done: advert cards |
 | bulletin board advert, video link | done: answers as rows |
-| ship equipment status (F3) | done: glass sheet, framed 3D view, cargo panel glass |
+| ship equipment status (F3) | done: glass sheet, framed 3D view, cargo panel glass. Values are set in the body face. In the panel the figures sit right-aligned under their headings, a count trailing a label is split off as a value, and the cash becomes a panel heading with its figure in the accent colour, as in the station pages' header |
 | commander profile and ratings (F3) | done |
 | cargo inventory (F3) | done: jettison in place, refuel pill, column headings |
 | preferences (escape) | done: headed groups of check boxes and radios, whole rows clickable |

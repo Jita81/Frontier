@@ -1253,6 +1253,22 @@ static void place_run (int i, float sx, float sy, const unsigned int *pal, const
 		rgb = (r->y + 4 >= CTRL_Y && r->col < 16 ? ctrl_pal : pal)[r->col];
 	k = cap / 100.0f;
 	pen = left - lsb * sq;
+	/* a left-set run that starts with a letter hangs on a stem: its pen
+	 * is where an H's would put the stem at the anchor, so an A, W or T
+	 * overhangs the way type does instead of each line's first ink
+	 * sitting on the column and the diagonals looking indented */
+	if (align != HDT_RIGHT && align != HDT_CENTRE) {
+		float z0, zh, lead = 0;
+		int c0, s0 = -1, sh = set_slot ('H', &zh);
+		for (c0 = 0; c0 < n; c0++) {
+			s0 = set_slot (u[c0], &z0);
+			if (u[c0] != ' ' && s0 >= 0 && fc->has[s0]) break;
+			lead += fc->space * k + ro->track * cap;
+		}
+		if (c0 < n && sh >= 0 && fc->has[sh] && z0 == 1 &&
+		    ((u[c0] >= 'A' && u[c0] <= 'Z') || (u[c0] >= 'a' && u[c0] <= 'z')))
+			pen = left - (lead + fc->lsb[sh] * k) * sq;
+	}
 	for (c = 0; c < n && n_placed < MAX_PLACED; c++) {
 		struct placed *p;
 		struct atlas *ga = a;

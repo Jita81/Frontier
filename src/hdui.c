@@ -123,7 +123,7 @@ enum { E_QUAD, E_GLASS, E_CARD, E_ROW, E_BTN, E_CHECK, E_RADIO, E_PILL, E_FRAME,
 /* line icons */
 enum { I_NONE, I_LAUNCH, I_SHIP, I_DOC, I_MARKET, I_SHIELD, I_CHIP, I_WRENCH, I_SWAP,
        I_BACK, I_MORE, I_PLUS, I_MINUS, I_EYE, I_CHEVRON, I_CHECK, I_DROP, I_SPEECH, I_EJECT,
-       I_STATION };
+       I_STATION, I_UP };
 
 /* element flags */
 #define F_TL		1	/* glass: rounded corners */
@@ -137,6 +137,8 @@ enum { I_NONE, I_LAUNCH, I_SHIP, I_DOC, I_MARKET, I_SHIELD, I_CHIP, I_WRENCH, I_
 #define F_HOVERONLY	128	/* row: drawn only while the pointer is on it */
 #define F_NOICON	256	/* pill: the game's own icon shows in its slot */
 #define F_BIG		512	/* card: a tile of a grid, a large icon over its label */
+#define F_ROUND		1024	/* button: a circle */
+#define F_OFF		2048	/* button: not there now (dimmed, no hover) */
 
 struct elem {
 	unsigned char kind, layer, icon, state;	/* state: 0, 1 hover, 2 pressed */
@@ -372,8 +374,13 @@ static void take_out (const unsigned char *r, unsigned char *out, const struct b
 	}
 }
 
-/* The game's next page arrow: a 16x10 picture in the page colour (e),
- * a light (f) and black (0), drawn where a list continues */
+/* The game's arrows for paging a list: 16x10 pictures in the page colour
+ * (e), a light (f) and black (0), drawn at the foot of the right of a page
+ * where a list continues.  The down arrow (the next rows) shows while
+ * there are more below, the up arrow (the rows before) 12 pixels to its
+ * right once the list has moved on; the up arrow's left edge overlaps the
+ * down arrow's padding, so only the down arrow's first 12 columns are
+ * matched. */
 static const char *const more_arrow[10] = {
 	"eeffffffeeeeeeee",
 	"eefeeee0eeeeeeee",
@@ -387,14 +394,29 @@ static const char *const more_arrow[10] = {
 	"eeee000eeeeeeeee",
 };
 
-static int more_at (const unsigned char *r, int x, int y)
+static const char *const less_arrow[10] = {
+	"eeeeffeeeeeeeeee",
+	"eeefee0eeeeeeeee",
+	"eefeeee0eeeeeeee",
+	"efeeeeee0eeeeeee",
+	"feeeeeeee0eeeeee",
+	"e00eeee000eeeeee",
+	"eefeeee0eeeeeeee",
+	"eefeeee0eeeeeeee",
+	"eefeeee0eeeeeeee",
+	"eee00000eeeeeeee",
+};
+
+#define MORE_UP		12	/* the up arrow's x from the down arrow's */
+
+static int arrow_at (const unsigned char *r, const char *const *pic, int w, int x, int y)
 {
 	int i, j, light = -1;
 
 	if (x < 0 || y < 0 || x + 16 > ST_W || y + 10 > CTRL_Y) return 0;
 	for (j = 0; j < 10; j++)
-		for (i = 0; i < 16; i++) {
-			int p = R (x + i, y + j), t = more_arrow[j][i];
+		for (i = 0; i < w; i++) {
+			int p = R (x + i, y + j), t = pic[j][i];
 			if (t == 'e' && p != BG) return 0;
 			if (t == '0' && p != 0) return 0;
 			if (t == 'f') {
@@ -405,28 +427,41 @@ static int more_at (const unsigned char *r, int x, int y)
 	return 1;
 }
 
-/* where the arrow is, near the foot of the right of a page: 0 if not */
+#define MORE_DOWN	1	/* the list goes on below */
+#define MORE_BACK	2	/* and back above */
+
+/* Which of the arrows show near the foot of the right of a page (0 if
+ * neither), and where the down arrow's cell is (or would be) */
 static int find_more (const unsigned char *r, int *mx, int *my)
 {
 	int x, y;
 
 	for (y = 148; y + 10 <= CTRL_Y; y++)
-		for (x = 118; x + 16 <= ST_W; x++)
-			if (R (x + 2, y) != BG && R (x + 2, y) != 255 && more_at (r, x, y)) {
+		for (x = 118; x + 16 <= ST_W; x++) {
+			int p = R (x + 2, y), q = R (x + 4, y);
+			if (p != BG && p != 255 && arrow_at (r, more_arrow, 12, x, y)) {
 				*mx = x;
 				*my = y;
-				return 1;
+				return MORE_DOWN | (arrow_at (r, less_arrow, 16, x + MORE_UP, y) ? MORE_BACK : 0);
 			}
+			if (q != BG && q != 255 && x >= 118 + MORE_UP && arrow_at (r, less_arrow, 16, x, y)) {
+				*mx = x - MORE_UP;
+				*my = y;
+				return MORE_BACK;
+			}
+		}
 	return 0;
 }
 
-static void take_out_more (const unsigned char *r, unsigned char *out, int x, int y)
+/* take the arrows that show out of the picture, where it is still as the
+ * game drew it */
+static void take_out_more (const unsigned char *r, unsigned char *out, int x, int y, int more)
 {
-	int i, j;
+	int i, j, x0 = more & MORE_DOWN ? x : x + MORE_UP, x1 = more & MORE_BACK ? x + MORE_UP + 16 : x + 16;
 
 	for (j = 0; j < 10; j++)
-		for (i = 0; i < 16; i++) {
-			int o = (y + j) * ST_W + x + i;
+		for (i = x0; i < x1; i++) {
+			int o = (y + j) * ST_W + i;
 			if (out[o] == r[o]) out[o] = 255;
 		}
 }
@@ -463,7 +498,9 @@ static int box_on (const struct button *b, const unsigned int *pal)
 }
 
 /* The bounds of the opaque picture (a bitmap: a portrait) in a box, ST
- * pixels; 0 if there is none */
+ * pixels, its last row and column included in them; 0 if there is none.
+ * The picture is the first band of rows each with something wide in it:
+ * the search goes on to its foot, and stops there. */
 static int find_blob (const unsigned char *out, int x0, int y0, int x1, int y1, float *bb)
 {
 	int x, y, lx = ST_W, ly = ST_H, hx = -1, hy = -1;
@@ -476,7 +513,10 @@ static int find_blob (const unsigned char *out, int x0, int y0, int x1, int y1, 
 				if (x < a) a = x;
 				b = x;
 			}
-		if (n < 24) continue;
+		if (n < 24) {
+			if (hy >= 0) break;
+			continue;
+		}
 		if (y < ly) ly = y;
 		hy = y;
 		if (a < lx) lx = a;
@@ -773,6 +813,9 @@ static void icon (CGContextRef g, int which, float cx, float cy, float s, float 
 	case I_MORE:
 		M (6, 9); L (12, 15); L (18, 9);
 		break;
+	case I_UP:
+		M (6, 15); L (12, 9); L (18, 15);
+		break;
 	case I_PLUS:
 		M (12, 5); L (12, 19); M (5, 12); L (19, 12);
 		break;
@@ -996,8 +1039,9 @@ static void paint_row (CGContextRef g, const struct paint *p)
 static void paint_btn (CGContextRef g, const struct paint *p)
 {
 	float u = p->u, w = p->w, h = p->h, s = w < h ? w : h;
-	int hov = p->state >= 1, prs = p->state == 2 || (p->flags & F_ON);
-	CGPathRef path = rrect (0, 0, w, h, 5 * u, F_ALL), in;
+	int off = p->flags & F_OFF, round = p->flags & F_ROUND;
+	int hov = !off && p->state >= 1, prs = !off && (p->state == 2 || (p->flags & F_ON));
+	CGPathRef path = round ? circle (w / 2, h / 2, s / 2) : rrect (0, 0, w, h, 5 * u, F_ALL), in;
 
 	halo (g, path, 1 * u, 4 * u, 0, 0.45f);
 	if (hov) halo (g, path, 0, 10 * u, C_ACCENT, 0.40f);
@@ -1011,10 +1055,11 @@ static void paint_btn (CGContextRef g, const struct paint *p)
 		CGContextFillRect (g, CGRectMake (0, 0, w, h));
 	}
 	CGContextRestoreGState (g);
-	in = rrect (0.5f * u, 0.5f * u, w - u, h - u, 4.5f * u, F_ALL);
-	stroke_path (g, in, u, hov || prs ? C_ACCENT : 0xffffff, hov || prs ? 0.85f : 0.14f);
+	in = round ? circle (w / 2, h / 2, s / 2 - 0.5f * u) : rrect (0.5f * u, 0.5f * u, w - u, h - u, 4.5f * u, F_ALL);
+	stroke_path (g, in, u, hov || prs ? C_ACCENT : 0xffffff, hov || prs ? 0.85f : off ? 0.06f : 0.14f);
 	CGPathRelease (in);
-	icon (g, p->icon, w / 2, h / 2, s * 0.64f, 2 * u, prs ? C_TEXT : hov ? C_ACCENT : C_TEXT, prs || hov ? 1 : 0.88f);
+	icon (g, p->icon, w / 2, h / 2, s * (round ? 0.6f : 0.64f), 2 * u, prs ? C_TEXT : hov ? C_ACCENT : C_TEXT,
+	      prs || hov ? 1 : off ? 0.25f : 0.88f);
 	CGPathRelease (path);
 }
 
@@ -1419,7 +1464,18 @@ static void draw_elems (int layer)
 			rect_px (PX (e->x0), PY (e->y0), PX (e->x1), PY (e->y1), e->rgb, e->alpha);
 			break;
 		case E_FRAME:
-			frame_px (PX (e->x0), PY (e->y0), PX (e->x1), PY (e->y1));
+			if (e->c > 0) {
+				/* round a picture (x0..y1: its bounds): the same gap
+				 * on all four sides, in framebuffer pixels, as wide
+				 * as there is room for on its left (to a) */
+				float t = floorf (uu + 0.5f), g, gmax = floorf (4 * uu + 0.5f);
+				if (t < 1) t = 1;
+				g = PX (e->x0) - PX (e->a) - t;
+				if (g > gmax) g = gmax;
+				if (g < 1) g = 1;
+				frame_px (PX (e->x0) - g - t, PY (e->y0) - g - t, PX (e->x1) + g + t, PY (e->y1) + g + t);
+			} else
+				frame_px (PX (e->x0), PY (e->y0), PX (e->x1), PY (e->y1));
 			break;
 		case E_RULE: {
 			/* a hairline (c: its thickness, design pixels) */
@@ -1710,7 +1766,7 @@ static void grid_card (struct button *b, float x0, float y0, float x1, float y1,
 {
 	struct hdtext_run *lab = label_of (b, 12, 20);
 	int i, j, nw = 0, idx[48], nl = 0, brk[8], hard[48], lasty = -1;
-	float cw = x1 - x0, cx = (x0 + x1) / 2, ch = y1 - y0, w[48], lim, tot = 0, Ih, T, top, lw[8];
+	float cw = x1 - x0, cx = (x0 + x1) / 2, ch = y1 - y0, w[48], lim, Ih, T, top, lw[8];
 	struct elem *e;
 
 	/* the words, in order */
@@ -1724,7 +1780,6 @@ static void grid_card (struct button *b, float x0, float y0, float x1, float y1,
 		if (hide_bg (r)) continue;
 		style (r, HDT_DESC, C_TEXT2);
 		w[nw] = hdtext_measure (r);
-		tot += w[nw] + (nw ? space : 0);
 		/* a line of the original that starts with a capital starts a
 		 * sentence: a new line here too */
 		{
@@ -1735,31 +1790,44 @@ static void grid_card (struct button *b, float x0, float y0, float x1, float y1,
 		lasty = r->y;
 		idx[nw++] = i;
 	}
-	/* lines: as few as fit, as even as can be */
+	/* lines: a sentence at a time, as few as fit and as even as can be,
+	 * so none ends on a word alone */
 	lim = cw - 12;
-	if (nw) {
-		int want = (int) ceilf (tot / lim), tries;
-		float target = want > 1 ? tot / want + space * 2 : lim;
-		if (target > lim) target = lim;
-		for (tries = 0; tries < 2; tries++) {
+	for (i = 0; i < nw && nl < 8; i = j) {
+		float para = w[i], target;
+		int want, k, z, n;
+		for (z = i + 1; z < nw && !hard[z]; z++)
+			para += space + w[z];
+		want = (int) ceilf (para / lim);
+		if (want < 1) want = 1;
+		for (target = para / want;; target += 0.5f) {
 			float cur = 0;
-			nl = 0;
-			brk[nl++] = 0;
-			lw[0] = 0;
-			for (j = 0; j < nw; j++) {
-				float add = (cur > 0 ? space : 0) + w[j];
-				if (cur > 0 && (cur + add > target || hard[j]) && nl < 8) {
-					brk[nl] = j;
-					lw[nl - 1] = cur;
-					nl++;
-					cur = w[j];
+			if (target > lim) target = lim;
+			for (n = 1, k = i; k < z; k++) {
+				float add = (cur > 0 ? space : 0) + w[k];
+				if (cur > 0 && cur + add > target) {
+					n++;
+					cur = w[k];
 				} else
 					cur += add;
 			}
-			lw[nl - 1] = cur;
-			if (nl <= want || target >= lim) break;
-			target = lim;
+			if (n <= want || target >= lim) break;
 		}
+		{
+			float cur = 0;
+			brk[nl] = i;
+			for (k = i; k < z; k++) {
+				float add = (cur > 0 ? space : 0) + w[k];
+				if (cur > 0 && cur + add > target && nl < 7) {
+					lw[nl++] = cur;
+					brk[nl] = k;
+					cur = w[k];
+				} else
+					cur += add;
+			}
+			lw[nl++] = cur;
+		}
+		j = z;
 	}
 
 	/* the block: icon, name, lines, in the card's middle */
@@ -1873,10 +1941,15 @@ static void split_merged (void)
 
 /* The heads of the right column, left to right: over their column, or
  * over the boxes they name, or where they were; never on one another and
- * inside the panel, a size down if the row is too full. */
-static void place_heads (const float *colx, const float *colmax, int ncol)
+ * inside the panel, a size down if the row is too full.  A head over a
+ * column of figures sits where the game's head sat (centred on it, a
+ * little clear of the next head), and the figures are right-set on its
+ * right edge: where a column's figures end depends on what is in it
+ * today, where its head ends does not, so the column stays put from one
+ * page to the next. */
+static void place_heads (const float *colx, int ncol)
 {
-	int i, j, k, n = 0, pass, ord[32];
+	int i, j, k, n = 0, pass, ord[32], col[32];
 	float s = 1, want[32], w[32], left[32];
 
 	for (i = 0; i < n_runs && n < 32; i++) {
@@ -1895,11 +1968,19 @@ static void place_heads (const float *colx, const float *colmax, int ncol)
 			r->scale = s;
 			w[j] = hdtext_measure (r);
 			want[j] = r->ink0;
-			for (k = 0; k < ncol; k++)
-				if (colx[k] >= r->ink0 - 6 && colx[k] <= r->ink1 && colmax[k] - r->ink1 >= -6 &&
-				    colmax[k] - r->ink1 <= 14)
-					want[j] = colmax[k] - w[j];
-			if (want[j] == r->ink0)
+			col[j] = -1;
+			for (k = 0; k < ncol && col[j] < 0; k++)
+				if (colx[k] >= r->ink0 - 6 && colx[k] <= r->ink1) {
+					/* centred on the game's head when ours is the
+					 * narrower: what it leaves goes either side,
+					 * not all to the column on its left */
+					float slack = r->ink1 - r->ink0 + 1 - w[j];
+					float end = r->ink1 - (slack > 0 ? slack / 2 : 0);
+					float next = j + 1 < n ? runs[ord[j + 1]].ink0 - 4 : COL_X1 - 2.5f;
+					col[j] = k;
+					want[j] = (end < next ? end : next) - w[j];
+				}
+			if (col[j] < 0)
 				for (k = 0; k < n_btn; k++)
 					if (btn[k].x >= 118 && btn[k].y < FOOT_Y && fabsf (btn[k].x + 5 - cx) <= 6) {
 						want[j] = btn[k].x + 5 - w[j] / 2;
@@ -1917,7 +1998,54 @@ static void place_heads (const float *colx, const float *colmax, int ncol)
 		r->align = HDT_LEFT;
 		r->ax = left[j];
 		r->maxw = room > w[j] + 1 ? w[j] + 1 : room;
+		if (col[j] < 0) continue;
+		/* right set, so its last letter's ink is on the figures' edge */
+		r->align = HDT_RIGHT;
+		r->ax = left[j] + w[j];
+		for (i = 0; i < n_runs; i++)
+			if (runs[i].x0 == colx[col[j]] && runs[i].align == HDT_RIGHT && runs[i].y > 4 &&
+			    runs[i].y < FOOT_Y)
+				runs[i].ax = left[j] + w[j];
 	}
+}
+
+/* A list's paging arrows and its next-page label: one pill with a round
+ * button for each arrow, the down one first, then the label.  Both
+ * buttons are always there, so the pill does not change as the list
+ * moves; an arrow the game does not show now is dimmed, and a click on it
+ * goes where a click does nothing.  A click on a button goes to the
+ * arrow it stands for, one on the label to the down arrow (the next
+ * rows), as long as there is one. */
+static void more_pager (const unsigned char *raster, unsigned char *out, struct hdtext_run *lab,
+			int more, int mx, int my)
+{
+	float h = 9.5f, w = h * sy / sx, cy = my + 4.75f, y0 = my - 1.5f, y1 = my + 11;
+	float x0 = mx - 2.5f, cd = x0 + (y1 - y0) / 2 * sy / sx, cu = cd + (h + 1.5f) * sy / sx, tw;
+	struct elem *e, *pill;
+	int down = more & MORE_DOWN, back = more & MORE_BACK, hh;
+
+	take_out_more (raster, out, mx, my, more);
+	lab->align = HDT_LEFT;
+	lab->ax = cu + w / 2 + 3;
+	lab->maxw = 60;
+	tw = hdtext_measure (lab);
+	centre_y (lab, cy);
+	pill = add (E_PILL, L_UNDER, x0, y0, lab->ax + tw + 5, y1);
+	pill->flags = F_NOICON;
+
+	/* the buttons' places first: the first place a click is in wins */
+	hh = add_hot (x0, y0, (cd + cu) / 2, y1, down ? mx + 5 : 1, down ? my + 4 : 1, 1);
+	e = add (E_BTN, L_UNDER, cd - w / 2, cy - h / 2, cd + w / 2, cy + h / 2);
+	e->icon = I_MORE;
+	e->flags = F_ROUND | (down ? 0 : F_OFF);
+	e->hot = down ? hh : -1;
+	hh = add_hot ((cd + cu) / 2, y0, cu + w / 2 + 1.5f, y1, back ? mx + MORE_UP + 5 : 1, back ? my + 4 : 1, 1);
+	e = add (E_BTN, L_UNDER, cu - w / 2, cy - h / 2, cu + w / 2, cy + h / 2);
+	e->icon = I_UP;
+	e->flags = F_ROUND | (back ? 0 : F_OFF);
+	e->hot = back ? hh : -1;
+	hh = add_hot (cu + w / 2 + 1.5f, y0, pill->x1, y1, down ? mx + 5 : 1, down ? my + 4 : 1, 1);
+	pill->hot = down ? hh : -1;
 }
 
 static void layout_station (const unsigned char *raster, unsigned char *out)
@@ -1926,7 +2054,7 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 	static unsigned char cover[CTRL_Y][ST_W];
 	int i, j, k, x, y, n124 = 0, n136 = 0, pitch = 999, prev = -1000, first = -1, last = -1;
 	int heads = 0, ships = 0, foot = 0, more = 0, mx = 0, my = 0, stray = 0, inplace = 0, grid = 0;
-	float bb[4], space = 1.3f, s0 = 1000, s1 = -1000, tmin = 1000, tmax = -1000, title_x;
+	float bb[4], space = 1.3f, s0 = 1000, s1 = -1000, tmin = 1000, tmax = -1000, title_x, panel_y = 136.5f;
 	struct hdtext_run *cash = NULL, *cash_lab = NULL;
 	struct elem *e;
 
@@ -1970,7 +2098,7 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 				cover[y][x] = 1;
 	if (more)
 		for (y = my; y < my + 10; y++)
-			for (x = mx; x < mx + 16; x++)
+			for (x = more & MORE_DOWN ? mx : mx + MORE_UP; x < (more & MORE_BACK ? mx + MORE_UP + 16 : mx + 16); x++)
 				cover[y][x] = 1;
 	for (y = 0; y < FOOT_Y; y++)
 		for (x = 121; x < ST_W; x++)
@@ -2030,7 +2158,9 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 		    r->y <= cash_lab->y + 12 && r->ink0 <= cash_lab->ink1 && r->ink1 >= cash_lab->ink0)
 			cash = r;
 	}
-	e = add (E_GLASS, L_BACK, 0.5f, 0.5f, inplace ? 120.5f : COL_X1, HEAD_Y1);
+	/* flush with the window's left edge: the picture under it is one
+	 * pixel from it, and its frame needs the room */
+	e = add (E_GLASS, L_BACK, 0, 0.5f, inplace ? 120.5f : COL_X1, HEAD_Y1);
 	e->flags = F_ALL;
 	e = add (E_ICON, L_UNDER, 3, 2, 13, 12);
 	e->icon = I_STATION;
@@ -2064,12 +2194,24 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 	}
 
 	/* the card on the left: the picture and the cargo panel */
-	e = add (E_GLASS, L_BACK, 0.5f, BODY_Y0, 120.5f, 166.5f);
+	e = add (E_GLASS, L_BACK, 0, BODY_Y0, 120.5f, 166.5f);
 	e->flags = F_ALL;
-	quad (L_BACK, 1.5f, 136.5f, 119.5f, 165.5f, 0xffffff, 0.03f);
-	rule (L_BACK, 4, 117, 136.5f, 0xffffff, 0.10f);
-	if (find_blob (out, 0, 15, 119, 134, bb))
-		add (E_FRAME, L_OVER, bb[0] - 1, bb[1] - 1, bb[2] + 1, bb[3] + 1);
+	if (find_blob (out, 0, 15, 119, FOOT_Y - 1, bb)) {
+		e = add (E_FRAME, L_OVER, bb[0], bb[1], bb[2], bb[3]);
+		e->a = 0;
+		e->c = 1;
+		/* the cargo panel: clear of the frame */
+		panel_y = bb[3] + 2;
+		/* the strip over the picture, where the game left the screen
+		 * empty: a band like the panel under it, so the picture sits
+		 * between the two instead of under a gap */
+		if (bb[1] - 2 - BODY_Y0 >= 2) {
+			quad (L_BACK, 1, BODY_Y0 + 0.5f, 119.5f, bb[1] - 2, 0xffffff, 0.03f);
+			rule (L_BACK, 4, 117, bb[1] - 2, 0xffffff, 0.10f);
+		}
+	}
+	quad (L_BACK, 1, panel_y, 119.5f, 165.5f, 0xffffff, 0.03f);
+	rule (L_BACK, 4, 117, panel_y, 0xffffff, 0.10f);
 	for (i = 0; i < n_runs; i++) {
 		struct hdtext_run *r = &runs[i];
 		if (!ON_PAGE (r) || r->x0 >= 118 || r->role || r == cash || r == cash_lab || hide_bg (r)) continue;
@@ -2085,7 +2227,12 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 		}
 		else if (r->y > 142 && r->col == 12)
 			style (r, HDT_VALUE, C_TEXT);
-		else
+		else if (r->y < 134) {
+			/* on the picture (a call's caption): in the
+			 * game's own colour, as the picture's words are */
+			r->role = HDT_BODY;
+			r->rgb = 0;
+		} else
 			style (r, HDT_BODY, C_TEXT);
 	}
 
@@ -2157,7 +2304,7 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 					r->scale = 0.92f;
 				}
 		}
-		place_heads (colx, colmax, ncol);
+		place_heads (colx, ncol);
 		if (mode == TABLE || mode == ROWS) {
 			for (i = 0; i < n_btn; i++) {
 				struct button *b = &btn[i];
@@ -2226,24 +2373,14 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 		if (!ON_PAGE (r) || r->y < FOOT_Y || r->x0 < 118) continue;
 		if (r->hash == H_MORE) {
 			style (r, HDT_LABEL, C_TEXT);
-			if (more) {
-				float tw;
-				take_out_more (raster, out, mx, my);
-				r->align = HDT_LEFT;
-				r->ax = mx + 17;
-				r->maxw = 60;
-				tw = hdtext_measure (r);
-				e = add (E_PILL, L_UNDER, mx - 2.5f, my - 1.5f, mx + 17 + tw + 5, my + 11);
-				e->icon = I_MORE;
-				e->a = mx + 7.5f;
-				e->b = my + 4.75f;
-				e->c = 26;
-				e->hot = add_hot (e->x0, e->y0, e->x1, e->y1, mx + 7, my + 4, 1);
-				centre_y (r, my + 4.75f);
-			} else {
+			if (more)
+				more_pager (raster, out, r, more, mx, my);
+			else {
+				/* arrows it does not know: they show, and a click
+				 * on the pill goes where it is */
 				e = add (E_PILL, L_UNDER, COL_X0 - 1, r->y - 1.5f, r->ink1 + 5, r->y + 10);
 				e->flags = F_NOICON;
-				e->hot = add_hot (e->x0, e->y0, e->x1, e->y1, 131, 160, 1);
+				e->hot = add_hot (e->x0, e->y0, e->x1, e->y1, 0, 0, 0);
 			}
 		} else if (!r->role)
 			style_body (r);
@@ -2277,6 +2414,83 @@ static void split_colons (float right)
 	}
 }
 
+/* A row of the cargo panel the game printed with its count in the same
+ * string ("label 45"): two runs, so the count goes in its column */
+static void split_counts (float right)
+{
+	int i, k, j, n;
+	char c[64];
+	unsigned char sp[64];
+
+	for (i = n_runs - 1; i >= 0; i--) {
+		const struct hdtext_run *r = &runs[i];
+		if (!ON_PAGE (r) || r->x0 < right || r->y <= 142 || !(r->kind & HDT_K_LETTER)) continue;
+		n = hdtext_chars (r, c, sp, 64);
+		for (k = n - 1; k >= 1 && !sp[k]; k--)
+			;
+		if (k < 1) continue;
+		for (j = k; j < n && c[j] >= '0' && c[j] <= '9'; j++)
+			;
+		if (j == n && hdtext_split (i, k)) n_runs = hdtext_runs (&runs);
+	}
+}
+
+/* The cargo panel under the 3D view: each column's figures right-set
+ * under its head, and the cash as the station pages show it: its label
+ * a head, its figure in the accent, at the panel's right */
+static void f3_panel (float right)
+{
+	struct hdtext_run *head[8], *cash_lab = NULL, *cash = NULL;
+	float head_y = 138, hr[8], head_x1 = 0;
+	int i, k, nh = 0;
+
+	for (i = 0; i < n_runs; i++) {
+		struct hdtext_run *r = &runs[i];
+		if (!ON_PAGE (r) || r->x0 < right || r->y < 132) continue;
+		if (r->y <= 142 && nh < 8) {
+			head[nh] = r;
+			hr[nh] = r->ink0 + hdtext_measure (r);
+			if (hr[nh] > head_x1) head_x1 = hr[nh];
+			head_y = r->y;
+			nh++;
+		} else if (r->hash == H_CASH && r->y > 142)
+			cash_lab = r;
+	}
+	for (i = 0; i < n_runs && cash_lab; i++) {
+		struct hdtext_run *r = &runs[i];
+		if (r != cash_lab && ON_PAGE (r) && (r->kind & HDT_K_NUMERIC) && r->y >= cash_lab->y + 8 &&
+		    r->y <= cash_lab->y + 12 && r->ink0 <= cash_lab->ink1 && r->ink1 >= cash_lab->ink0)
+			cash = r;
+	}
+	for (i = 0; i < n_runs; i++) {
+		struct hdtext_run *r = &runs[i];
+		if (!ON_PAGE (r) || r == cash || r->x0 < right || r->y <= 142 || !(r->kind & HDT_K_NUMERIC) ||
+		    (r->kind & HDT_K_LETTER))
+			continue;
+		for (k = 0; k < nh; k++)
+			if (r->ink1 >= head[k]->ink0 - 2 && r->ink0 <= head[k]->ink1 + 2) {
+				/* its room is its head's, not what was left of
+				 * the game's place for it once the head is set
+				 * narrower */
+				r->align = HDT_RIGHT;
+				r->ax = hr[k];
+				r->maxw = hr[k] - head[k]->ink0 + 6;
+				break;
+			}
+	}
+	if (cash_lab && cash) {
+		style (cash_lab, HDT_SECTION, C_TEXT2);
+		cash_lab->align = HDT_RIGHT;
+		cash_lab->ax = 314;
+		centre_y (cash_lab, head_y + 3.5f);
+		style (cash, HDT_VALUE, C_ACCENT);
+		cash->align = HDT_RIGHT;
+		cash->ax = 314;
+		if (head_x1 > 0) cash->maxw = 314 - head_x1 - 4;
+		centre_y (cash, cash_lab->y + 3.5f);
+	}
+}
+
 /* The ship's status pages (F3): one glass sheet, the 3D view framed */
 static void layout_f3 (unsigned char *out)
 {
@@ -2292,6 +2506,7 @@ static void layout_f3 (unsigned char *out)
 		add (E_FRAME, L_OVER, fr_ca[view][0], fr_ca[view][1], fr_ca[view][2] + 1, fr_ca[view][3] + 1);
 	}
 	split_colons (right);
+	if (view >= 0) split_counts (right);
 	e = add (E_GLASS, L_BACK, 1, 0.5f, right, 166.5f);
 	e->flags = F_ALL;
 	e->a = 14;
@@ -2336,11 +2551,12 @@ static void layout_f3 (unsigned char *out)
 			}
 		} else if (r->kind & HDT_K_COLON)
 			style (r, HDT_LABEL, C_TEXT2);
-		else if (r->kind & HDT_K_NUMERIC)
-			style (r, HDT_VALUE, C_TEXT);
 		else
+			/* a value on the sheet reads as its neighbours do: the
+			 * condensed figures are the panel's */
 			style (r, HDT_BODY, C_TEXT);
 	}
+	if (view >= 0) f3_panel (right);
 	for (i = 0; i < n_btn; i++) {
 		struct button *b = &btn[i];
 		if (b->x <= 10) {
@@ -2501,8 +2717,10 @@ static unsigned long long layout_key (void)
 	unsigned long long h = FNV0;
 	int i;
 
+	/* not the page colour: a fade changes it every frame, and the
+	 * places to click must not go dead while the layout stands still
+	 * (the backdrop checks the colour itself) */
 	h = mix_hash (h, &page, sizeof (page));
-	h = mix_hash (h, &page_bg, sizeof (page_bg));
 	for (i = 0; i < n_el; i++) {
 		struct elem e = el[i];
 		e.flags &= ~F_ON;
