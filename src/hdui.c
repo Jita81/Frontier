@@ -2012,6 +2012,10 @@ static int column_at (int x)
 	return n;
 }
 
+/* the rows split_merged cut: their pieces are as wide as the game's
+ * columns let them run, so they do not set their columns' width */
+static unsigned char cut_row[200];
+
 /* A number the game ran on into the next column's ("$1060000$942200",
  * or one space between): cut where the next column starts (or, with no
  * column to go by, before the second '$'), so each piece goes in its
@@ -2035,6 +2039,7 @@ static void split_merged (void)
 				break;
 		if (k < n && hdtext_split (i, k)) {
 			n_runs = hdtext_runs (&runs);
+			cut_row[runs[i].y] = 1;
 			i += 2;
 		}
 	}
@@ -2223,6 +2228,7 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 	/* two tall rows that are not the grid: a conversation's answers,
 	 * read as rows, not cards (the bulletin board has three or more) */
 	if (mode == CARDS && !grid && n124 < 3) mode = ROWS;
+	memset (cut_row, 0, sizeof cut_row);
 	if (mode == TABLE && !grid) {
 		split_merged ();
 		split_heads ();
@@ -2374,13 +2380,13 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 			if (k < ncol || ncol >= 16) continue;
 			for (j = 0; j < n_runs; j++)
 				if (runs[j].x0 == r->x0 && runs[j].y >= 8 && runs[j].y < FOOT_Y &&
-				    (runs[j].kind & HDT_K_NUMERIC)) {
+				    (runs[j].kind & HDT_K_NUMERIC) && !cut_row[runs[j].y]) {
 					n++;
 					if (runs[j].ink1 > mx1) mx1 = runs[j].ink1;
 				}
 			for (j = 0; j < n_runs && ok; j++) {
 				const struct hdtext_run *q = &runs[j];
-				if (q->x0 != r->x0 || q->y < 8 || q->y >= FOOT_Y || !(q->kind & HDT_K_NUMERIC)) continue;
+				if (q->x0 != r->x0 || q->y < 8 || q->y >= FOOT_Y || !(q->kind & HDT_K_NUMERIC) || cut_row[q->y]) continue;
 				for (k = 0; k < n_runs; k++)
 					if (runs[k].y == q->y && runs[k].ink0 > q->ink1 && runs[k].ink0 < mx1 + 4)
 						ok = 0;
@@ -2407,6 +2413,9 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 					r->ax = colmax[k];
 					r->scale = 0.92f;
 				}
+			/* a cut piece keeps its size: the game's columns
+			 * crowded it, ours have room */
+			if (r->y >= 8 && cut_row[r->y] && (r->kind & HDT_K_NUMERIC)) r->maxw = hdtext_measure (r) + 1;
 		}
 		place_heads (colx, ncol);
 		if (mode == TABLE || mode == ROWS) {
@@ -2640,7 +2649,7 @@ static void layout_f3 (unsigned char *out)
 			if (k < i) {
 				for (j = 0; j < n_runs; j++)
 					if (ON_PAGE (&runs[j]) && runs[j].y > r->y && runs[j].y < 132 && runs[j].col != BG &&
-					    runs[j].x0 >= r->x0 && runs[j].x0 <= r->x0 + 20) break;
+					    runs[j].x0 >= r->x0 && runs[j].x0 <= r->x0 + 40) break;
 				if (j == n_runs) {
 					r->hide = 1;
 					continue;

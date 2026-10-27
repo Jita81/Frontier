@@ -4,7 +4,7 @@ borrow orange yellow
 borrow white yellow
 borrow blue yellow
 tint orange 1.00 0.85 0.68
-tint white 0.88 0.94 1.00
+tint white 0.84 0.92 1.00
 tint blue 0.72 0.84 1.00
 orbital terran yellow orbital-terran-yellow-a.jpg
 orbital terran red orbital-terran-red-a.jpg
