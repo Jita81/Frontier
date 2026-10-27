@@ -647,6 +647,15 @@ static void build_runs (const unsigned char *font)
 				if (byx[k]->ink1 > right) right = byx[k]->ink1;
 			}
 		if (count < 3) continue;
+		/* not if that would run a number into what follows it */
+		for (k = i; k < j && count; k++) {
+			int m;
+			if (!(byx[k]->kind & HDT_K_NUMERIC) || byx[k]->y + 8 >= CTRL_Y) continue;
+			for (m = 0; m < n_runs; m++)
+				if (runs[m].y == byx[k]->y && runs[m].ink0 > byx[k]->ink1 && runs[m].ink0 < right + 4)
+					count = 0;
+		}
+		if (!count) continue;
 		for (k = i; k < j; k++)
 			if ((byx[k]->kind & HDT_K_NUMERIC) && byx[k]->y + 8 < CTRL_Y) {
 				int n = byx[k] - runs;
