@@ -2248,11 +2248,13 @@ static int hull_use (double p[][3], int n, float st[][2])
 struct HullCtx {
 	unsigned int key, seed;
 	short light[3];
-	short wok;		/* style 5: w holds the face in the model's frame */
+	short wok;		/* style 5: w holds the face in the model's frame (bit 0)
+				 * and the face is out of a docking bay's box (bit 1,
+				 * hull_bay_outside) */
 	float w[4][3];
 };
 
-/* this frame's triangles and quads carry a HullCtx: 1 for styles 1 to 4,
+/* this frame's triangles and quads carry a HullCtx: 1 for styles 0 to 4,
  * 2 for style 5 (with the face in the model's frame) */
 static int hull_ctx;
 static int hull_logging = -1;
@@ -2264,10 +2266,12 @@ static int hull_log_on (void)
 }
 
 /* Latched when the engine starts a frame: the stream of one frame is all
- * with the context or all without, whatever the keyboard does meanwhile. */
+ * with the context or all without, whatever the keyboard does meanwhile.
+ * Every style carries the model's key: only a model listed in
+ * hull_models[] is plated (see hull_paint). */
 static void hull_latch (void)
 {
-	hull_ctx = hull_style > 0 && !flat_hulls && use_renderer != R_OLD ? (hull_style >= 5 ? 2 : 1) : 0;
+	hull_ctx = !flat_hulls && use_renderer != R_OLD ? (hull_style >= 5 ? 2 : 1) : 0;
 }
 
 static inline int st_readable (unsigned int addr, unsigned int len);
@@ -2275,18 +2279,25 @@ static inline int st_readable (unsigned int addr, unsigned int len);
 /*
  * The model of the object being drawn, from the 68k's state: a6 is the
  * object's frame and -212(a6) its record, whose word at +90 is the model's
- * offset into the game data table (twice the model's number). The key is
- * that word with the top bit set; 0 when the state is not what that expects
+ * offset into the model table the game data pointer names while it draws
+ * (twice the model's number). The intro (its title, its scenes and the
+ * menu's backdrop) draws from a table of its own, whose words name other
+ * models: its 40 to 52 are whole scenes of the intro, the city among them,
+ * where the game's are ships. So the key is the word, the table (hull.h,
+ * HULL_TAB_*) and the top bit; 0 when the state is not what that expects
  * (every read is checked: the 68k's memory has no guard).
  */
 static unsigned int hull_model_key (void)
 {
-	unsigned int a6 = GetReg (REG_A6), rec;
+	unsigned int a6 = GetReg (REG_A6), rec, gd, tab;
 
-	if (a6 > MEM_SIZE || !st_readable (a6 - 212, 4)) return 0;
+	if (a6 > MEM_SIZE || !st_readable (a6 - 212, 4) || !st_readable (__DL973c_game_data, 4))
+		return 0;
 	rec = STMemory_ReadLong (a6 - 212);
 	if (rec > MEM_SIZE || !st_readable (rec + 90, 2)) return 0;
-	return 0x80000000u | STMemory_ReadWord (rec + 90);
+	gd = STMemory_ReadLong (__DL973c_game_data);
+	tab = gd == __DL1afae_gamedata1 ? 0 : gd == __DL685d0_intro_gamedata ? HULL_TAB_INTRO : HULL_TAB_OTHER;
+	return 0x80000000u | tab | STMemory_ReadWord (rec + 90);
 }
 
 static int hull_model_unit (unsigned int key);
@@ -2301,14 +2312,15 @@ static void hull_log_model (unsigned int key)
 	for (i = 0; i < nseen; i++)
 		if (seen[i] == key) return;
 	if (nseen < HULL_SEEN) seen[nseen++] = key;
+	const char *tab = key & HULL_TAB_INTRO ? " (intro's table)" : key & HULL_TAB_OTHER ? " (other table)" : "";
 	if (hull_key_listed (key)) {
 		float sc, off[2];
-		fprintf (stderr, "hull: model %u -> class %s (style 4 profile %s), unit 2^%d\n",
-			 key & 0xffff, hull_classes[hull_class_of_key (key, &sc, off)].name,
+		fprintf (stderr, "hull: model %u%s -> class %s (style 4 profile %s), unit 2^%d\n",
+			 key & 0xffff, tab, hull_classes[hull_class_of_key (key, &sc, off)].name,
 			 hull_profiles[hull_profile_of_key (key)].name, hull_model_unit (key));
 	} else
-		fprintf (stderr, "hull: model %u -> not listed in hull_models, class generic, unit 2^%d\n",
-			 key & 0xffff, hull_model_unit (key));
+		fprintf (stderr, "hull: model %u%s -> not listed in hull_models, drawn flat, unit 2^%d\n",
+			 key & 0xffff, tab, hull_model_unit (key));
 }
 
 /*
@@ -2325,13 +2337,13 @@ static void hull_log_model (unsigned int key)
  * its turn and origin are its own and its -208 word its own scale, but the
  * view units, and the record at -212, are the object's. So the scale is
  * always the object's (the top frame, the one linked straight from the
- * record), and a part that is square to the object (not turned against
- * it, or turned by quarter turns and flips: a piece of the structure set
- * in place) takes the object's frame whole: the tile then runs on across
- * it as if it were one piece (a stripe painted on a wall lines up with the
- * wall's panels). A part turned any other way keeps its own turn and
- * origin, so the tile stays put on it as it moves. 0 when any of it is not
- * what that expects. Only reads.
+ * record), and the turn and origin the part's own: the tile is bound to
+ * the part and moves with it (a sliding door, a lift, a turning dish),
+ * whether it is square to the object or not. Panels then do not run on
+ * from a part across the object's faces around it. Mo and oo, when asked
+ * for, are the object's own frame (the top one), which hull_bay_outside
+ * measures against. 0 when any of it is not what that expects. Only
+ * reads.
  */
 static int hull_frame_words (unsigned int f, int V[9], int o[3], int *s)
 {
@@ -2349,10 +2361,10 @@ static int hull_frame_words (unsigned int f, int V[9], int o[3], int *s)
 	return 1;
 }
 
-static int hull_model_frame (unsigned int key, double M[9], int o[3])
+static int hull_model_frame (unsigned int key, double M[9], int o[3], double Mo[9], int oo[3])
 {
 	unsigned int a6 = GetReg (REG_A6), gd, mh, rec, top;
-	int V[9], Vt[9], ot[3], s, st, h10, j, depth, same;
+	int V[9], Vt[9], ot[3], s, h10, j, depth;
 
 	if (!HULL_KEY_OK (key) || a6 > MEM_SIZE || !st_readable (a6 - 212, 4) ||
 	    !st_readable (__DL973c_game_data, 4))
@@ -2378,30 +2390,18 @@ static int hull_model_frame (unsigned int key, double M[9], int o[3])
 	}
 	if (depth == 8) return 0;
 	if (top != a6) {
-		if (!hull_frame_words (top, Vt, ot, &st)) return 0;
-		/* the part's turn against the object's: a quarter turn or a flip
-		 * (every entry 0 or 1 or -1) is a piece of the structure set in
-		 * place, which takes the object's frame */
-		same = 1;
-		for (j = 0; j < 9; j++) {
-			double r = 0, a = 0, b = 0;
-			int k;
-			for (k = 0; k < 3; k++) {
-				r += (double) V[3*(j/3)+k] * Vt[3*(j%3)+k];
-				a += (double) V[3*(j/3)+k] * V[3*(j/3)+k];
-				b += (double) Vt[3*(j%3)+k] * Vt[3*(j%3)+k];
-			}
-			r = fabs (r) / sqrt (a * b);
-			if (r > 0.004 && r < 0.996) same = 0;
-		}
-		if (same) {
-			for (j = 0; j < 9; j++) V[j] = Vt[j];
-			for (j = 0; j < 3; j++) o[j] = ot[j];
-		}
-		s = st;
+		/* a part: the object's frame for its scale (and Mo, oo) */
+		if (!hull_frame_words (top, Vt, ot, &s)) return 0;
+	} else {
+		memcpy (Vt, V, sizeof Vt);
+		memcpy (ot, o, sizeof ot);
 	}
 	if (h10 < -4 || h10 > 24 || s < -8 || s > 24) return 0;
 	for (j = 0; j < 9; j++) M[j] = ldexp (V[j] / 32768.0, h10 - s);
+	if (Mo) {
+		for (j = 0; j < 9; j++) Mo[j] = ldexp (Vt[j] / 32768.0, h10 - s);
+		for (j = 0; j < 3; j++) oo[j] = ot[j];
+	}
 	return 1;
 }
 
@@ -2419,26 +2419,34 @@ static int hull_model_unit (unsigned int key)
 	return (short) STMemory_ReadWord (mh + 10);
 }
 
-/* Style 5: the face's n vertices (records at va) in the model's own frame;
- * 0 (and the face is mapped on its own) when that cannot be had */
+/* Style 5: the face's n vertices (records at va) in the frame of the
+ * model or part that draws it (see hull_model_frame): 1, or 3 when the
+ * face is out of a docking bay's box (measured in the object's own frame,
+ * hull_bay_outside); 0 (and the face is mapped on its own) when that
+ * cannot be had */
 static int hull_obj_coords (unsigned int key, int n, const unsigned int *va, float w[][3])
 {
-	double M[9];
-	int o[3], i, j, k;
+	double M[9], Mo[9];
+	float wo[4][3];
+	int o[3], oo[3], i, j, k;
 
-	if (!hull_model_frame (key, M, o)) return 0;
+	if (!hull_model_frame (key, M, o, Mo, oo)) return 0;
 	for (i = 0; i < n; i++) {
 		int v[3];
 		if (!st_readable (va[i] + 4, 12)) return 0;
 		for (k = 0; k < 3; k++) v[k] = (int) STMemory_ReadLong (va[i] + 4 + 4 * k);
 		for (j = 0; j < 3; j++) {
-			double m = 0;
-			for (k = 0; k < 3; k++) m += M[3*j+k] * ((double) v[k] - o[k]);
-			if (!(fabs (m) < 16777216.0)) return 0;
+			double m = 0, mo = 0;
+			for (k = 0; k < 3; k++) {
+				m += M[3*j+k] * ((double) v[k] - o[k]);
+				mo += Mo[3*j+k] * ((double) v[k] - oo[k]);
+			}
+			if (!(fabs (m) < 16777216.0) || !(fabs (mo) < 16777216.0)) return 0;
 			w[i][j] = (float) m;
+			wo[i][j] = (float) mo;
 		}
 	}
-	return 1;
+	return hull_bay_outside (key, (const float (*)[3]) wo, n) ? 3 : 1;
 }
 
 /* the light, the way znode_wrlightsource gives it to GL: towards the
@@ -2530,7 +2538,7 @@ static void hull_put_cctx (void)
 	if (hull_ctx != 2) return;
 	key = hull_model_key ();
 	hull_read_light (lt);
-	ok = HULL_KEY_OK (key) && hull_key_listed (key) && hull_model_frame (key, M, o);
+	ok = HULL_KEY_OK (key) && hull_key_listed (key) && hull_model_frame (key, M, o, NULL, NULL);
 	if (HULL_KEY_OK (key) && hull_log_on ()) hull_log_model (key);
 	znode_wrlong (key);
 	for (k = 0; k < 3; k++) znode_wrword (lt[k]);
@@ -2967,15 +2975,15 @@ static void hull_attr (const struct HullFrame *f, int i) { }
  * colour, while bright paint (an orange or a pink) is plated; a face
  * that hosts decals gets calm plating on a known ship, the full plating on
  * a station (its lettering is big, and the weathering keeps a face of
- * many tiles from looking like wallpaper), and is flat in the hangar or on
- * an unknown model (their signs). */
+ * many tiles from looking like wallpaper), and is flat in the hangar (its
+ * signs). Only a model listed in hull_models[] gets here (hull_paint). */
 static int hull_paint5 (double p[][3], int n, const struct HullCtx *cx, int host,
 			const int rgb[3], float st[][2], struct HullFrame *hf)
 {
 	float sc, off[2];
 	int cls = hull_class_of_key (cx->key, &sc, off), i;
 	int mx = rgb[0] > rgb[1] ? rgb[0] : rgb[1], mn = rgb[0] < rgb[1] ? rgb[0] : rgb[1];
-	int calm = host && !HULL_BUILDING (cls) && hull_key_listed (cx->key);
+	int calm = host && !HULL_BUILDING (cls);
 	int lamp, pure;
 	double light[3];
 
@@ -2985,7 +2993,7 @@ static int hull_paint5 (double p[][3], int n, const struct HullCtx *cx, int host
 	 * slot (its corner chamfers, the slot's surround, the docking arms):
 	 * those faces are the station's plating, with its graze, not the
 	 * hangar's, which a slanting chamfer smears into boards */
-	if (cls == HC_HANGAR && cx->wok && hull_bay_outside (cx->key, cx->w, n)) cls = HC_STATION;
+	if (cls == HC_HANGAR && (cx->wok & 2)) cls = HC_STATION;
 	lamp = cls == HC_HANGAR && mn >= 208;
 	pure = mx > 191 && mn < 0.2 * mx;
 	/* but in the hangar a face of pure colour whose longest side is more
@@ -3028,9 +3036,17 @@ static int hull_paint (double p[][3], int n, int have_ctx, const struct HullCtx 
 		       const int rgb[3], float st[][2], struct HullFrame *hf)
 {
 	hull_chain = host;
-	if (hull_style >= 5 && have_ctx == 2 && !flat_hulls)
+	/* the plating belongs to the ships and stations listed in
+	 * hull_models[]: anything else (the intro's titles and banners,
+	 * text, planets, buildings, missiles, debris, cargo) is drawn flat,
+	 * as with --flat-hulls */
+	if (flat_hulls || !have_ctx || !hull_key_listed (cx->key)) {
+		hull_end ();
+		return 0;
+	}
+	if (hull_style >= 5 && have_ctx == 2)
 		return hull_paint5 (p, n, cx, host, rgb, st, hf);
-	if (hull_style > 0 && have_ctx && !flat_hulls) {
+	if (hull_style > 0) {
 #ifdef HULL_SHADERS
 		if (!hull_prog_failed) return hull_shade (p, n, cx, host, hf) ? 2 : 0;
 #endif

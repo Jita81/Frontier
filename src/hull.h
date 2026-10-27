@@ -34,9 +34,16 @@ struct HullProfile {
 extern const struct HullProfile hull_profiles[HP_N];
 
 /* Model key: bit 31 set when valid, the low 16 bits the model's type
- * word (object+90). Which profile style 4 gives a model (by the word's low
- * byte, as that style always read it). */
+ * word (object+90) and bits 16 and 17 the model table that word indexes:
+ * none for the game's own, HULL_TAB_INTRO for the intro's (its title,
+ * scenes and the menu's backdrop: its words name other models than the
+ * game's), HULL_TAB_OTHER for any other. HULL_KEY_MODEL is the table and
+ * word together, which is what names one model. Which profile style 4
+ * gives a model (by the word's low byte, as that style always read it). */
 #define HULL_KEY_OK(k)	((unsigned int) (k) >> 31)
+#define HULL_TAB_INTRO	0x10000u
+#define HULL_TAB_OTHER	0x20000u
+#define HULL_KEY_MODEL(k)	((unsigned int) (k) & 0x3ffffu)
 int hull_profile_of_key (unsigned int key);
 
 /* Texture sets. Level 1 is plain plating (style 1), level 2 the full
@@ -72,7 +79,8 @@ unsigned int hull_mix (unsigned int x);
  * (a seamless photo-like plating, 128 = the face's own colour) and its own
  * numbers for how the tile is turned into the shader's maps and how the
  * shader lights it. hull_models[] in hull.c says which model is which
- * class; a model not listed is HC_GENERIC.
+ * class; a model not listed is HC_GENERIC here, and the draw side leaves
+ * it flat.
  */
 enum { HC_GENERIC, HC_POLICE, HC_CIVIL, HC_FREIGHT, HC_ARMOUR, HC_FIGHTER,
        HC_STATION, HC_HANGAR, HC_DECK, HC_N };
@@ -104,7 +112,8 @@ extern const struct HullClass hull_classes[HC_N];
 /* The class of a model key; *scale (times the class's panel) and off[2]
  * (where the model starts on the tile) are that model's own. */
 int hull_class_of_key (unsigned int key, float *scale, float off[2]);
-/* 1 if the model is listed in hull_models[], 0 if it gets HC_GENERIC */
+/* 1 if the model is listed in hull_models[] (a ship or station hull, the
+ * only models plated), 0 if not */
 int hull_key_listed (unsigned int key);
 /* 1 if the face (n corners in the model's frame) of a docking bay's model
  * lies partly out of the bay: it is the station's outside around the slot */

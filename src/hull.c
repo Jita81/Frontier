@@ -76,19 +76,23 @@ int hull_profile_of_key (unsigned int key)
 /*
  * Style 5: which class a model gets, by the whole type word the 68k keeps
  * at object+90 (a byte offset into the model table, so twice the model's
- * number; FE2_HULL_LOG=1 prints the ones a session meets, and says which
- * are not listed here). One line per model; edit freely. scale multiplies
- * the class's panel size for that model. A model not listed gets
- * HC_GENERIC. Parts a model draws (a hangar door, a landing leg) carry its
- * type word and so its class.
+ * number) and the table: the game's own, or HULL_TAB_INTRO for the intro's,
+ * whose words name other models (its 40 to 52 are the intro's scenes, not
+ * the game's ships). FE2_HULL_LOG=1 prints the ones a session meets, and
+ * says which are not listed here. One line per model; edit freely. scale multiplies
+ * the class's panel size for that model. Only ship and station hulls (and
+ * the station's hangar inside) are listed: a model that is not listed is
+ * drawn flat (gl.c, hull_paint), so the intro's titles, text, planets,
+ * buildings on the ground, missiles and debris keep the game's own look.
+ * Parts a model draws (a hangar door, a landing leg) carry its type word
+ * and so its class; the tile is bound to the part (gl.c, hull_model_frame).
  */
 static const struct {
-	unsigned short type;
+	unsigned int type;	/* HULL_KEY_MODEL: the word, and the table when not the game's */
 	unsigned char cls;
 	float scale;
 } hull_models[] = {
 	{ 20,  HC_CIVIL,	1.0f },	/* Shuttle */
-	{ 32,  HC_STATION,	1.0f },	/* landing pad */
 	{ 40,  HC_FIGHTER,	1.0f },	/* Krait */
 	{ 42,  HC_FIGHTER,	1.0f },	/* Gecko */
 	{ 44,  HC_CIVIL,	1.0f },	/* Adder */
@@ -99,12 +103,10 @@ static const struct {
 	{ 58,  HC_FIGHTER,	1.0f },	/* Eagle */
 	{ 66,  HC_FREIGHT,	1.0f },	/* Python */
 	{ 70,  HC_FREIGHT,	1.0f },	/* Transporter */
-	{ 72,  HC_STATION,	1.0f },	/* orbital station, outside */
+	{ HULL_TAB_INTRO | 72, HC_STATION, 1.0f },	/* the orbital station behind the menu */
 	{ 80,  HC_STATION,	1.0f },	/* orbital station, outside, close up */
 	{ 82,  HC_STATION,	1.0f },	/* launch structure */
 	{ 84,  HC_HANGAR,	1.0f },	/* docking bay seen through the slot */
-	{ 96,  HC_STATION,	1.0f },	/* starport building */
-	{ 198, HC_STATION,	1.0f },	/* city */
 	{ 288, HC_HANGAR,	1.0f },	/* hangar interior */
 	{ 290, HC_HANGAR,	1.0f },	/* hangar interior part */
 	{ 294, HC_HANGAR,	1.0f },	/* hangar interior part */
@@ -116,7 +118,7 @@ static int hull_model_row (unsigned int key)
 	int i;
 	if (!HULL_KEY_OK (key)) return -1;
 	for (i = 0; i < HULL_NMODELS; i++)
-		if (hull_models[i].type == (key & 0xffff)) return i;
+		if (hull_models[i].type == HULL_KEY_MODEL (key)) return i;
 	return -1;
 }
 
@@ -147,7 +149,7 @@ int hull_bay_outside (unsigned int key, const float w[][3], int n)
 
 	if (!HULL_KEY_OK (key)) return 0;
 	for (j = 0; j < (int) (sizeof hull_bays / sizeof hull_bays[0]); j++) {
-		if (hull_bays[j].type != (key & 0xffff)) continue;
+		if (hull_bays[j].type != HULL_KEY_MODEL (key)) continue;
 		for (i = 0; i < n; i++)
 			if (fabsf (w[i][0]) > hull_bays[j].x || fabsf (w[i][1]) > hull_bays[j].y ||
 			    w[i][2] < hull_bays[j].z0 || w[i][2] > hull_bays[j].z1)

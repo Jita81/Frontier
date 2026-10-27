@@ -1,7 +1,10 @@
 # Hulls: a material per class of ship
 
-The GL renderer paints the flat faces the game draws (ships, stations,
-starport buildings and the docking hangar) with a plating material. The
+The GL renderer paints the flat faces of the ships and stations the game
+draws (and the station's docking hangar) with a plating material. Every
+other model (the intro's titles, banners and scenes, text, planets,
+buildings on the ground, missiles, debris) is drawn flat, exactly as with
+`--flat-hulls`. The
 68k game is unchanged: it still decides every face, its colour and its
 light. The host only multiplies that colour by a texture and lights the
 texture's relief from the game's own light direction. A face never gets
@@ -22,15 +25,24 @@ and the reading of the model's frame). The art is in `art/hull/`.
 
 1. **Which model.** The engine's state names the object being drawn: the
    word at +90 of its record (via -212(a6)) is the model's offset into the
-   game's model table (twice the model number). The renderer reads it
-   without writing. The key is that word with bit 31 set.
-2. **Which class.** `hull_models[]` in `hull.c` maps the whole word to a
-   class and a panel scale. A model that is not listed gets `generic`.
+   model table that the game data pointer (`__DL973c_game_data`) names
+   while it draws (twice the model number). The intro (its title, its
+   scenes and the menu's backdrop) swaps that pointer to a table of its own
+   (`__DL685d0_intro_gamedata`) whose words name other models: its 40 to
+   52 are whole intro scenes (the city among them), where the game's are
+   ships. So the key is the word, the table (`HULL_TAB_INTRO` for the
+   intro's, `HULL_TAB_OTHER` for any other, nothing for the game's own) and
+   bit 31. The renderer reads all of it without writing.
+2. **Which class, or flat.** `hull_models[]` in `hull.c` maps the word and
+   table to a class and a panel scale. Only ship and station hulls (and the
+   station's hangar) are listed. A model that is not listed is drawn flat
+   in every style (`hull_paint` in `gl.c`), as with `--flat-hulls`.
    Parts drawn by a model, such as a hangar door, the hangar walls or
    landing gear, carry that model's word and so its class.
-3. **Where the tile lies.** The tile is laid on the model's own frame, not
-   on the face. Panels then keep their size as the ship turns or comes
-   closer, and run on across neighbouring faces.
+3. **Where the tile lies.** The tile is laid on the frame of the model, or
+   of the part, that draws the face, not on the face. Panels then keep
+   their size as the ship turns or comes closer, run on across
+   neighbouring faces of the same part, and move with the part.
    - **Scale.** The model's turn and origin are read at -36(a6) and
      -16(a6), and its scale from -208(a6) against +10 of the model header.
      `hull_frame_words` and `hull_model_frame` in `gl.c` do this. A face's
@@ -46,12 +58,12 @@ and the reading of the model's frame). The art is in `art/hull/`.
      This is isometric on the face, so plates are never stretched. Neighbours
      facing the same way share the same coordinates. `hull_frame_obj` handles
      triangles and quads, and `hull_plane_obj` handles complex shapes.
-   - **Parts square to the object.** A part whose frame is the object's
-     frame, or that frame by quarter turns and flips, takes the top frame
-     whole. Its tile then continues the wall's: a painted stripe lines up
-     with the wall's panels.
-   - **Parts turned any other way.** These keep their own frame, so the
-     tile moves with them.
+   - **Parts.** A part (a door, a lift, a turning dish) takes its own turn
+     and origin, with the object's scale. Its tile is bound to it and moves
+     with it, so a sliding bay door carries its plates as it opens instead
+     of sliding under them. Panels do not run on from a part across the
+     object's faces around it. (Before, a part square to the object took
+     the object's frame, so the plates stood still while the door moved.)
 4. **Replace or keep flat.** `hull_paint5` decides, for each face:
    - **Lamps, windows and lit signs stay flat.** These are bright faces of
      nearly pure colour (the brightest channel above 191 and the darkest
@@ -70,7 +82,7 @@ and the reading of the model's frame). The art is in `art/hull/`.
      - On the station they get the full plating. The lettering there is
        big, and the weathering stops a face of many tiles looking like
        wallpaper.
-     - In the hangar and on unlisted models they stay flat. These are signs.
+     - In the hangar they stay flat. These are signs.
    - **The station's outside drawn by the docking bay's model.** Model 84
      draws the bay seen through the slot, and from the slot out to launch
      range it also draws the station's outside around it: the corner
@@ -129,15 +141,16 @@ and the reading of the model's frame). The art is in `art/hull/`.
   6 ms with a ship filling a 1600x1200 window.
 - `FE2_HULL_LOG=1` prints:
   - each bake time
-  - each model the first time it is seen, with its class, or a note that
-    it is not listed
+  - each model the first time it is seen, with its table when it is not
+    the game's, and its class or a note that it is not listed and is
+    drawn flat
   - the 3D view's draw time averaged over 300 frames
 
 ## Classes
 
 | class | tile | look | panel (model units per tile) |
 |---|---|---|---|
-| generic | `generic.png` | grid of steel panels, light scuffs (any unlisted model) | 8192 |
+| generic | `generic.png` | grid of steel panels, light scuffs (no listed model uses it now; unlisted models are drawn flat) | 8192 |
 | police | `police.png` | clean glossy paint, thin panel lines, no wear | 10240 |
 | civilian | `civilian.png` | worn paint, chipped edges, rivets, patches | 10240 |
 | freighter | `freighter.png` | thick welded plates, patch plates, oil and grime | 12288 |
@@ -164,13 +177,12 @@ a tan face read as grout between paving stones.
 
 All of these are on one line per class in `hull_classes[]` in `hull.c`.
 
-Models (`hull_models[]`, by the whole type word; `FE2_HULL_LOG=1` names
-the unlisted ones a session meets):
+Models (`hull_models[]`, by the whole type word and its table;
+`FE2_HULL_LOG=1` names the unlisted ones a session meets):
 
 | word | model | class |
 |---|---|---|
 | 20 | Shuttle | civilian |
-| 32 | landing pad | station |
 | 40 | Krait | fighter |
 | 42 | Gecko | fighter |
 | 44 | Adder | civilian |
@@ -181,11 +193,10 @@ the unlisted ones a session meets):
 | 58 | Eagle | fighter |
 | 66 | Python | freighter |
 | 70 | Transporter | freighter |
-| 72, 80 | orbital station outside, far and close | station |
+| intro's 72 | the orbital station behind the menu | station |
+| 80 | orbital station outside, close up | station |
 | 82 | launch structure | station |
 | 84 | docking bay seen through the slot | hangar; its faces out of the bay's box (the station's outside) station |
-| 96 | starport building | station |
-| 198 | city | station |
 | 288, 290, 294 | hangar interior and its parts | hangar |
 
 - **Adding a model:** add one line.
@@ -194,8 +205,14 @@ the unlisted ones a session meets):
   2. Add an enum entry in `hull.h` and a row in `hull_classes[]`.
   3. List the PNG in `.githooks/allowed-images`.
 
-Words seen in test runs but not listed are 4 and 176. They get `generic`.
-What they are was not identified, so they are not guessed at.
+Not listed, so drawn flat:
+- game table 32 (landing pad), 96 (starport building) and 198 (city):
+  ground structures, not hulls;
+- game table 72: its unit (2^11) is a ship's, not a station's; it was not
+  seen in a capture and is not guessed at;
+- game table 176 (unit 2^0), seen beside the bay; not identified;
+- the intro's 4 (the title), 12, 34 (the banner), 36, 38, 40 to 54 (its
+  scenes, the city among them) and every other intro word but 72.
 
 ## Switches
 
@@ -336,7 +353,8 @@ a kd-tree panel layout on a torus, from a seed.
   to its memory.
 - **Docked hangar:**
   - walls plated and floor in deck plate
-  - hazard stripes and doors plated in line with the wall panels
+  - hazard stripes plated; the doors carry their own plates and move
+    with them
   - lamps and signs flat
 - **Ships at several angles in the shipyard:** Shuttle, Adder, Krait (two
   liveries), Asp, Gecko and Cobra.
@@ -348,8 +366,11 @@ a kd-tree panel layout on a torus, from a seed.
   and the slot's surround take the station's plates (`FE2_HULL_DBG=1`
   shows their graze, 2.29); the steepest of them fade to the flat tan, and
   no face shows boards or flagstones.
-- **Off switches:** `--flat-hulls` and styles 0 to 4 match the earlier
-  build pixel for pixel.
+- **Off switch:** `--flat-hulls` draws the earlier build's flat faces.
+  Styles 0 to 4 plate only the listed models too (they used to plate every
+  face).
+- **Intro and menu:** the title, the banner, the city and the intro's
+  other scenes are flat; only the station behind the menu is plated.
 
 Known limits:
 - Bright, saturated liveries (an orange or red Krait) show little plating,
@@ -365,8 +386,11 @@ Known limits:
   a white or grey one stays flat.
 - Only the station has a graze fade. A hangar wall seen edge on from the
   deck could still stripe.
-- A moving part can switch between its own frame and the top frame at the
-  moment it passes a quarter turn. This was not caught in a capture.
+- A part's plates are its own, so they do not line up with the wall
+  around it. A face that moves by its vertices (not by a part's frame)
+  would still slide under its plates; none was found.
+- The intro's ships fly inside its scene models, which are not listed, so
+  they are flat.
 - The hyperspace and fade-in flashes were not captured with plating.
 - The Viper, Python, Moray, Eagle and Transporter were not met in the test
   captures. They use their classes untested in-game.
