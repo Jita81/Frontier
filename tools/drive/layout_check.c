@@ -24,6 +24,7 @@ int main(void)
 	CHECK(offsetof(INPUT, key_buf) == 323 && SIZE_KEYBUF == 16);
 	CHECK(offsetof(INPUT, buf_tail) == 360);
 	CHECK(offsetof(INPUT, cur_mousebut_state) == 372);
+	CHECK(offsetof(INPUT, motion_x) == 376 && offsetof(INPUT, motion_y) == 380);
 	CHECK(offsetof(SHORTCUT_KEY, Key) == 0 && sizeof(ShortCutKey.Key) == 2);
 	CHECK(offsetof(INPUT, abs_x) == 384 && offsetof(INPUT, abs_y) == 388);
 	CHECK(sizeof(INPUT) == 400);
