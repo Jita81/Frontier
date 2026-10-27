@@ -156,6 +156,14 @@ static void set_picture_rect ()
 	view_h = pic_h * screen_h / fb_h;
 }
 
+void gl_picture_rect (int *x, int *y, int *w, int *h)
+{
+	*x = pic_x;
+	*y = pic_y;
+	*w = pic_w;
+	*h = pic_h;
+}
+
 /* Point sizes were chosen for a 640x480 window: keep them the same share
  * of the view at any picture size. */
 static float px_scale (void)
@@ -3529,6 +3537,7 @@ void Nu_GLClearArea ()
 	y1 = GetReg (1)&0xffff;
 	x2 = GetReg (2)&0xffff;
 	y2 = GetReg (3)&0xffff;
+	hdui_clear_area (x1, y1, x2, y2);
 	
 	push_ortho ();
 	set_ctrl_viewport ();
@@ -3734,4 +3743,6 @@ void Nu_DrawScreen ()
 	glLoadIdentity ();
 	
 	set_main_viewport ();
+	/* a 2D page's backdrop, under everything the next frame draws */
+	hdui_backdrop (MainRGBPalette, fe2_bgcol);
 }

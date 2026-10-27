@@ -42,6 +42,26 @@ void hdback_draw (int fb_w, int fb_h);
  * joined to the page fill become 255 in out, rows 0-167 only. */
 void hdback_frame (const unsigned char *raster, unsigned char *out);
 
+/* Nonzero when hdback_draw put a picture down for the frame now being
+ * built; valid from that call until the next one (hdback_frame does not
+ * reset it).  hdui asks, so that its base lets the picture show through. */
+int hdback_active (void);
+
+/* Frosted glass: the picture hdback_draw put down for this frame, blurred
+ * and graded once when it was loaded (its luma held near a fixed value
+ * whatever the picture, see make_frost), for hdui to fill a glass shape
+ * with before it lays the glass's tint over it.  begin returns 0 and
+ * changes nothing unless a picture is up this frame (hdback_active) and
+ * its frost was made.  Otherwise it binds the frost texture and turns on
+ * object-linear texture coordinates such that a 2D vertex (z 0), under the
+ * projection, modelview and viewport current at the call, gets the texture
+ * coordinates the picture has at that window pixel: the frost registers
+ * with the sharp picture.  rgb gets the tint of the light the picture was
+ * drawn under, for the caller's glColor (texture modulate).  end puts back
+ * every state begin changed. */
+int hdback_frost_begin (float *rgb);
+void hdback_frost_end (void);
+
 /* The GL context is going away: drop the backdrop texture. */
 void hdback_forget (void);
 
