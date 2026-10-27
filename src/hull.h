@@ -1,11 +1,14 @@
 /*
- * Hull material for the GL renderer (--hull-style 1..4).
+ * Hull material for the GL renderer (--hull-style 1..5).
  *
- * Everything here is plain C with no GL and no 68k state: the textures
- * are made at run time from nothing but a seed (no image files, nothing
- * taken from the game's bitmaps), and the per-polygon maths takes the
- * polygon's own vertices. gl.c owns the shaders and the draw calls; the
- * comment above hull_style there says what each style does.
+ * Everything here is plain C with no GL and no 68k state. Styles 1 to 4
+ * make their textures at run time from nothing but a seed; style 5 (the
+ * default) bakes its maps from a grey tile per class of ship (art/hull/,
+ * new art made from a text prompt, see docs/hd/hulls.md) and falls back
+ * to the seeded ones when the tile is not there. Nothing is taken from
+ * the game's bitmaps. The per-polygon maths takes the polygon's own
+ * vertices. gl.c owns the shaders and the draw calls; the comment above
+ * hull_style there says what each style does.
  */
 #ifndef _HULL_H
 #define _HULL_H
@@ -30,8 +33,8 @@ struct HullProfile {
 };
 extern const struct HullProfile hull_profiles[HP_N];
 
-/* Model key: bit 31 set when valid, low byte the model's type word
- * (object+90). Which profile style 4 gives a model. */
+/* Model key: bit 31 set when valid, the low 16 bits the model's type
+ * word (object+90). Which profile style 4 gives a model. */
 #define HULL_KEY_OK(k)	((unsigned int) (k) >> 31)
 int hull_profile_of_key (unsigned int key);
 
@@ -53,6 +56,7 @@ struct HullFrame {
 	float lt[3];
 	float inr;		/* radius of the biggest circle that fits, in tiles */
 	float seed[2];		/* offset for the second texture scale */
+	float mu[4][2];		/* style 5: the second scale's coordinates */
 };
 /* p: n (3 or 4) vertices in view space; light: direction towards the
  * light in the same space; seed: this face's own number (stable as the ship
@@ -61,5 +65,65 @@ int hull_frame (const double p[][3], int n, const double light[3], unsigned int 
 		struct HullFrame *f);
 
 unsigned int hull_mix (unsigned int x);
+
+/*
+ * Style 5: a material per class of ship. Each class has its own grey tile
+ * (a seamless photo-like plating, 128 = the face's own colour) and its own
+ * numbers for how the tile is turned into the shader's maps and how the
+ * shader lights it. hull_models[] in hull.c says which model is which
+ * class; a model not listed is HC_GENERIC.
+ */
+enum { HC_GENERIC, HC_POLICE, HC_CIVIL, HC_FREIGHT, HC_ARMOUR, HC_FIGHTER,
+       HC_STATION, HC_HANGAR, HC_N };
+
+struct HullClass {
+	const char *name;
+	const char *tile;	/* the grey tile, in the art folder */
+	int prof;		/* hull_profiles row baked when the tile is missing */
+	float panel;		/* object units one tile covers */
+	/* baking the tile: how much of its light and dark becomes paint, how
+	 * dark its grooves go, how much of it is grime and chipped paint */
+	float contrast, seam, wear, chips;
+	/* shader: normal map strength, specular strength and exponent, edge
+	 * occlusion, warmth of grime */
+	float bump, gloss, shine, ao, tint;
+};
+extern const struct HullClass hull_classes[HC_N];
+
+/* The class of a model key; *scale (times the class's panel) and off[2]
+ * (where the model starts on the tile) are that model's own. */
+int hull_class_of_key (unsigned int key, float *scale, float off[2]);
+/* 1 if the model is listed in hull_models[], 0 if it gets HC_GENERIC */
+int hull_key_listed (unsigned int key);
+
+/* The maps of a class from its n x n grey tile lum (n a power of two), in
+ * the layout of hull_bake. */
+void hull_bake_tile (int cls, const unsigned char *lum, int n, unsigned char *t0,
+		     unsigned char *t1, float *mean_grime);
+
+/* Style 5 coordinates: as hull_frame, but the tile is laid on the model
+ * itself, not on the face: w are the n vertices in the model's own frame
+ * (object units), and the face takes the plane of the model's box it
+ * faces most (x, y or z), panel units to a tile, starting at off. mu are
+ * the second, larger scale. 0 if the face is degenerate. */
+int hull_frame_obj (const double p[][3], const float w[][3], int n, const double light[3],
+		    double panel, const float off[2], struct HullFrame *f);
+
+/* Style 5 on a complex shape (more than four sides, or holes): the tile
+ * laid as hull_frame_obj lays it, from the model's frame. c: n points of
+ * the shape in view space; M, o: the model's frame (a vertex v, as the 68k
+ * keeps it, is at M (v - o) in the model's units); u at a point e of the
+ * shape is gu . e + u0, v likewise. T, B, N: the tangent frame in view
+ * space, lt the light in it. 0 if the shape is degenerate. */
+struct HullPlane {
+	double gu[3], gv[3], u0, v0, base[2], mb[2], T[3], B[3], N[3];
+	float lt[3];
+};
+int hull_plane_obj (const double c[][3], int n, const float M[9], const int o[3],
+		    const double light[3], double panel, const float off[2], struct HullPlane *g);
+/* the shader's coordinates at a point e of the shape (as HullFrame's uv,
+ * mu and vt) */
+void hull_plane_at (const struct HullPlane *g, const double e[3], float uv[2], float mu[2],
+		    float vt[3]);
 
 #endif

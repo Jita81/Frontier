@@ -1,11 +1,13 @@
 /*
- * Hull material for the GL renderer: procedural textures, profiles and the
- * per-polygon frame. See hull.h; gl.c has the shaders and the draw code.
+ * Hull material for the GL renderer: procedural textures, profiles,
+ * classes and the per-polygon frame. See hull.h; gl.c has the shaders and
+ * the draw code.
  *
- * Nothing here comes from the game's data or from any image: a texture is
- * a height field of panels built from a seed (a kd-tree layout on a
- * torus, so the tile repeats without a visible edge), and the maps the
- * shader reads are worked out from that height field.
+ * Nothing here comes from the game's data or from its pictures. Styles 1
+ * to 4 build a texture as a height field of panels from a seed (a kd-tree
+ * layout on a torus, so the tile repeats without a visible edge); style 5
+ * starts from a class's grey tile (new art, art/hull/) instead. Either
+ * way the maps the shader reads are worked out from that height field.
  */
 
 #include <math.h>
@@ -29,31 +31,90 @@ const struct HullProfile hull_profiles[HP_N] = {
 };
 
 /*
- * Style 4: which profile a model gets, by the type word the 68k keeps at
- * object+90 (a byte offset into the model table, so twice the model's
- * number; FE2_HULL_LOG=1 prints the ones a session meets). One line per
- * model; edit freely. A model not listed gets HP_GENERIC.
+ * Style 5: the classes. The tile is grey plating made from a text prompt
+ * (docs/hd/hulls.md has each one's prompt); prof is the seeded texture
+ * used when the tile is not there. panel is how many object units one
+ * tile covers: a ship is some 10000 to 80000 units long, the station
+ * some 800000.
  */
-static const struct { unsigned char type; unsigned char prof; } hull_models[] = {
-	{ 20, HP_SMALL },	/* Interplanetary Shuttle */
-	{ 32, HP_STATION },	/* the hangar interior (walls and signs) */
-	{ 40, HP_MILITARY },	/* Krait Assault Craft */
-	{ 42, HP_SMALL },	/* Gecko */
-	{ 44, HP_TRADER },	/* Adder */
-	{ 46, HP_MILITARY },	/* Viper Defence Craft */
-	{ 50, HP_TRADER },	/* Moray Starboat */
-	{ 56, HP_TRADER },	/* Asp Explorer */
-	{ 66, HP_TRADER },	/* Python Freighter */
-	{ 72, HP_STATION },	/* the station, outside and in the hangar */
+const struct HullClass hull_classes[HC_N] = {
+/*	name		tile			prof		panel	contr seam  wear  chips bump  gloss shine ao    tint */
+	{ "generic",	"hull/generic.png",	HP_GENERIC,	8192,	0.16, 0.14, 0.40, 0.25, 0.90, 0.40, 24, 0.35, 0.15 },
+	{ "police",	"hull/police.png",	HP_MILITARY,	10240,	0.12, 0.22, 0.06, 0.00, 0.60, 0.80, 56, 0.30, 0.00 },
+	{ "civilian",	"hull/civilian.png",	HP_SMALL,	8192,	0.18, 0.14, 0.65, 0.55, 0.90, 0.30, 20, 0.35, 0.30 },
+	{ "freighter",	"hull/freighter.png",	HP_TRADER,	12288,	0.22, 0.18, 0.85, 0.40, 1.20, 0.25, 16, 0.40, 0.40 },
+	{ "armour",	"hull/armour.png",	HP_MILITARY,	6144,	0.16, 0.20, 0.25, 0.10, 1.20, 0.50, 40, 0.45, 0.05 },
+	{ "fighter",	"hull/fighter.png",	HP_SMALL,	6144,	0.14, 0.16, 0.10, 0.00, 0.60, 0.65, 64, 0.30, 0.00 },
+	{ "station",	"hull/station.png",	HP_STATION,	32768,	0.18, 0.16, 0.50, 0.15, 1.10, 0.25, 14, 0.40, 0.30 },
+	{ "hangar",	"hull/hangar.png",	HP_STATION,	40960,	0.14, 0.14, 0.50, 0.05, 0.80, 0.20, 12, 0.40, 0.35 },
 };
+
+/*
+ * Which profile (style 4) and class (style 5) a model gets, by the type
+ * word the 68k keeps at object+90 (a byte offset into the model table, so
+ * twice the model's number; FE2_HULL_LOG=1 prints the ones a session
+ * meets, and says which are not listed here). One line per model; edit
+ * freely. scale multiplies the class's panel size for that model. A model
+ * not listed gets HP_GENERIC and HC_GENERIC. Parts a model draws (a hangar
+ * door, a landing leg) carry its type word and so its class.
+ */
+static const struct {
+	unsigned short type;
+	unsigned char prof, cls;
+	float scale;
+} hull_models[] = {
+	{ 20,  HP_SMALL,	HC_CIVIL,	1.0f },	/* Shuttle */
+	{ 32,  HP_STATION,	HC_STATION,	1.0f },	/* landing pad */
+	{ 40,  HP_MILITARY,	HC_FIGHTER,	1.0f },	/* Krait */
+	{ 42,  HP_SMALL,	HC_FIGHTER,	1.0f },	/* Gecko */
+	{ 44,  HP_TRADER,	HC_CIVIL,	1.0f },	/* Adder */
+	{ 46,  HP_MILITARY,	HC_POLICE,	1.0f },	/* Viper */
+	{ 50,  HP_TRADER,	HC_CIVIL,	1.0f },	/* Moray */
+	{ 52,  HP_TRADER,	HC_CIVIL,	1.0f },	/* Cobra Mk III */
+	{ 56,  HP_TRADER,	HC_ARMOUR,	1.0f },	/* Asp */
+	{ 58,  HP_SMALL,	HC_FIGHTER,	1.0f },	/* Eagle */
+	{ 66,  HP_TRADER,	HC_FREIGHT,	1.0f },	/* Python */
+	{ 70,  HP_TRADER,	HC_FREIGHT,	1.0f },	/* Anaconda */
+	{ 72,  HP_STATION,	HC_STATION,	1.0f },	/* orbital station, outside */
+	{ 80,  HP_STATION,	HC_HANGAR,	1.0f },	/* station interior part */
+	{ 82,  HP_STATION,	HC_STATION,	1.0f },	/* launch structure */
+	{ 84,  HP_STATION,	HC_HANGAR,	1.0f },	/* station interior part */
+	{ 96,  HP_STATION,	HC_STATION,	1.0f },	/* starport building */
+	{ 198, HP_STATION,	HC_STATION,	1.0f },	/* city */
+	{ 288, HP_STATION,	HC_HANGAR,	1.0f },	/* hangar interior */
+	{ 290, HP_STATION,	HC_HANGAR,	1.0f },	/* hangar interior part */
+	{ 294, HP_STATION,	HC_HANGAR,	1.0f },	/* hangar interior part */
+};
+#define HULL_NMODELS	(int) (sizeof hull_models / sizeof hull_models[0])
+
+static int hull_model_row (unsigned int key)
+{
+	int i;
+	if (!HULL_KEY_OK (key)) return -1;
+	for (i = 0; i < HULL_NMODELS; i++)
+		if (hull_models[i].type == (key & 0xffff)) return i;
+	return -1;
+}
 
 int hull_profile_of_key (unsigned int key)
 {
-	unsigned int i;
-	if (!HULL_KEY_OK (key)) return HP_GENERIC;
-	for (i = 0; i < sizeof hull_models / sizeof hull_models[0]; i++)
-		if (hull_models[i].type == (key & 255)) return hull_models[i].prof;
-	return HP_GENERIC;
+	int r = hull_model_row (key);
+	return r < 0 ? HP_GENERIC : hull_models[r].prof;
+}
+
+int hull_key_listed (unsigned int key)
+{
+	return hull_model_row (key) >= 0;
+}
+
+int hull_class_of_key (unsigned int key, float *scale, float off[2])
+{
+	int r = hull_model_row (key);
+	unsigned int h = hull_mix ((key & 0xffff) * 0x9e3779b1u + 0x632be5abu);
+	*scale = r < 0 ? 1.0f : hull_models[r].scale;
+	off[0] = (h & 1023) / 1024.0f;
+	off[1] = ((h >> 10) & 1023) / 1024.0f;
+	return r < 0 ? HC_GENERIC : hull_models[r].cls;
 }
 
 unsigned int hull_mix (unsigned int x)
@@ -510,6 +571,109 @@ out:
 	free (Hb); free (tmp); free (GR); free (cav);
 }
 
+/*
+ * Style 5: the maps of a class from its grey tile. The tile's light and
+ * dark is read as paint and, smoothed a little, as height: its grooves
+ * and seams are dark, so they sink, catch dirt and go into shadow. The
+ * class says how much of each. Grime and chipped paint are laid over it
+ * from the class's own seed, so two classes that shared a tile would
+ * still wear differently.
+ */
+void hull_bake_tile (int cls, const unsigned char *lum, int n, unsigned char *t0,
+		     unsigned char *t1, float *mean_grime)
+{
+	const struct HullClass *c = &hull_classes[cls];
+	size_t cnt = (size_t) n * n, i;
+	float *D, *H, *Hb, *tmp, *GR, *cav, *CHp, sum = 0, gsum = 0, k, sd, bs = n / 512.0f;
+	double mean = 0, var = 0;
+	unsigned int seed = 0x6a09e667u + (unsigned int) cls * 7919u, rs;
+	int x, y, p, scratches;
+
+	N = n; NM = n - 1; SC = n / 1024.0f;
+	D = malloc (cnt * sizeof *D); H = malloc (cnt * sizeof *H);
+	Hb = malloc (cnt * sizeof *Hb); tmp = malloc (cnt * sizeof *tmp);
+	GR = calloc (cnt, sizeof *GR); cav = malloc (cnt * sizeof *cav);
+	CHp = calloc (cnt, sizeof *CHp);
+	if (!D || !H || !Hb || !tmp || !GR || !cav || !CHp) {
+		memset (t0, 128, cnt * 4); memset (t1, 0, cnt * 4);
+		*mean_grime = 0;
+		goto out;
+	}
+	for (i = 0; i < cnt; i++) mean += lum[i];
+	mean /= cnt;
+	for (i = 0; i < cnt; i++) var += (lum[i] - mean) * (lum[i] - mean);
+	sd = (float) sqrt (var / cnt);
+	if (sd < 1) sd = 1;
+	for (i = 0; i < cnt; i++) D[i] = (float) ((lum[i] - mean) / sd);
+
+	/* height: the tile, smoothed so the normals are not its grain */
+	blur (D, H, tmp, n >= 1024 ? 2 : 1);
+	/* cavity: how far below its surroundings a texel sits */
+	blur (H, Hb, tmp, S (12));
+	for (i = 0; i < cnt; i++)
+		cav[i] = clampf (1 - c->seam * (Hb[i] - H[i]), 0.4f, 1.0f);
+
+	/* grime: stains, streaks that run down the tile (v), and dirt that
+	 * collects in the grooves */
+	for (y = 0; y < N; y++)
+		for (x = 0; x < N; x++) {
+			float u = (float) x / N, v = (float) y / N;
+			float stain = fbm (u, v, 5, seed), streak = vnoise (u, v, 80, 2, seed + 5);
+			float g = 0.9f * sstep (0.5f, 0.85f, stain)
+				+ 0.8f * sstep (0.6f, 0.9f, streak) * (0.3f + stain)
+				+ 1.1f * (1 - cav[y * N + x]);
+			GR[y * N + x] = clampf (c->wear * g, 0, 1);
+		}
+	/* paint chipped off the raised edges, in patches, and scratches */
+	if (c->chips > 0) {
+		for (y = 0; y < N; y++)
+			for (x = 0; x < N; x++) {
+				float gx = (H[IX (x + 1, y)] - H[IX (x - 1, y)]) * 0.5f * bs;
+				float gy = (H[IX (x, y + 1)] - H[IX (x, y - 1)]) * 0.5f * bs;
+				float patch = fbm ((float) x / N, (float) y / N, 12, seed + 7);
+				i = (size_t) y * N + x;
+				if (fabsf (gx) + fabsf (gy) > 0.9f && H[i] > Hb[i])
+					CHp[i] = sstep (1 - 0.5f * c->chips, 1.05f - 0.5f * c->chips, patch);
+			}
+		scratches = (int) (200 * c->chips * SC * SC);
+		rs = hull_mix (seed + 99);
+		for (p = 0; p < scratches; p++) {
+			float px = frand (&rs) * N, py = frand (&rs) * N, a = frand (&rs) * 6.2832f;
+			int len = S (15) + (int) (frand (&rs) * S (55)), t;
+			for (t = 0; t < len; t++) {
+				int xx = (int) (px + cosf (a) * t), yy = (int) (py + sinf (a) * t);
+				CHp[IX (xx, yy)] = 0.7f;
+			}
+		}
+	}
+
+	/* paint: the tile's light and dark, scaled by the class */
+	for (i = 0; i < cnt; i++) {
+		D[i] = clampf (1 + c->contrast * D[i], 0.25f, 2.0f);
+		sum += D[i] * cav[i];
+	}
+	/* mean of albedo x cavity -> 0.5, so the shader's x2 averages 1.0 */
+	k = 0.5f / (sum / cnt);
+	for (i = 0; i < cnt; i++) {
+		int xx = (int) (i % N), yy = (int) (i / N);
+		float sx = -(H[IX (xx + 1, yy)] - H[IX (xx - 1, yy)]) * 0.5f * bs;
+		float sy = -(H[IX (xx, yy + 1)] - H[IX (xx, yy - 1)]) * 0.5f * bs;
+		float gl = clampf (0.55f + 0.12f * H[i], 0.15f, 0.9f);
+		t0[i * 4 + 0] = byte (clampf (sx, -2, 2) * 0.25f + 0.5f);
+		t0[i * 4 + 1] = byte (clampf (sy, -2, 2) * 0.25f + 0.5f);
+		t0[i * 4 + 2] = byte (clampf (D[i] * k, 0, 1));
+		t0[i * 4 + 3] = byte (cav[i]);
+		t1[i * 4 + 0] = 0;
+		t1[i * 4 + 1] = byte (clampf (gl * (1 - 0.8f * GR[i]) + 0.9f * CHp[i], 0, 1));
+		t1[i * 4 + 2] = byte (GR[i]);
+		t1[i * 4 + 3] = byte (CHp[i]);
+		gsum += GR[i];
+	}
+	*mean_grime = gsum / cnt;
+out:
+	free (D); free (H); free (Hb); free (tmp); free (GR); free (cav); free (CHp);
+}
+
 /* ---- the frame of one polygon ---- */
 
 static double dot3 (const double *a, const double *b)
@@ -602,5 +766,235 @@ int hull_frame (const double p[][3], int n, const double light[3], unsigned int 
 	f->lt[2] = (float) dot3 (L, N3);
 	f->seed[0] = (hull_mix (seed ^ 0x9e3779b9u) & 1023) / 1024.0f;
 	f->seed[1] = (hull_mix (seed ^ 0x85ebca6bu) & 1023) / 1024.0f;
+	for (i = 0; i < n; i++) {
+		f->mu[i][0] = f->uv[i][0] * 0.2071f + f->seed[0];
+		f->mu[i][1] = f->uv[i][1] * 0.2071f + f->seed[1];
+	}
 	return 1;
+}
+/*
+ * Style 5: the tile laid on the model, not on the face. w are the face's
+ * vertices in the model's own frame; the face takes the side of the
+ * model's box it faces most and is mapped straight onto it (a side face:
+ * u along the length, v up; a top face: u across, v along the length), so
+ * neighbouring faces on one side of the ship share one run of plating and
+ * the panels keep their size from ship to ship of a model. The tangent
+ * frame is worked out from that mapping in view space, so the bump map,
+ * the light and the edges all agree with where the panels are drawn.
+ */
+#define HULL_MACRO	0.2071		/* the second scale, per tile */
+
+int hull_frame_obj (const double p[][3], const float w[][3], int n, const double light[3],
+		    double panel, const float off[2], struct HullFrame *f)
+{
+	double a[3], b[3], N3[3], Nw[3], T[3], B[3], Tr[3], Br[3], d[3], c[3] = { 0, 0, 0 };
+	double L[3], m[3], e[3], U[4][2], base[2], mb[2], t, best = 0, lmax = 0, l, sc, near = 1e30;
+	int i, j, k, ax, cu, cv;
+
+	if (!(panel > 0)) return 0;
+	for (i = 0; i < n; i++) {
+		for (l = 0, k = 0; k < 3; k++)
+			l += (p[(i+1) % n][k] - p[i][k]) * (p[(i+1) % n][k] - p[i][k]);
+		if (l > lmax) lmax = l;
+		for (k = 0; k < 3; k++) c[k] += p[i][k] / n;
+	}
+	/* the normal in view space: two edges of a triangle, the diagonals of
+	 * a quad; towards the eye */
+	for (k = 0; k < 3; k++) {
+		a[k] = p[n == 4 ? 2 : 1][k] - p[0][k];
+		b[k] = p[n == 4 ? 3 : 2][k] - p[n == 4 ? 1 : 0][k];
+	}
+	cross3 (a, b, N3);
+	if (!(lmax > 1) || !(sqrt (dot3 (N3, N3)) > 1e-6 * lmax)) return 0;
+	unit3 (N3);
+	if (dot3 (N3, p[0]) > 0) for (k = 0; k < 3; k++) N3[k] = -N3[k];
+
+	/* the side of the model's box the face looks at most (a near tie goes
+	 * to the first axis, so a face does not flicker between two) */
+	for (k = 0; k < 3; k++) {
+		a[k] = w[n == 4 ? 2 : 1][k] - w[0][k];
+		b[k] = w[n == 4 ? 3 : 2][k] - w[n == 4 ? 1 : 0][k];
+	}
+	cross3 (a, b, Nw);
+	ax = 0;
+	for (k = 1; k < 3; k++)
+		if (fabs (Nw[k]) > 1.02 * fabs (Nw[ax])) ax = k;
+	if (!(fabs (Nw[ax]) > 0)) return 0;
+	cu = ax == 0 ? 2 : 0;
+	cv = ax == 1 ? 2 : 1;
+	for (i = 0; i < n; i++) {
+		U[i][0] = w[i][cu] / panel + off[0];
+		U[i][1] = w[i][cv] / panel + off[1];
+	}
+	/* where u and v run in view space, from the better shaped of the
+	 * face's triangles */
+	for (j = 0; j < (n == 4 ? 2 : 1); j++) {
+		int i1 = j ? 2 : 1, i2 = j ? 3 : 2;
+		double du1 = U[i1][0] - U[0][0], dv1 = U[i1][1] - U[0][1];
+		double du2 = U[i2][0] - U[0][0], dv2 = U[i2][1] - U[0][1];
+		double det = du1 * dv2 - du2 * dv1;
+		if (!(fabs (det) > best)) continue;
+		best = fabs (det);
+		for (k = 0; k < 3; k++) {
+			double e1 = p[i1][k] - p[0][k], e2 = p[i2][k] - p[0][k];
+			Tr[k] = (e1 * dv2 - e2 * dv1) / det;
+			Br[k] = (e2 * du1 - e1 * du2) / det;
+		}
+	}
+	if (!(best > 1e-12)) return 0;
+	sc = (sqrt (dot3 (Tr, Tr)) + sqrt (dot3 (Br, Br))) / 2;	/* view units per tile */
+	if (!(sc > 0) || !(sc < 1e12)) return 0;
+	/* T and B in the face's plane, square to each other, the mapping's
+	 * own handedness kept (a mirrored side stays mirrored) */
+	t = dot3 (Tr, N3);
+	for (k = 0; k < 3; k++) T[k] = Tr[k] - t * N3[k];
+	if (!unit3 (T)) return 0;
+	t = dot3 (Br, N3);
+	for (k = 0; k < 3; k++) B[k] = Br[k] - t * N3[k];
+	t = dot3 (B, T);
+	for (k = 0; k < 3; k++) B[k] -= t * T[k];
+	if (!unit3 (B)) return 0;
+
+	/* small numbers for the GPU: the tile and the second scale repeat
+	 * every 1.0, so each can lose a whole number */
+	base[0] = floor (U[0][0]);
+	base[1] = floor (U[0][1]);
+	mb[0] = floor (U[0][0] * HULL_MACRO + 0.37);
+	mb[1] = floor (U[0][1] * HULL_MACRO + 0.61);
+	for (i = 0; i < n; i++) {
+		f->uv[i][0] = (float) (U[i][0] - base[0]);
+		f->uv[i][1] = (float) (U[i][1] - base[1]);
+		f->mu[i][0] = (float) (U[i][0] * HULL_MACRO + 0.37 - mb[0]);
+		f->mu[i][1] = (float) (U[i][1] * HULL_MACRO + 0.61 - mb[1]);
+		for (k = 0; k < 3; k++) d[k] = -p[i][k];
+		if (!unit3 (d)) { d[0] = d[1] = 0; d[2] = 1; }
+		f->vt[i][0] = (float) dot3 (d, T);
+		f->vt[i][1] = (float) dot3 (d, B);
+		f->vt[i][2] = (float) dot3 (d, N3);
+		for (j = 0; j < 4; j++) f->ed[i][j] = 1000.0f;
+	}
+	/* the distance of each vertex from each edge's line, in tiles */
+	for (j = 0; j < n; j++) {
+		for (k = 0; k < 3; k++) e[k] = p[(j+1) % n][k] - p[j][k];
+		cross3 (N3, e, m);
+		if (!unit3 (m)) continue;
+		for (k = 0; k < 3; k++) d[k] = c[k] - p[j][k];
+		if (dot3 (m, d) < 0) for (k = 0; k < 3; k++) m[k] = -m[k];
+		t = dot3 (m, d) / sc;
+		if (t < near) near = t;
+		for (i = 0; i < n; i++) {
+			for (k = 0; k < 3; k++) d[k] = p[i][k] - p[j][k];
+			t = dot3 (m, d) / sc;
+			f->ed[i][j] = (float) (t < 0 ? 0 : t);
+		}
+	}
+	f->inr = (float) near;
+	for (k = 0; k < 3; k++) L[k] = light[k];
+	if (!unit3 (L)) { L[0] = L[1] = 0; L[2] = 1; }
+	f->lt[0] = (float) dot3 (L, T);
+	f->lt[1] = (float) dot3 (L, B);
+	f->lt[2] = (float) dot3 (L, N3);
+	f->seed[0] = f->seed[1] = 0;
+	return 1;
+}
+
+
+/*
+ * Style 5 on a complex shape: a face of more than four sides, or a decal
+ * on a face. Its points come to the draw side one by one and are cut into
+ * triangles there, so the tile is laid from the model's frame instead of
+ * from the face's own vertices: the same box-side mapping as
+ * hull_frame_obj, written as u and v straight from a point in view space.
+ * The plane of the shape is found from all its points (Newell's way), so a
+ * shape of any number of sides, or with holes, gets one frame.
+ */
+int hull_plane_obj (const double c[][3], int n, const float M[9], const int o[3],
+		    const double light[3], double panel, const float off[2], struct HullPlane *g)
+{
+	double N[3] = { 0, 0, 0 }, n68[3], Nw[3], P[3], Q[3], Tr[3], Br[3], L[3], U0[2];
+	double gp, gq, hp, hq, det, t;
+	int i, j, k, ax, cu, cv;
+
+	if (n < 3 || !(panel > 0)) return 0;
+	for (i = 0; i < n; i++) {
+		const double *p = c[i], *q = c[(i+1) % n];
+		N[0] += (p[1] - q[1]) * (p[2] + q[2]);
+		N[1] += (p[2] - q[2]) * (p[0] + q[0]);
+		N[2] += (p[0] - q[0]) * (p[1] + q[1]);
+	}
+	if (!unit3 (N)) return 0;
+	if (dot3 (N, c[0]) > 0) for (k = 0; k < 3; k++) N[k] = -N[k];	/* towards the eye */
+	/* the normal in the model's frame (GL's z is the 68k's negated), and
+	 * the side of the model's box it looks at most */
+	n68[0] = N[0]; n68[1] = N[1]; n68[2] = -N[2];
+	for (j = 0; j < 3; j++) Nw[j] = M[3*j] * n68[0] + M[3*j+1] * n68[1] + M[3*j+2] * n68[2];
+	ax = 0;
+	for (k = 1; k < 3; k++)
+		if (fabs (Nw[k]) > 1.02 * fabs (Nw[ax])) ax = k;
+	if (!(fabs (Nw[ax]) > 0)) return 0;
+	cu = ax == 0 ? 2 : 0;
+	cv = ax == 1 ? 2 : 1;
+	/* u = (M (v - o))[cu] / panel + off[0], v the 68k's point (x, y, -z) */
+	g->u0 = off[0];
+	g->v0 = off[1];
+	for (k = 0; k < 3; k++) {
+		double s = k == 2 ? -1 : 1;
+		g->gu[k] = s * M[3*cu+k] / panel;
+		g->gv[k] = s * M[3*cv+k] / panel;
+		g->u0 -= M[3*cu+k] * (double) o[k] / panel;
+		g->v0 -= M[3*cv+k] * (double) o[k] / panel;
+	}
+	/* where u and v run in the plane: Tr moves u by one and keeps v, Br
+	 * the other way round */
+	t = dot3 (g->gu, N);
+	for (k = 0; k < 3; k++) P[k] = g->gu[k] - t * N[k];
+	if (!unit3 (P)) return 0;
+	cross3 (N, P, Q);
+	gp = dot3 (g->gu, P); gq = dot3 (g->gu, Q);
+	hp = dot3 (g->gv, P); hq = dot3 (g->gv, Q);
+	det = gp * hq - gq * hp;
+	if (!(fabs (det) > 1e-30)) return 0;
+	for (k = 0; k < 3; k++) {
+		Tr[k] = (hq * P[k] - hp * Q[k]) / det;
+		Br[k] = (gp * Q[k] - gq * P[k]) / det;
+	}
+	/* T and B square to each other, the mapping's handedness kept, as in
+	 * hull_frame_obj */
+	for (k = 0; k < 3; k++) g->T[k] = Tr[k];
+	if (!unit3 (g->T)) return 0;
+	t = dot3 (Br, g->T);
+	for (k = 0; k < 3; k++) g->B[k] = Br[k] - t * g->T[k];
+	if (!unit3 (g->B)) return 0;
+	for (k = 0; k < 3; k++) g->N[k] = N[k];
+	/* small numbers for the GPU, from the shape's first point */
+	U0[0] = dot3 (g->gu, c[0]) + g->u0;
+	U0[1] = dot3 (g->gv, c[0]) + g->v0;
+	if (!(fabs (U0[0]) < 1e9) || !(fabs (U0[1]) < 1e9)) return 0;
+	g->base[0] = floor (U0[0]);
+	g->base[1] = floor (U0[1]);
+	g->mb[0] = floor (U0[0] * HULL_MACRO + 0.37);
+	g->mb[1] = floor (U0[1] * HULL_MACRO + 0.61);
+	for (k = 0; k < 3; k++) L[k] = light[k];
+	if (!unit3 (L)) { L[0] = L[1] = 0; L[2] = 1; }
+	g->lt[0] = (float) dot3 (L, g->T);
+	g->lt[1] = (float) dot3 (L, g->B);
+	g->lt[2] = (float) dot3 (L, g->N);
+	return 1;
+}
+
+void hull_plane_at (const struct HullPlane *g, const double e[3], float uv[2], float mu[2],
+		    float vt[3])
+{
+	double u = dot3 (g->gu, e) + g->u0, v = dot3 (g->gv, e) + g->v0, d[3];
+	int k;
+
+	uv[0] = (float) (u - g->base[0]);
+	uv[1] = (float) (v - g->base[1]);
+	mu[0] = (float) (u * HULL_MACRO + 0.37 - g->mb[0]);
+	mu[1] = (float) (v * HULL_MACRO + 0.61 - g->mb[1]);
+	for (k = 0; k < 3; k++) d[k] = -e[k];
+	if (!unit3 (d)) { d[0] = d[1] = 0; d[2] = 1; }
+	vt[0] = (float) dot3 (d, g->T);
+	vt[1] = (float) dot3 (d, g->B);
+	vt[2] = (float) dot3 (d, g->N);
 }
