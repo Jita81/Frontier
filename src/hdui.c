@@ -38,6 +38,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <math.h>
 #include "hdui.h"
 #include "hdtext.h"
@@ -2011,8 +2012,10 @@ static int column_at (int x)
 	return n;
 }
 
-/* A number the game ran on into the next column's (one space between):
- * two runs, so each goes in its column */
+/* A number the game ran on into the next column's ("$1060000$942200",
+ * or one space between): cut where the next column starts (or, with no
+ * column to go by, before the second '$'), so each piece goes in its
+ * column, and look again at what is left on the right */
 static void split_merged (void)
 {
 	int i, j, k, n;
@@ -2023,16 +2026,16 @@ static void split_merged (void)
 		const struct hdtext_run *r = &runs[i];
 		int X = -1;
 		if (!ON_PAGE (r) || r->x0 < 118 || r->y < 8 || r->y >= FOOT_Y || !(r->kind & HDT_K_NUMERIC)) continue;
-		for (j = 0; j < n_runs && X < 0; j++)
-			if (runs[j].y != r->y && runs[j].x0 > r->x0 + 4 && runs[j].x0 < r->ink1 && column_at (runs[j].x0) >= 3)
+		for (j = 0; j < n_runs; j++)
+			if (runs[j].y != r->y && runs[j].x0 > r->x0 + 4 && runs[j].x0 < r->ink1 && (X < 0 || runs[j].x0 < X) && column_at (runs[j].x0) >= 3)
 				X = runs[j].x0;
-		if (X < 0) continue;
 		n = hdtext_chars (r, c, sp, 64);
-		for (k = n - 1; k >= 1 && !sp[k]; k--)
-			;
-		if (k >= 1) {
-			hdtext_split (i, k);
+		for (k = 1; k < n; k++)
+			if (X >= 0 ? hdtext_glyph_x (r, k) >= X : c[k] == '$' && isalnum ((unsigned char) c[k - 1]))
+				break;
+		if (k < n && hdtext_split (i, k)) {
 			n_runs = hdtext_runs (&runs);
+			i += 2;
 		}
 	}
 }
@@ -2217,6 +2220,9 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 		}
 		if (grid) space = split_words ();
 	}
+	/* two tall rows that are not the grid: a conversation's answers,
+	 * read as rows, not cards (the bulletin board has three or more) */
+	if (mode == CARDS && !grid && n124 < 3) mode = ROWS;
 	if (mode == TABLE && !grid) {
 		split_merged ();
 		split_heads ();
@@ -2592,7 +2598,7 @@ static void f3_panel (float right)
 /* The ship's status pages (F3): one glass sheet, the 3D view framed */
 static void layout_f3 (unsigned char *out)
 {
-	int i, k, view = -1, top_head = 1000;
+	int i, j, k, view = -1, top_head = 1000;
 	float right = 319;
 	struct elem *e;
 
@@ -2626,7 +2632,20 @@ static void layout_f3 (unsigned char *out)
 		struct hdtext_run *r = &runs[i];
 		if (!ON_PAGE (r)) continue;
 		if (r->col == BG && r->shadow && r->x0 < right) {
-			/* in the page colour, seen by its shadow alone: a column's heading */
+			/* in the page colour, seen by its shadow alone: a column's
+			 * heading.  The game heads the hold's second column too;
+			 * with nothing in it, the heading is said once */
+			for (k = 0; k < i; k++)
+				if (runs[k].y == r->y && runs[k].hash == r->hash) break;
+			if (k < i) {
+				for (j = 0; j < n_runs; j++)
+					if (ON_PAGE (&runs[j]) && runs[j].y > r->y && runs[j].y < 132 && runs[j].col != BG &&
+					    runs[j].x0 >= r->x0 && runs[j].x0 <= r->x0 + 20) break;
+				if (j == n_runs) {
+					r->hide = 1;
+					continue;
+				}
+			}
 			style (r, HDT_SECTION, C_TEXT2);
 			continue;
 		}
