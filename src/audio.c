@@ -166,6 +166,11 @@ void Call_PlaySFX ()
 	sample = (short) GetReg (REG_D0);
 	chan = (short) GetReg (REG_D1);
 	//printf ("Playing sample %d on channel %d.\n", sample, chan);
+	/* the game's numbers index host tables: refuse any outside them */
+	if (sample < 0 || sample >= MAX_SAMPLES || chan < 0 || chan >= MAX_CHANNELS) {
+		SDL_UnlockAudio ();
+		return;
+	}
 
 	wav_channels[chan].buf_pos = 0;
 	wav_channels[chan].buf_len = sfx_buf[sample].buf_len;
