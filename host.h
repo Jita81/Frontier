@@ -69,7 +69,8 @@ void load_binfile (const char *bin_filename);
  * while nums[n] > 0: |= and &= are read-modify-writes of one variable, so one
  * comes first; if the flagger's |= does, the acquire &= reads it, so its
  * nums[n]++ is seen by the re-check, which sets the bit again.  So each
- * exception flagged is taken exactly once, one jump late at worst.  On one
+ * exception flagged is taken exactly once, at a later jump check if not at
+ * the first one: never lost and never taken twice.  On one
  * thread every step leaves the values the old ++/--/^= code did, which the
  * oracle hashes.  Relaxed loads are a plain ldr on arm64: the check at every
  * jump costs what it did, but cannot be torn or hoisted out of a loop. */
@@ -80,7 +81,7 @@ static inline s32 ExceptionsPending (void)
 
 static inline int TakeException (int num)
 {
-	s32 bit = 1<<num, n;
+	s32 bit = (s32) (1u<<num), n;
 	if (!(__atomic_load_n (&exceptions_pending, __ATOMIC_RELAXED) & bit)) return 0;
 	n = __atomic_load_n (&exceptions_pending_nums[num], __ATOMIC_RELAXED);
 	if (n > 0) n = __atomic_fetch_sub (&exceptions_pending_nums[num], 1, __ATOMIC_RELAXED);
