@@ -54,6 +54,44 @@ int GetReg (int reg);
 void FlagException (int num);
 void load_binfile (const char *bin_filename);
 
+/* Exceptions (the VBL) are flagged on other threads (SDL's timer thread in
+ * src/main.c, the oracle's watchdog) and taken on the 68000 thread, so these
+ * two variables are only ever changed with atomics.  nums[n] counts the
+ * exceptions n flagged and not yet taken; bit n of exceptions_pending only
+ * says "look at nums[n]":
+ *   FlagException, any thread:  nums[n]++, then bit n |= (release)
+ *   TakeException, the 68000 thread only:  if bit n and nums[n] > 0, nums[n]--;
+ *     if that was the last one, or nums[n] was 0 (a bit set late, after its
+ *     count was taken), bit n &= ~ (acquire), then bit n |= if nums[n] > 0.
+ * nums[n] is never negative: only TakeException decrements it, after reading
+ * it > 0, and every other write increments it.  Bit n never stays set while
+ * nums[n] is 0: the next TakeException clears it.  Bit n is never left clear
+ * while nums[n] > 0: |= and &= are read-modify-writes of one variable, so one
+ * comes first; if the flagger's |= does, the acquire &= reads it, so its
+ * nums[n]++ is seen by the re-check, which sets the bit again.  So each
+ * exception flagged is taken exactly once, one jump late at worst.  On one
+ * thread every step leaves the values the old ++/--/^= code did, which the
+ * oracle hashes.  Relaxed loads are a plain ldr on arm64: the check at every
+ * jump costs what it did, but cannot be torn or hoisted out of a loop. */
+static inline s32 ExceptionsPending (void)
+{
+	return __atomic_load_n (&exceptions_pending, __ATOMIC_RELAXED);
+}
+
+static inline int TakeException (int num)
+{
+	s32 bit = 1<<num, n;
+	if (!(__atomic_load_n (&exceptions_pending, __ATOMIC_RELAXED) & bit)) return 0;
+	n = __atomic_load_n (&exceptions_pending_nums[num], __ATOMIC_RELAXED);
+	if (n > 0) n = __atomic_fetch_sub (&exceptions_pending_nums[num], 1, __ATOMIC_RELAXED);
+	if (n <= 1) {
+		__atomic_fetch_and (&exceptions_pending, ~bit, __ATOMIC_ACQUIRE);
+		if (__atomic_load_n (&exceptions_pending_nums[num], __ATOMIC_RELAXED) > 0)
+			__atomic_fetch_or (&exceptions_pending, bit, __ATOMIC_RELAXED);
+	}
+	return n > 0;
+}
+
 #ifdef M68K_DEBUG
 #define BOUNDS_CHECK
 #if 0
