@@ -25,6 +25,7 @@
 #include "screen.h"
 #include "shortcut.h"
 #include "oracle.h"
+#include "bindings.h"
 
 
 #define FORCE_WORKING_DIR                 /* Set default directory to cwd */
@@ -148,10 +149,12 @@ void Main_EventHandler()
 	   }
 	   break;
     case SDL_MOUSEBUTTONDOWN:
-       Input_MousePress (event.button.button);
+       if (!bindings_mouse_event (event.button.button, 1))
+         Input_MousePress (event.button.button);
        break;
     case SDL_MOUSEBUTTONUP:
-       Input_MouseRelease (event.button.button);
+       if (!bindings_mouse_event (event.button.button, 0))
+         Input_MouseRelease (event.button.button);
        break;
     case SDL_KEYDOWN:
        Keymap_KeyDown(&event.key.keysym);
@@ -199,6 +202,7 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --size w h            Start at specified window size.\n"
 			   "  --old-renderer        Start with the old renderer.\n"
                "  --flat-hulls          Flat ship faces, no hull plating.\n"
+               "  --flat-sky            The game's flat Milky Way band (no star clouds).\n"
                "  --pixel-text          Keep the original bitmap font (no HD text;\n"
                "                        FE2_HD_FONT=<PostScript name> picks the font).\n"
                "  --pixel-art           Keep the game's own bitmaps (no HD stills).\n"
@@ -219,6 +223,8 @@ void Main_ReadParameters(int argc, char *argv[])
 		use_renderer = R_OLD;
 	  else if (!strcmp(argv[i], "--flat-hulls"))
 		flat_hulls = 1;
+	  else if (!strcmp(argv[i], "--flat-sky"))
+		flat_sky = 1;
 	  else if (!strcmp(argv[i], "--pixel-text"))
 		pixel_text = 1;
 	  else if (!strcmp(argv[i], "--pixel-art"))
@@ -319,6 +325,9 @@ int main(int argc, char *argv[])
 
   /* Check for any passed parameters */
   Main_ReadParameters(argc, argv);
+
+  /* controls.ini (never with an oracle flag) */
+  bindings_init();
 
   /* Init emulator system */
   Main_Init();
