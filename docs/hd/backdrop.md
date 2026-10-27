@@ -1,11 +1,11 @@
 # Docked-location backdrops (`src/hdback.c`)
 
-While the ship is docked at an orbital station or landed at a surface port,
-and a flat 2D page is up (station services, shipyard, bulletin board,
-stockmarket, the F3 status pages), the GL renderer draws a photographic
+While the ship is docked at an orbiting station or landed at a surface port,
+and a flat 2D page is up (station services, shipyard, notice board,
+market, the F3 status pages), the GL renderer draws a photographic
 picture of that place behind the page where the flat page colour used to be:
 
-- **Orbital station:** the inside of a docking bay, with the station's
+- **Orbiting station:** the inside of a docking bay, with the station's
   parent body seen through the open bay mouth.
 - **Surface port:** a landing pad or hangar under that world's sky, for
   example a black starry sky on an airless world, blue sky and green hills
@@ -18,9 +18,13 @@ dwarf gives a dim ruddy light and a G star gives daylight.
 A picture of the wrong planet is worse than none. Any place the code cannot
 place with confidence keeps the old flat colour.
 
-Nothing is drawn in flight, on the 3D views, on the galactic map or the
-system view, or with `--pixel-art`. The game's own pixels always stay on
-top: text, faces, buttons, the F3 ship box and the console in rows 168-199.
+Nothing is drawn in flight, on the 3D views, on the galaxy map or the
+system view, or with `--pixel-art`. The game's own pixels stay on top: text,
+faces, buttons, the F3 ship box and the console in rows 168-199. The one
+change to them is the page colour the game draws round its buttons and
+arrows. Over a picture that margin would be a block of flat colour, so it is
+cleared; the button keeps its bevel and face (see
+[The page colour the game draws itself](#the-page-colour-the-game-draws-itself)).
 
 ## Switches
 
@@ -50,17 +54,50 @@ these hold:
      and the frame's `glClear` then paints exactly the pixels the page fill
      left transparent.
    - Bit 0 of the byte at 536(a6) is clear. This is the equate
-     `A6_do_clr_2_space_cols`, fe2.s line 86. The 3D views, the galactic map
+     `A6_do_clr_2_space_cols`, fe2.s line 86. The 3D views, the galaxy map
      and the system view set the bit.
 4. **A picture exists for the location's key** (below).
 
 The page's flat colour is the `glClear` colour, so a picture drawn straight
-after `glClear` shows exactly where that colour would. No pixel of the game's
-screen is read or changed.
+after `glClear` shows exactly where the page fill would.
 
 Every read uses `STMemory_Read*`. Nothing is written to ST memory, and
 nothing changes game timing, input or click regions. The oracle replay hash
 is unchanged.
+
+## The page colour the game draws itself
+
+The page fill is not the only place the page colour (palette index 14)
+appears. The game also blits it as part of its button and arrow bitmaps: the
+margin round each button, the gap between a button's bevel and its box, the
+strip behind the market's columns of trade buttons, and the box round the
+page's scroll arrow.
+On the flat page those pixels are the page. Over a picture they would show
+as solid blocks of the page colour round every button.
+
+`hdback_frame` (`src/hdback.c`) deals with them. It is called once a frame
+from `draw_control_panel` (`src/gl.c`), after the other HD layers have made
+the upload copy `hd_screen`, and it runs only when `hdback_draw` put a
+picture down for that frame and the screen is still a flat page:
+
+1. **Start from the page fill.** Every pixel of rows 0-167 that the game left
+   transparent (255) after the page fill is a seed.
+2. **Flood through the page colour.** From the seeds it walks to the four
+   neighbours, through pixels that are index 14 or transparent in the upload
+   copy. Every index-14 pixel it reaches is set to 255 in the copy.
+3. **Keep what is enclosed.** Index 14 that the flood cannot reach is walled
+   in by something else: a button's face inside its bevel, the body of an
+   arrow inside its box. That pixel is part of the button and stays.
+
+The flood reads `VideoRaster` and writes only `hd_screen`, the copy that goes
+to the GL texture. ST memory is never written. Rows 168-199, the console,
+are never touched. With the backdrop off, with `--pixel-art`, or on a frame
+without a picture, `hdback_frame` returns before reading anything, so those
+screens are byte for byte the old ones.
+
+The page colour is a different colour on different pages: $64a on the
+station pages, $448 on F3 equipment, $444 on the profile and $a44 on cargo.
+The flood goes by index, so it works the same on all of them.
 
 ## Where the ship is
 
@@ -91,7 +128,7 @@ Body class, by the model the game draws the body with:
 | $88, $8a | terran | oxygen, oceans, cloud |
 | $8c | ice | oxygen but frozen |
 | $8e | ocean | corrosive water world |
-| $92-$96 | gasgiant | banded giant (orbital stations only) |
+| $92-$96 | gasgiant | banded giant (orbiting stations only) |
 
 A surface port on a gas giant or a star gets no picture.
 
@@ -128,21 +165,26 @@ The picture is drawn at 0.80 brightness. It is then covered by a #0b1016
 scrim at 50% so the game's text stays readable. The fit covers the whole
 window, keeps the picture's shape and centres it.
 
-The texture is loaded once and kept until the key's picture changes.
-`hdback_forget` drops it when the GL context goes (video mode change).
-Nothing is loaded per frame.
+The texture is loaded once and kept until the key's picture changes. The
+load puts back whatever texture was bound before it. `hdback_forget` drops it
+when the GL context goes (video mode change). Nothing is loaded per frame.
 
 The debug line looks like this (the numbers come from the game's state):
 
 ```
-hdback: state=$54 mode=$00 bgcol=14 page=1 port=#112 model=$54 flags=$90 orbital
-  body=#113 model=$8a 287K class=terran chain=#113:$8a<#114:$9e star=#114
+hdback: state=$54 mode=$00 bgcol=14 pal14=$64a page=1 port=#112 model=$54 flags=$90
+  orbital body=#113 model=$8a 287K class=terran chain=#113:$8a<#114:$9e star=#114
   model=$9e light=orange -> key orbital-terran-orange orbital-terran-orange-a.jpg
+hdback: page colour drawn by the game: 328 cleared, 150 kept (enclosed)
 ```
+
+`pal14` is the page colour's palette entry. The second line comes from
+`hdback_frame` each time its counts change: index-14 pixels cleared, and
+index-14 pixels kept because something encloses them.
 
 ## The pictures
 
-37 pictures: 19 orbital and 18 surface, 4.06 MB in all.
+37 pictures: 19 orbital and 18 surface, 4.13 MB in all.
 
 - **Two lights for every class.** Yellow and red, the two ends the tint grades
   between, for every orbital class (8) and every surface class (7).
@@ -152,6 +194,17 @@ hdback: state=$54 mode=$00 bgcol=14 page=1 port=#112 model=$54 flags=$90 orbital
   red light.
 - **Moon picture.** One frozen-moon picture, `surface-ice-moon-red-a`, showing
   a gas giant in a red dwarf's sky.
+
+All the pictures share one look: working far-future industry in weathered
+gunmetal steel. That includes the terran ports, which show armoured hangars,
+cargo gantries and blast walls among green hills.
+
+Some pictures took more than one try. Where a try had a fault, such as a
+line across the planet, a deck slab jutting into space, a crane hook in
+front of the planet, or a port that looked like a present-day airport, the
+prompt gained a clause against it and the picture was made again.
+[backdrops.md](backdrops.md) records every try, the reason it was dropped
+and its cost.
 
 Each picture is a 1152x864 progressive JPEG at quality 75.
 
@@ -189,17 +242,22 @@ the repository.
 |---|---|---|---|---|
 | key 1 | landed $60, surface port model $62. Body: model $8c, 269 K, a moon of a $94 gas giant. Star $9a. | `surface-ice-red` → moon picture `surface-ice-moon-red-a.jpg` | 3D view from the pad: pale plains, ruddy sky, a giant in the sky | yes |
 | key 2 | landed $60, surface port model $60. Body: model $88, 288 K. Star $a0. | `surface-terran-yellow` → `surface-terran-yellow-a.jpg` | 3D view from the pad: blue sky, white cloud, green hills | yes |
-| key 3 | docked $54, orbital station model $54. Body: model $8a, 287 K. Star $9e. | `orbital-terran-orange` → `orbital-terran-orange-a.jpg` | Galactic map: a K star. The system view, zoomed on the planet, fills with its flat green. | yes |
+| key 3 | docked $54, orbiting station model $54. Body: model $8a, 287 K. Star $9e. | `orbital-terran-orange` → `orbital-terran-orange-a.jpg` | Galaxy map: a K star. The system view, zoomed on the planet, fills with its flat green. | yes |
 
 Pages also checked:
 
 | Pages | Result |
 |---|---|
-| F4 services, shipyard (and its second page), bulletin board, stockmarket, F3 equipment, profile and cargo | page=1, backdrop drawn |
-| F1 3D views, galactic map, system view, in flight after launch | page=0 or not docked, no backdrop |
+| F4 services, shipyard (and its second page), notice board, market, F3 equipment, profile and cargo | page=1, backdrop drawn |
+| F1 3D views, galaxy map, system view, in flight after launch | page=0 or not docked, no backdrop |
 
 `--pixel-art` with the backdrop on and off gives identical shots. The only
 difference was the F3 page's turning ship model, which moves between frames.
+
+The off switch and `--pixel-art` were also run against a build without the
+backdrop, on the same start and pages. The shots matched (SSIM 0.975 or
+better). The only differing pixels were the console clock and the F3 page's
+turning ship.
 
 ## Known limits
 
@@ -211,3 +269,21 @@ difference was the F3 page's turning ship model, which moves between frames.
   with black, and the F3 page's 3D ship box, which the game draws black.
 - **Only the three starts were checked in the game.** Other locations rely
   on the same decoding and on the class and light tables above.
+- **Body models not yet seen in the game.** The checked runs met models $88,
+  $8a and $8c. The readings of the others are not yet checked against the
+  game's own view. $7e (rocky) and $8e (ocean) may each cover more than one
+  kind of world. $7c, $82 and $90 are not in the table, so a port on such a
+  body keeps the flat colour.
+- **One moon picture.** Only a frozen moon under a red star shows its giant
+  in the sky. Other moons use the plain picture of their class.
+- **Palette fades.** The picture does not follow a palette fade. The page
+  colour cannot stand in for a fade level, because it differs from page to
+  page ($64a, $448, $444, $a44). No docked page was seen to fade in the
+  checked runs; on launch the page cuts straight to the 3D view.
+- **Text in the page colour.** A few labels are drawn in the page colour
+  itself, with a shadow, so they look embossed on the flat page (for
+  example the column headings on the F3 cargo page). Over a picture they
+  stay readable, but as ordinary text in that colour, not embossed.
+- **Window shape.** The picture covers the window and is cropped to fit,
+  never stretched. On a window wider than 4:3 the game's own screen is
+  stretched as it always was; that is the renderer's existing behaviour.

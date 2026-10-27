@@ -568,6 +568,7 @@ static void draw_control_panel ()
 		hdui_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
 		hdstill_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
 		hdface_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
+		hdback_frame (VideoRaster, hd_screen);
 		scr = hd_screen;
 	}
 	

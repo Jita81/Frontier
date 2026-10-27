@@ -19,6 +19,11 @@
 #define ST_MEM_SIZE	0x110000
 
 extern int fe2_bgcol;
+extern unsigned short MainPalette[256];	/* ST $0rgb words, read only */
+
+#define ST_W		320
+#define PAGE_ROWS	168	/* rows 168-199 are the console */
+#define CLEAR		255	/* the transparent index in the GL upload */
 
 /* --- where the ship is: read only ------------------------------------
  *
@@ -316,6 +321,7 @@ static int load (const char *file)
 {
 	char rel[96];
 	unsigned char *rgba;
+	GLint bound;
 	int w, h;
 
 	if (!strcmp (file, tex_file)) return tex != 0;
@@ -331,6 +337,7 @@ static int load (const char *file)
 	img_h = h;
 	tex_w = pow2 (w);
 	tex_h = pow2 (h);
+	glGetIntegerv (GL_TEXTURE_BINDING_2D, &bound);
 	glGenTextures (1, &tex);
 	glBindTexture (GL_TEXTURE_2D, tex);
 	glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA, tex_w, tex_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
@@ -341,6 +348,7 @@ static int load (const char *file)
 	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glBindTexture (GL_TEXTURE_2D, (GLuint) bound);
 	free (rgba);
 	return 1;
 }
@@ -353,6 +361,7 @@ static int load (const char *file)
 #define SCRIM_ALPHA	0.50f
 
 static int debug = -1;
+static int drew;	/* hdback_draw put the picture down for this frame */
 
 static void log_where (const struct where *w, int page,
 		       const struct art *a, enum light drawn)
@@ -361,10 +370,10 @@ static void log_where (const struct where *w, int page,
 	char buf[512];
 
 	snprintf (buf, sizeof buf,
-		  "hdback: state=$%02x mode=$%02x bgcol=%d page=%d port=#%d model=$%02x flags=$%02x %s"
+		  "hdback: state=$%02x mode=$%02x bgcol=%d pal14=$%03x page=%d port=#%d model=$%02x flags=$%02x %s"
 		  " body=#%d model=$%02x %dK class=%s chain=%s star=#%d model=$%02x light=%s"
 		  " -> key %s-%s-%s %s%s%s",
-		  w->state, rb (A6 + A6_SPACE_MODE), fe2_bgcol, page,
+		  w->state, rb (A6 + A6_SPACE_MODE), fe2_bgcol, MainPalette[PAGE_COLOUR], page,
 		  w->port_idx, w->port_model, w->port_flags, kind_name[w->kind],
 		  w->body_idx, w->body_model, w->body_temp, w->cls ? w->cls : "-", w->chain,
 		  w->star_idx, w->star_model, light_name[w->light],
@@ -396,15 +405,17 @@ void hdback_draw (int fb_w, int fb_h)
 		off = e && !strcmp (e, "0");
 		debug = d && *d && strcmp (d, "0");
 	}
+	drew = 0;
 	if (pixel_art || off) return;
 
 	locate (&w);
 	/* a flat page: the page colour fill, and no 3D view filling the
-	 * screen each frame (the 3D view, galactic map and system view do) */
+	 * screen each frame (the 3D view, galaxy map and system view do) */
 	page = fe2_bgcol == PAGE_COLOUR && !(rb (A6 + A6_SPACE_MODE) & 0x01);
 	if (w.kind) a = pick (&w, &drawn);
 	if (debug && w.state) log_where (&w, page, a, drawn);
 	if (!page || !a || !load (a->file)) return;
+	drew = 1;
 
 	/* the light the picture was made under, graded to the star's */
 	t = drawn != w.light ? tint[w.light] : no_tint;
@@ -466,4 +477,65 @@ void hdback_draw (int fb_w, int fb_h)
 	glMatrixMode (GL_MODELVIEW);
 	glPopMatrix ();
 	glPopAttrib ();
+}
+
+/* --- the page colour the game draws itself --------------------------- */
+
+/* The page fill (Call_MemsetBlue) leaves the transparent index, but the
+ * game also blits the page colour as the margin of a button or an arrow.
+ * On the flat page that margin is the page; over the picture it would be a
+ * purple block.  So: flood from the page fill through the page colour, 4
+ * neighbours, and clear what is reached.  Page colour walled in by
+ * something else (a button's face inside its bevel, an arrow inside its
+ * box) is part of that thing and stays.  The flood walks through `out`,
+ * the copy the other layers have already edited, so a glyph hdtext took
+ * out of the page joins the page; it starts only from pixels the game
+ * itself filled (255 in the raster). */
+void hdback_frame (const unsigned char *raster, unsigned char *out)
+{
+	static unsigned short q[ST_W * PAGE_ROWS];
+	static unsigned char hit[ST_W * PAGE_ROWS];
+	static int last_cleared = -1, last_kept = -1;
+	int head = 0, tail = 0, i, cleared = 0, kept = 0;
+
+	if (!drew) return;
+	drew = 0;	/* one frame's picture, one frame's hook */
+	if (fe2_bgcol != PAGE_COLOUR || (rb (A6 + A6_SPACE_MODE) & 0x01))
+		return;
+
+	memset (hit, 0, sizeof hit);
+	for (i = 0; i < ST_W * PAGE_ROWS; i++)
+		if (raster[i] == CLEAR) {
+			hit[i] = 1;
+			q[tail++] = (unsigned short) i;
+		}
+	while (head < tail) {
+		int p = q[head++], x = p % ST_W, nb[4], k;
+
+		nb[0] = x > 0 ? p - 1 : -1;
+		nb[1] = x < ST_W - 1 ? p + 1 : -1;
+		nb[2] = p - ST_W;
+		nb[3] = p + ST_W < ST_W * PAGE_ROWS ? p + ST_W : -1;
+		for (k = 0; k < 4; k++) {
+			int j = nb[k];
+			if (j < 0 || hit[j]) continue;
+			if (out[j] != PAGE_COLOUR && out[j] != CLEAR) continue;
+			hit[j] = 1;
+			q[tail++] = (unsigned short) j;
+		}
+	}
+	for (i = 0; i < ST_W * PAGE_ROWS; i++) {
+		if (out[i] != PAGE_COLOUR) continue;
+		if (hit[i]) {
+			out[i] = CLEAR;
+			cleared++;
+		} else
+			kept++;
+	}
+	if (debug && (cleared != last_cleared || kept != last_kept)) {
+		fprintf (stderr, "hdback: page colour drawn by the game: %d cleared, %d kept (enclosed)\n",
+			 cleared, kept);
+		last_cleared = cleared;
+		last_kept = kept;
+	}
 }
