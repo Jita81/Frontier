@@ -63,8 +63,9 @@ ORBIT_LOOK = {
 
 # --- the place itself, on the surface --------------------------------------
 GROUND_LOOK = {
-    "terran": "a temperate living world, at a far-future starport of sleek curved white towers and domed "
-              "terminals: green hills and scattered trees beyond the port, an open sky with drifting white clouds",
+    "terran": "a temperate living world, at a working far-future starport built of weathered gunmetal steel: "
+              "armoured hangars, tall cargo gantries, blast walls and heavy concrete pads, with green hills and "
+              "scattered trees beyond the port and an open sky with drifting white clouds",
     "ice": "a frozen world: flat plains of ice and wind-packed snow, frost on every surface, low pressurised buildings "
            "half buried in drifts, a pale cold sky",
     "rocky": "a dry desert world: ochre dust plains, wind-carved rock mesas on the horizon, "
@@ -160,6 +161,21 @@ def parse(name):
     return kind, cls, light, variant
 
 
+# a clause one picture's prompt gets after a try came out with a fault the
+# scene words alone did not prevent (see REMADE)
+EXTRA = {
+    "orbital-airless-red-a": "Nothing crosses in front of the planet: no cables, wires, beams, "
+                             "rings or lines across the opening.",
+    "orbital-airless-yellow-a": "The bay has a closed ceiling and one single opening: a tall wide mouth "
+                                "filling most of the far wall from deck to ceiling, with the planet seen "
+                                "through it. The deck ends at its rim; nothing juts out into open space. No lens "
+                                "flare, light streaks or beams across the planet.",
+    "orbital-terran-yellow-b": "Nothing hangs or crosses in front of the planet: no hooks, cables or "
+                               "crane parts in the opening. The parked craft are sleek angular far-future "
+                               "shuttles, not present-day space shuttles.",
+}
+
+
 def prompt(kind, cls, light, variant):
     base = cls[:-5] if cls.endswith("-moon") else cls
     if kind == "orbital":
@@ -167,7 +183,8 @@ def prompt(kind, cls, light, variant):
     else:
         sky = MOON_SKY + " " if cls.endswith("-moon") else "No other planets or moons in the sky. "
         text = SURFACE_SCENE[variant].format(look=GROUND_LOOK[base], sky=sky, light=LIGHT[light])
-    return text + " " + COMMON
+    extra = EXTRA.get(name_of(kind, cls, light, variant))
+    return text + " " + COMMON + (" " + extra if extra else "")
 
 
 def raw_file(raw, name):
@@ -212,24 +229,39 @@ def process(raw, quality):
     print(f"total {total / 1e6:.2f} MB")
 
 
-# why a picture was made more than once (the last attempt is the one shipped)
+# why a picture was made more than once: one reason per dropped attempt, in
+# the order they were made (the last attempt is the one shipped)
+TERRAN_AIRPORT = ("the port looked like a present-day airport; the terran look was rewritten as a "
+                  "far-future starport")
+TERRAN_TOWERS = ("the far-future port came out as sleek white towers, unlike the industrial steel of "
+                 "every other picture; the terran look was rewritten as a working gunmetal starport")
 REMADE = {
-    "orbital-corrosive-red-a": "the planet came out banded like a gas giant; the corrosive look was "
-                               "rewritten as a smooth featureless ball",
-    "orbital-corrosive-yellow-a": "remade with the rewritten corrosive look",
-    "orbital-methane-red-a": "the planet came out banded like a gas giant; the methane look was "
-                             "rewritten as a smooth hazy ball",
-    "orbital-methane-yellow-a": "the planet came out banded like a gas giant; the methane look was "
-                                "rewritten as a smooth hazy ball",
-    "surface-terran-yellow-a": "the port looked like a present-day airport; the terran look was "
-                               "rewritten as a far-future starport",
-    "surface-terran-red-a": "the port looked like a present-day airport; the terran look was "
-                            "rewritten as a far-future starport",
-    "surface-terran-orange-a": "the port looked like a present-day airport; the terran look was "
-                               "rewritten as a far-future starport",
-    "surface-terran-yellow-b": "remade with the rewritten terran look",
-    "surface-terran-red-b": "remade with the rewritten terran look",
+    "orbital-corrosive-red-a": ["the planet came out banded like a gas giant; the corrosive look was "
+                                "rewritten as a smooth featureless ball"],
+    "orbital-corrosive-yellow-a": ["remade with the rewritten corrosive look"],
+    "orbital-methane-red-a": ["the planet came out banded like a gas giant; the methane look was "
+                              "rewritten as a smooth hazy ball"],
+    "orbital-methane-yellow-a": ["the planet came out banded like a gas giant; the methane look was "
+                                 "rewritten as a smooth hazy ball"],
+    "orbital-airless-red-a": ["a thin straight line crossed the sky and the planet"],
+    "orbital-airless-yellow-a": ["a flat slab of deck jutted out of the bay mouth into open space",
+                                 "the bay mouth came out as two openings joined like a figure eight",
+                                 "the bay had an open roof as well as a mouth, and the planet seen through "
+                                 "the mouth did not line up with the planet above",
+                                 "a lens-flare streak crossed the planet"],
+    "orbital-terran-yellow-b": ["a crane hook hung in front of the planet, and the parked craft looked "
+                                "like present-day space shuttles"],
+    "surface-terran-yellow-a": [TERRAN_AIRPORT, TERRAN_TOWERS],
+    "surface-terran-red-a": [TERRAN_AIRPORT, TERRAN_TOWERS],
+    "surface-terran-orange-a": [TERRAN_AIRPORT, TERRAN_TOWERS],
+    "surface-terran-yellow-b": ["remade with the first rewritten terran look", TERRAN_TOWERS],
+    "surface-terran-red-b": ["remade with the first rewritten terran look", TERRAN_TOWERS],
 }
+
+
+def why_remade(name, i):
+    reasons = REMADE.get(name, [])
+    return reasons[i] if i < len(reasons) else "superseded"
 
 
 def record(ledger):
@@ -279,9 +311,9 @@ def record(ledger):
               "> " + last["prompt"], ""]
     o += ["## Attempts not shipped", ""]
     for n in planned:
-        for c in by_name.get(n, [])[:-1]:
+        for i, c in enumerate(by_name.get(n, [])[:-1]):
             o += [f"### {n} (dropped)", "",
-                  f"{c['model']}, ${c['usd']:.2f}: {REMADE.get(n, 'superseded')}.", "",
+                  f"{c['model']}, ${c['usd']:.2f}: {why_remade(n, i)}.", "",
                   "> " + c["prompt"], ""]
     for n, cs in by_name.items():
         if n in planned:
