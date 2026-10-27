@@ -2282,13 +2282,7 @@ static void note_panel (const struct rec *r)
 	int i, s;
 
 	if (a->kind == K_MISSILE) {
-		if (panel_now.n_missiles < 8) {
-			short *m = panel_now.missile[panel_now.n_missiles++];
-			m[0] = r->x;
-			m[1] = r->y;
-			m[2] = r->x + r->w - 1;
-			m[3] = r->y + r->h - 1;
-		}
+		panel_now.n_missiles++;
 		return;
 	}
 	if (a->kind != K_PANEL) return;
@@ -2304,10 +2298,6 @@ static void note_panel (const struct rec *r)
 	if (!(panel_now.seen & 2) && r->x <= 290 && r->x + r->w > 290 && r->y <= 181 && r->y + r->h > 181) {
 		panel_now.seen |= 2;
 		panel_now.flags |= a->flags & F_MAPKEYS;
-	}
-	if (a->v >= 0 && a->w == 64 && a->h == 7 && !(panel_now.seen & 4)) {
-		panel_now.seen |= 4;
-		panel_now.time = a->v + 1;
 	}
 }
 

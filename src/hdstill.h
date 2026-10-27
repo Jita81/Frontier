@@ -53,14 +53,12 @@ enum {
 
 /* The control panel as the last hdstill_frame found it on the screen:
  * the icon in each function key (slot[1..10], G_ABSENT where none was
- * found), F_ flags of the bay and the second display, the time key lit
- * (time: 0 none found, 1 paused, 2..6 1x..10000x) and the missiles on
- * the pylons (ST rectangles x0, y0, x1, y1).  Read only, for hdtip. */
+ * found), F_ flags of the bay and the second display, and how many
+ * missiles are on the pylons.  Read only, for hdtip. */
 struct hdstill_panel {
-	int valid, flags, seen, time;
+	int valid, flags, seen;
 	unsigned char slot[11];
 	int n_missiles;
-	short missile[8][4];
 };
 /* Fills *p; returns p->valid (0 with --pixel-art or no panel seen) */
 int hdstill_panel (struct hdstill_panel *p);

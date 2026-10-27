@@ -41,16 +41,18 @@
 #define A6			__DL5eb6_a6_base
 #define A6_TOOLS_MODE		42	/* byte: negative while a 3D view fills the screen */
 #define A6_MISSILE_SEL		671	/* byte: the pylon selected, 1..8, 0 none */
-#define A6_FLAGS673		673	/* byte: bit 6 far enough from any body to jump */
+#define A6_FLAGS673		673	/* byte: bit 6 far enough from any body to jump (L622de) */
 #define A6_PLAYER		674	/* long: the player's ship object */
-#define A6_NEAREST_M		692	/* long: metres to the nearest body */
-#define A6_FLIGHT_STATE		704	/* byte: 0 flight, 4 autopilot, 8 hyperspace, $48/$4c launch, $50.. docked, $5c.. landed */
-#define A6_SHIP_FLAGS		705	/* byte: bit 0 engines off */
+#define A6_NEAREST_M		692	/* long: distance to the nearest body, for the log only */
+#define A6_FLIGHT_STATE		704	/* byte: 0 flight, 4 autopilot; over $0c the docking, launch and
+					 * landing phases ($10-$18 docking, $48 launch under way,
+					 * $50-$5b docked, $5c.. on the ground) */
+#define A6_SHIP_FLAGS		705	/* byte: bit 0 engines off, bit 2 object labels (F10) */
 #define A6_VIEW			706	/* byte: 0 front, 1 rear, 2/3 turrets, 4 external */
 #define A6_AP_TARGET		708	/* byte: something the autopilot can fly to */
 #define A6_HULL_TEMP		866	/* word */
 #define A6_DEST_SET		977	/* byte: a destination system picked */
-#define A6_DEST_SYS		1044	/* long: the system picked, 0 the one you are in */
+#define A6_DEST_SYS		1044	/* long: the system picked (packed), for the log only */
 #define A6_COMBAT		10476	/* byte: bit 1 a ship nearby is active (time keys refused) */
 #define A6_ICON_POS		14514	/* the click table: x0, y0, x1, y1, code words */
 
@@ -196,19 +198,22 @@ static void flight_key (struct tip *t, int slot, const struct hdstill_panel *p)
 
 	switch (slot) {
 	case 7:
+		/* as the F7 handler l62d48: ignored while docked, take off from
+		 * the ground, $48 hands over to $4c, 4 back to manual, and in
+		 * every other state the engines toggle (705 bit 0) */
 		if (docked) {
-			SET (title, "Engines");
-			SET (body, "Start the engines and fly.");
 			char k[24];
+			SET (title, "Engines");
+			SET (body, "Flying the ship once you are out of the station.");
 			key_for (0xf4, k, sizeof (k));
-			snprintf (t->why, sizeof (t->why), "Docked: ask the station for launch clearance on Communications%s%s%s first.",
+			snprintf (t->why, sizeof (t->why), "Not while docked. To leave, request launch on Communications%s%s%s.",
 				  k[0] ? " (" : "", k, k[0] ? ")" : "");
 		} else if (landed) {
 			SET (title, "Take off");
 			SET (body, "Lift off from the surface.");
-		} else if (st == 0x48 || st == 0x4c) {
+		} else if (st == 0x48) {
 			SET (title, "Engines");
-			SET (body, "Launching: the station is flying you out.");
+			SET (body, "Launch under way.");
 		} else if (st == 4) {
 			SET (title, "Manual control");
 			SET (body, "Switch the autopilot off and fly by hand.");
@@ -227,14 +232,16 @@ static void flight_key (struct tip *t, int slot, const struct hdstill_panel *p)
 		SET (title, "Hyperspace");
 		SET (body, "Jump to the system picked on the galaxy map.");
 		if (p->valid && (p->slot[8] & ~G_OFF) == G_HYPER) break;
+		/* the game's own tests for the F8 icon, in its order (l63ecc):
+		 * a destination (977), open flight (704 <= $0c), clear of
+		 * bodies (673 bit 6).  The last test is a call into the
+		 * hyperdrive's module (range, fuel, the drive itself) that
+		 * cannot be read without running it: when only that one can
+		 * have failed, the label gives no reason. */
 		if (docked)
 			SET (why, "Not while docked: launch first.");
-		else if (landed)
-			SET (why, "Not while landed: take off first.");
-		else if (st == 8)
-			SET (why, "Already in hyperspace.");
 		else if (st > 0x0c)
-			SET (why, "Only in open flight: wait until you are clear of the station.");
+			SET (why, "Only in open flight: not while docking, launching or landing.");
 		else if (!rb (A6 + A6_DEST_SET)) {
 			char k[24];
 			key_for (0xf2, k, sizeof (k));
@@ -242,11 +249,7 @@ static void flight_key (struct tip *t, int slot, const struct hdstill_panel *p)
 				  k[0] ? " (" : "", k, k[0] ? ")" : "");
 		}
 		else if (!(rb (A6 + A6_FLAGS673) & 0x40))
-			SET (why, "Too close to a nearby body: the drive needs 12,000 km clear.");
-		else if (!rl (A6 + A6_DEST_SYS))
-			SET (why, "The system picked is the one you are in.");
-		else
-			SET (why, "The hyperdrive cannot make this jump: out of range or not enough fuel.");
+			SET (why, "Too close to a nearby body: fly further out first.");
 		break;
 	case 9:
 		SET (title, "Undercarriage");
@@ -254,6 +257,8 @@ static void flight_key (struct tip *t, int slot, const struct hdstill_panel *p)
 		if (rb (pl + OBJ_STATE) == 0x84) SET (why, "Not while docked.");
 		break;
 	case 10:
+		/* 705 bit 2 (F10, l62cbc): the names of the objects in view,
+		 * drawn by L6393c from each object's name field */
 		SET (title, "Object labels");
 		SET (body, "Show or hide the names beside objects in view.");
 		break;
@@ -325,7 +330,9 @@ static int find (int x, int y, struct tip *t)
 
 	memset (t, 0, sizeof (*t));
 	t->code = -1;
-	hdstill_panel (&p);
+	/* no control panel on the screen (the intro, the start menu, a
+	 * full-screen page): no HUD, so nothing to label */
+	if (!hdstill_panel (&p)) return 0;
 	code = hit_code (x, y, r);
 
 	/* the speed readouts along the 3D view's bottom */
@@ -350,7 +357,7 @@ static int find (int x, int y, struct tip *t)
 
 	/* the gauges: three slats slanting down to the right, 5 pixels apart,
 	 * picked by where the pointer's slant line meets the top row */
-	if (p.valid && x >= 235 && x <= 264 && y >= 169 && y <= 178 &&
+	if (x >= 235 && x <= 264 && y >= 169 && y <= 178 &&
 	    x - (y - 169.5f) * 1.75f >= 235 && x - (y - 169.5f) * 1.75f <= 252) {
 		float top = x - (y - 169.5f) * 1.75f;
 		unsigned int pl = player ();
@@ -375,8 +382,8 @@ static int find (int x, int y, struct tip *t)
 		}
 		return t->id;
 	}
-	/* the two displays on the right */
-	if (p.valid && x >= 264 && y >= 169 && y <= 177) {
+	/* the two displays on the right, where the game has no click */
+	if (code < 0 && x >= 264 && y >= 169 && y <= 177) {
 		int st = rb (A6 + A6_FLIGHT_STATE);
 		t->id = T_STATUS, t->x0 = 264, t->y0 = 169, t->x1 = 319, t->y1 = 177;
 		SET (title, "Flight status");
@@ -388,7 +395,7 @@ static int find (int x, int y, struct tip *t)
 			   "Who is flying the ship, and how.");
 		return t->id;
 	}
-	if (p.valid && !(p.flags & F_MAPKEYS) && x >= 262 && y >= 178 && y <= 185 && code < 0) {
+	if (!(p.flags & F_MAPKEYS) && x >= 262 && y >= 178 && y <= 185 && code < 0) {
 		const char *v = view_name (rb (A6 + A6_VIEW));
 		t->id = T_VIEWNAME, t->x0 = 262, t->y0 = 178, t->x1 = 319, t->y1 = 185;
 		SET (title, "View");
@@ -397,6 +404,15 @@ static int find (int x, int y, struct tip *t)
 		else
 			SET (body, "Which way you are looking.");
 		key_for (0xf1, t->key, sizeof (t->key));
+		return t->id;
+	}
+
+	/* the date and time: drawn over the left end of the bay's click
+	 * ($f5), so labelled as what is seen there */
+	if ((code < 0 || code == 0xf5) && x <= 75 && y >= 169 && y <= 177) {
+		t->id = T_CLOCK, t->x0 = 0, t->y0 = 169, t->x1 = 75, t->y1 = 177;
+		SET (title, "Date and time");
+		SET (body, "The game's clock. The keys below set how fast it runs.");
 		return t->id;
 	}
 
@@ -419,6 +435,10 @@ static int find (int x, int y, struct tip *t)
 			slot_tip (t, code - 0xf0, &p);
 		} else if (code >= 0xf7 && code <= 0xfa) {
 			slot_tip (t, code - 0xf0, &p);
+		} else if (code == 0xf6) {
+			/* the bay's second key: the HD panel draws nothing
+			 * there, so there is nothing to name */
+			return t->id = 0;
 		} else if (code == 0xf5) {
 			if (p.flags & F_SCANNER) {
 				SET (title, "Scanner");
@@ -433,13 +453,6 @@ static int find (int x, int y, struct tip *t)
 		}
 		if (!t->title[0]) return t->id = 0;
 		if (!t->key[0]) key_for (code, t->key, sizeof (t->key));
-		return t->id;
-	}
-
-	if (p.valid && x <= 75 && y >= 169 && y <= 177) {
-		t->id = T_CLOCK, t->x0 = 0, t->y0 = 169, t->x1 = 75, t->y1 = 177;
-		SET (title, "Date and time");
-		SET (body, "The game's clock. The keys below set how fast it runs.");
 		return t->id;
 	}
 	return 0;
@@ -692,6 +705,37 @@ static int paint (const struct tip *t, float u, int max_w, int see)
 
 #endif /* __APPLE__ */
 
+#ifdef __APPLE__
+/* A rounded rectangle of the glass's own colour (hdui's C_GLASS) at
+ * opacity a, premultiplied, under the glass: the label's glass is the
+ * pages' glass, which lets a little of what is behind it through, and
+ * the readouts along the 3D view's bottom would show through the text.
+ * Inset half a pixel so the glass's edge and halo stay as they are. */
+static void backing (float x, float y, float w, float h, float r, float a)
+{
+	const float cr = 0x10 / 255.0f, cg = 0x18 / 255.0f, cb = 0x23 / 255.0f;
+	float cx[4], cy[4];
+	int c, i;
+
+	x += 0.5f, y += 0.5f, w -= 1, h -= 1;
+	if (w < 2 || h < 2) return;
+	if (r > w / 2) r = w / 2;
+	if (r > h / 2) r = h / 2;
+	cx[0] = cx[3] = x + w - r, cx[1] = cx[2] = x + r;
+	cy[0] = cy[1] = y + r, cy[2] = cy[3] = y + h - r;
+	glColor4f (cr * a, cg * a, cb * a, a);
+	glBegin (GL_TRIANGLE_FAN);
+	glVertex2f (x + w / 2, y + h / 2);
+	for (c = 0; c < 4; c++)
+		for (i = 0; i <= 6; i++) {
+			float t = (float) M_PI / 2 * (c + i / 6.0f);
+			glVertex2f (cx[c] + r * cosf (t), cy[c] - r * sinf (t));
+		}
+	glVertex2f (cx[0] + r, cy[0]);
+	glEnd ();
+}
+#endif
+
 static void log_tip (const struct tip *t, int x, int y)
 {
 	unsigned int pl = player ();
@@ -761,7 +805,9 @@ void hdtip_draw (void)
 	cur = t;
 	if (buttons || now - since < SHOW_MS) return;
 	a = (now - since - SHOW_MS) / (float) FADE_MS;
-	if (a > 1) a = 1;
+	/* frosted glass (a backdrop up) cannot fade with the text, so then
+	 * the label comes in whole */
+	if (a > 1 || hdback_active ()) a = 1;
 
 	u = ph / 1200.0f;
 	sx = pw / 320.0f;
@@ -808,6 +854,7 @@ void hdtip_draw (void)
 		if (ey0 > 168 * sy) ey0 = 168 * sy;
 		ty = floorf (ey0 - 10 * u - H);
 		if (ty < margin) ty = floorf (ey1 + 10 * u);
+		backing (tx, ty, W, H, 8 * u, 0.94f * a);
 		hdui_glass_px (tx, ty, W, H, a);
 		glEnable (GL_TEXTURE_2D);
 		glBindTexture (GL_TEXTURE_2D, tex);
