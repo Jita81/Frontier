@@ -73,6 +73,8 @@ static unsigned seq;
  * faded */
 static struct shown {
 	short x, y, w, h, tex;
+	short vh;		/* the rows of it drawn: a key on the main screen's
+				 * last line stops where the panel starts */
 	float k;
 	unsigned bg;		/* main screen: the colour behind the art (RGBA), or 0 */
 } shown[MAX_REC];
@@ -87,11 +89,16 @@ static int debug = -1;
 enum {
 	G_ABSENT, G_EMPTY, G_FRONT, G_REAR, G_EXT, G_GALMAP, G_SYSMAP, G_SHIP,
 	G_CARGO, G_CMDR, G_PHONE, G_TARGET, G_CROSS, G_WRENCH, G_HYPER,
-	G_PERSON, G_LAUNCH, G_LIST, G_ARM, G_BEAM, G_BURST, G_ORRERY
+	G_PERSON, G_LAUNCH, G_LIST, G_ARM, G_BEAM, G_BURST, G_ORRERY,
+	G_LOAD, G_SAVE, G_DELETE, G_EXIT, G_SECTOR, G_ROUTE, G_TAKEOFF,
+	G_DOC, G_ALPHA
 };
+#define G_OFF		0x80	/* with an icon: crossed out, not to be had now */
+#define GX(g)		((g) | G_OFF)
 
-enum { K_PANEL, K_LOGO, K_MISSILE, K_SELECT, K_MORE };
+enum { K_PANEL, K_LOGO, K_MISSILE, K_SELECT, K_MORE, K_OPT_ON, K_OPT_OFF };
 #define ON_MAIN(k)	((k) >= K_SELECT)	/* in the main screen's rows, on its background */
+#define IS_OPT(k)	((k) >= K_OPT_ON)	/* an option's key, its own colours */
 #define F_MAPKEYS	1	/* the map's time keys where the second display is */
 #define F_SCANNER	2	/* the scanner in the bay */
 #define F_BUTTONS	4	/* the row of keys along the bay's floor */
@@ -101,7 +108,8 @@ struct art {
 	short w, h;		/* ST pixels */
 	unsigned char kind, flags;
 	signed char v;		/* K_PANEL: the time key lit, 0 paused, 1..5
-				 * 1x..10000x; K_MISSILE: 1 points right */
+				 * 1x..10000x, -1 none (time stands still in
+				 * the game's menu); K_MISSILE: 1 points right */
 	unsigned char g[4];	/* icons of the keys from the one at its left */
 	const char *name;
 };
@@ -126,6 +134,7 @@ static const struct art arts[] = {
 	{ 0x357098c98500a5fcULL, 64, 7, K_PANEL, 0, 3, { 0 }, "time 100x" },
 	{ 0xf5c133448a7deb62ULL, 64, 7, K_PANEL, 0, 4, { 0 }, "time 1000x" },
 	{ 0x923aaa5390ce6e86ULL, 64, 7, K_PANEL, 0, 5, { 0 }, "time 10000x" },
+	{ 0x4aa42c3944061a02ULL, 64, 7, K_PANEL, 0, -1, { 0 }, "time none (game menu)" },
 	/* the function keys' icons */
 	{ 0x2aebac07e74854c4ULL, 16, 11, K_PANEL, 0, 1, { G_FRONT }, "icon front view" },
 	{ 0xe6c6c1396bf3e64aULL, 16, 11, K_PANEL, 0, 1, { G_REAR }, "icon rear view" },
@@ -139,8 +148,15 @@ static const struct art arts[] = {
 	{ 0x7b3ff1e79e9c3765ULL, 16, 11, K_PANEL, 0, 1, { G_BEAM }, "icon beam" },
 	{ 0xd3ba8a0e288b9151ULL, 16, 11, K_PANEL, 0, 1, { G_EMPTY }, "icon empty" },
 	{ 0x23a4b63e9aa289e4ULL, 16, 11, K_PANEL, 0, 1, { G_BURST }, "icon burst" },
-	{ 0x980ec8842f7b354bULL, 64, 11, K_PANEL, 0, 1, { G_TARGET, G_CROSS, G_WRENCH, G_HYPER }, "icons 7-10 flight" },
+	{ 0x96349724541eb108ULL, 16, 11, K_PANEL, 0, 1, { G_ROUTE }, "icon route" },
+	{ 0x38afdfb87c76cf68ULL, 16, 11, K_PANEL, 0, 1, { G_TAKEOFF }, "icon take off (landed)" },
+	{ 0x3fa31e1416775b84ULL, 16, 11, K_PANEL, 0, 1, { GX (G_LIST) }, "icon list crossed (landed)" },
+	{ 0x980ec8842f7b354bULL, 64, 11, K_PANEL, 0, 1, { G_TARGET, G_CROSS, G_WRENCH, G_HYPER }, "icons 7-10 galaxy map" },
+	{ 0xaa1cc440b258bd81ULL, 64, 11, K_PANEL, 0, 1, { G_TARGET, G_CROSS, G_EMPTY, G_SECTOR }, "icons 7-10 galaxy map zoomed out" },
+	{ 0x86a58df0cc99b241ULL, 64, 11, K_PANEL, 0, 1, { GX (G_PERSON), GX (G_GALMAP), GX (G_ROUTE), GX (G_ALPHA) }, "icons 7-10 galaxy map info" },
+	{ 0x9b5c4f4ac5879452ULL, 64, 11, K_PANEL, 0, 1, { G_TARGET, G_CROSS, GX (G_WRENCH), GX (G_DOC) }, "icons 7-10 system map info" },
 	{ 0xd81a763c56d5b42eULL, 64, 11, K_PANEL, 0, 1, { G_PERSON, G_EMPTY, G_LAUNCH, G_LIST }, "icons 7-10 docked" },
+	{ 0x9b7f1f4805f6d7e0ULL, 64, 11, K_PANEL, 0, 1, { G_LOAD, G_SAVE, G_DELETE, G_EXIT }, "icons 7-10 game menu" },
 	/* keys in the bay */
 	{ 0xcc2e57fc156a3812ULL, 16, 13, K_PANEL, 0, 1, { G_ORRERY }, "bay key orrery" },
 	{ 0xf987ebdcb79f4c99ULL, 128, 13, K_PANEL, F_BUTTONS, 1, { 0 }, "bay key row" },
@@ -151,6 +167,10 @@ static const struct art arts[] = {
 	 * the key beside each line, and the one that pages on */
 	{ 0x0918566adf8551c1ULL, 16, 11, K_SELECT, 0, 0, { 0 }, "list key" },
 	{ 0x611c48f3a6e83567ULL, 16, 10, K_MORE, 0, 0, { 0 }, "list more" },
+	/* the game menu's preferences: the key beside each option, lit when
+	 * it is on; the dialogs' OK key is the unlit one */
+	{ 0xb621cd768cb602b1ULL, 16, 11, K_OPT_ON, 0, 0, { 0 }, "option on" },
+	{ 0x6f22978287ae5e79ULL, 16, 11, K_OPT_OFF, 0, 0, { 0 }, "option off" },
 };
 #ifdef __APPLE__
 static const int n_arts = sizeof (arts) / sizeof (arts[0]);
@@ -178,6 +198,12 @@ static const unsigned int pal_skin[16] = {
 /* the lists' screens: only the colours their keys use count */
 static const unsigned int pal_list[16] = {
 	[0] = RGB (0, 0, 0), [14] = RGB (0x60, 0x40, 0xa0), [15] = RGB (0xa0, 0xa0, 0xa0),
+};
+/* the preferences screen and the dialogs: the colours of their keys */
+static const unsigned int pal_opt[16] = {
+	[0] = RGB (0, 0, 0), [1] = RGB (0xd0, 0xd0, 0xd0), [2] = RGB (0xf0, 0, 0),
+	[10] = RGB (0x80, 0, 0), [11] = RGB (0xa0, 0, 0), [12] = RGB (0x20, 0x20, 0x20),
+	[13] = RGB (0x40, 0x40, 0x40), [15] = RGB (0xa0, 0xa0, 0xa0),
 };
 static const unsigned int pal_logo[16] = {
 	RGB (0, 0, 0), RGB (0xf0, 0xf0, 0xf0), RGB (0xf0, 0xf0, 0xf0), RGB (0xd0, 0xd0, 0xd0),
@@ -1049,11 +1075,214 @@ static void g_orrery (void)
 	ball (0.58f, -0.24f, 0.1f, 0xd8e0ea, 0x8fa3b8);
 }
 
-/* icon g at (cx, cy), s device pixels across */
+/* an arrow from (x0, y0) to its head at (x1, y1) */
+static void arrow (float x0, float y0, float x1, float y1, unsigned c)
+{
+	float dx = x1 - x0, dy = y1 - y0, l = sqrtf (dx * dx + dy * dy), ux = dx / l, uy = dy / l;
+	float hl = 0.4f, hw = 0.28f;
+	CGContextSaveGState (C);
+	glow (c, 0.8f, 2);
+	gseg (x0, y0, x1 - 0.6f * hl * ux, y1 - 0.6f * hl * uy);
+	gstroke (c, 1, 1.9f);
+	CGContextMoveToPoint (C, x1, y1);
+	CGContextAddLineToPoint (C, x1 - hl * ux - hw * uy, y1 - hl * uy + hw * ux);
+	CGContextAddLineToPoint (C, x1 - hl * ux + hw * uy, y1 - hl * uy - hw * ux);
+	CGContextClosePath (C);
+	gfill (c, 1);
+	CGContextRestoreGState (C);
+}
+
+/* a red cross over an icon: not to be had */
+static void red_x (float r)
+{
+	CGContextSaveGState (C);
+	glow (0xff4d4d, 0.8f, 2);
+	gseg (-r, -r, r, r);
+	gseg (-r, r, r, -r);
+	gstroke (0xff4d4d, 1, 1.8f);
+	CGContextRestoreGState (C);
+}
+
+/* a disk: a case with its top right corner cut off, a shutter along the
+ * top and a label below it */
+static void disk (float x0, float y0, float x1, float y1)
+{
+	float w = x1 - x0, h = y1 - y0, c = 0.22f * w;
+	float pt[10] = { x0, y0, x1 - c, y0, x1, y0 + c, x1, y1, x0, y1 };
+	CGMutablePathRef p = poly (pt, 5, 0.07f * w);
+	CGContextSaveGState (C);
+	CGContextAddPath (C, p);
+	CGContextClip (C);
+	lgrad (0, y0, 0, y1, 2, CS2 (0x6b95ff, 0x2a4cb8), AS2 (1, 1), NULL);
+	CGContextRestoreGState (C);
+	CGContextAddPath (C, p);
+	gstroke (0xffffff, 0.4f, 0.6f);
+	CGPathRelease (p);
+	/* the shutter and the window in it */
+	p = rrect (x0 + 0.24f * w, y0, x1 - 0.3f * w, y0 + 0.36f * h, 0.03f * w);
+	fill_path (p, 0xc9d4e0, 1);
+	CGPathRelease (p);
+	p = rrect (x0 + 0.46f * w, y0 + 0.07f * h, x0 + 0.58f * w, y0 + 0.28f * h, 0.02f * w);
+	fill_path (p, 0x2a4cb8, 1);
+	CGPathRelease (p);
+	/* the label and its lines */
+	p = rrect (x0 + 0.14f * w, y0 + 0.5f * h, x1 - 0.14f * w, y1, 0.04f * w);
+	fill_path (p, 0xe8eef5, 1);
+	CGPathRelease (p);
+	gseg (x0 + 0.24f * w, y0 + 0.66f * h, x1 - 0.26f * w, y0 + 0.66f * h);
+	gseg (x0 + 0.24f * w, y0 + 0.82f * h, x1 - 0.4f * w, y0 + 0.82f * h);
+	gstroke (0x8fa3b8, 1, 0.7f);
+}
+
+/* the game menu: a game off the disk, a game onto it, one off it for good */
+static void g_load (void)
+{
+	disk (-0.94f, -0.56f, 0.12f, 0.56f);
+	arrow (-0.02f, 0, 0.96f, 0, 0x3fd0ff);
+}
+
+static void g_save (void)
+{
+	disk (-0.94f, -0.56f, 0.12f, 0.56f);
+	arrow (0.96f, 0, 0.06f, 0, 0x3fd0ff);
+}
+
+static void g_delete (void)
+{
+	disk (-0.62f, -0.66f, 0.62f, 0.66f);
+	red_x (0.6f);
+}
+
+/* out of the game: a doorway and an arrow out through it */
+static void g_exit (void)
+{
+	CGContextMoveToPoint (C, 0.24f, -0.42f);
+	CGContextAddLineToPoint (C, 0.24f, -0.84f);
+	CGContextAddLineToPoint (C, -0.78f, -0.84f);
+	CGContextAddLineToPoint (C, -0.78f, 0.84f);
+	CGContextAddLineToPoint (C, 0.24f, 0.84f);
+	CGContextAddLineToPoint (C, 0.24f, 0.42f);
+	gstroke (0xc9d4e0, 1, 1.4f);
+	arrow (-0.4f, 0, 0.96f, 0, 0x3fd0ff);
+}
+
+/* the map drawn out to a wider sector: a lattice turned on its corner */
+static void g_sector (void)
+{
+	CGMutablePathRef p = rrect (-0.6f, -0.6f, 0.6f, 0.6f, 0.08f);
+	CGContextSaveGState (C);
+	CGContextRotateCTM (C, (float) M_PI / 4);
+	fill_path (p, 0x3ddc84, 0.10f);
+	CGContextSaveGState (C);
+	glow (0x3ddc84, 0.7f, 2);
+	CGContextAddPath (C, p);
+	gstroke (0x3ddc84, 1, 1.15f);
+	CGContextRestoreGState (C);
+	gseg (-0.2f, -0.6f, -0.2f, 0.6f);
+	gseg (0.2f, -0.6f, 0.2f, 0.6f);
+	gseg (-0.6f, -0.2f, 0.6f, -0.2f);
+	gseg (-0.6f, 0.2f, 0.6f, 0.2f);
+	gstroke (0x3ddc84, 0.5f, 0.8f);
+	CGContextRestoreGState (C);
+	CGPathRelease (p);
+	glow_ball (0, -0.42f, 0.1f, 0xff9a9a, 0xff4d4d, 0xff4d4d, 2);
+	glow_ball (0.38f, 0.14f, 0.08f, 0xffd79a, 0xffb347, 0xffb347, 2);
+	glow_ball (-0.3f, 0.26f, 0.07f, 0xffffff, 0xc9d4e0, 0xe8eef5, 1.5f);
+}
+
+/* a course: from where we are, by a waypoint, to the star picked */
+static void g_route (void)
+{
+	static const CGFloat dash[2] = { 0.1f, 0.2f };
+	CGContextSaveGState (C);
+	glow (0x3fd0ff, 0.7f, 2);
+	CGContextMoveToPoint (C, -0.68f, 0.62f);
+	CGContextAddCurveToPoint (C, -0.1f, 0.74f, -0.4f, -0.04f, 0.02f, 0);
+	CGContextAddCurveToPoint (C, 0.42f, 0.04f, 0.3f, -0.6f, 0.68f, -0.62f);
+	CGContextSetLineDash (C, 0, dash, 2);
+	gstroke (0x3fd0ff, 1, 1.25f);
+	CGContextRestoreGState (C);
+	glow_ball (-0.68f, 0.62f, 0.13f, 0xffffff, 0xc9d4e0, 0xe8eef5, 2);
+	glow_ball (0.02f, 0, 0.09f, 0xffd79a, 0xffb347, 0xffb347, 2);
+	glow_ball (0.7f, -0.64f, 0.15f, 0xff9a9a, 0xff4d4d, 0xff4d4d, 2.5f);
+}
+
+/* off the ground: the warning sign of engines about to fire */
+static void g_takeoff (void)
+{
+	float pt[6] = { 0, -0.92f, 0.86f, 0.5f, -0.86f, 0.5f };
+	CGMutablePathRef p = poly (pt, 3, 0.12f);
+	CGContextSaveGState (C);
+	glow (0xffb347, 0.7f, 2);
+	CGContextAddPath (C, p);
+	gstroke (0xffb347, 1, 1.4f);
+	CGContextRestoreGState (C);
+	CGPathRelease (p);
+	gseg (0, -0.48f, 0, 0.04f);
+	gstroke (0xffe2b8, 1, 1.5f);
+	gcirc (0, 0.26f, 0.08f);
+	gfill (0xffe2b8, 1);
+	/* the flame under it */
+	CGContextSaveGState (C);
+	glow (0xff8a2a, 0.9f, 3);
+	CGContextMoveToPoint (C, -0.3f, 0.64f);
+	CGContextAddQuadCurveToPoint (C, 0, 1.12f, 0.3f, 0.64f);
+	CGContextClosePath (C);
+	gfill (0xffb347, 1);
+	CGContextRestoreGState (C);
+	CGContextMoveToPoint (C, -0.13f, 0.64f);
+	CGContextAddQuadCurveToPoint (C, 0, 0.9f, 0.13f, 0.64f);
+	CGContextClosePath (C);
+	gfill (0xfff3c0, 1);
+}
+
+/* a page of notes, its corner folded */
+static void g_doc (void)
+{
+	float pt[10] = { -0.62f, -0.86f, 0.3f, -0.86f, 0.62f, -0.54f, 0.62f, 0.86f, -0.62f, 0.86f };
+	CGMutablePathRef p = poly (pt, 5, 0.06f);
+	CGContextSaveGState (C);
+	CGContextAddPath (C, p);
+	CGContextClip (C);
+	lgrad (0, -0.86f, 0, 0.86f, 2, CS2 (0xe8eef5, 0xb8c6d4), AS2 (1, 1), NULL);
+	CGContextRestoreGState (C);
+	CGPathRelease (p);
+	CGContextMoveToPoint (C, 0.3f, -0.86f);
+	CGContextAddLineToPoint (C, 0.3f, -0.54f);
+	CGContextAddLineToPoint (C, 0.62f, -0.54f);
+	CGContextClosePath (C);
+	gfill (0x8fa3b8, 1);
+	gseg (-0.4f, -0.3f, 0.36f, -0.3f);
+	gseg (-0.4f, 0.04f, 0.4f, 0.04f);
+	gseg (-0.4f, 0.38f, 0.2f, 0.38f);
+	gstroke (0x4d5d70, 1, 0.9f);
+}
+
+/* the names on the map: a letter */
+static void g_alpha (void)
+{
+	CGContextSaveGState (C);
+	glow (0xe8eef5, 0.45f, 2);
+	CGContextMoveToPoint (C, -0.66f, 0.82f);
+	CGContextAddLineToPoint (C, 0, -0.84f);
+	CGContextAddLineToPoint (C, 0.66f, 0.82f);
+	gseg (-0.38f, 0.22f, 0.38f, 0.22f);
+	gstroke (0xe8eef5, 1, 1.7f);
+	CGContextRestoreGState (C);
+}
+
+/* icon g at (cx, cy), s device pixels across; with G_OFF, dimmed and
+ * crossed out */
 static void glyph (int g, float cx, float cy, float s)
 {
+	int off = g & G_OFF;
+	g &= ~G_OFF;
 	if (g <= G_EMPTY) return;
 	glyph_begin (cx, cy, s);
+	if (off) {
+		CGContextSetAlpha (C, 0.42f);
+		CGContextBeginTransparencyLayer (C, NULL);
+	}
 	switch (g) {
 	case G_FRONT: g_view (1); break;
 	case G_REAR: g_view (-1); break;
@@ -1075,6 +1304,20 @@ static void glyph (int g, float cx, float cy, float s)
 	case G_BEAM: g_beam (); break;
 	case G_BURST: g_burst (); break;
 	case G_ORRERY: g_orrery (); break;
+	case G_LOAD: g_load (); break;
+	case G_SAVE: g_save (); break;
+	case G_DELETE: g_delete (); break;
+	case G_EXIT: g_exit (); break;
+	case G_SECTOR: g_sector (); break;
+	case G_ROUTE: g_route (); break;
+	case G_TAKEOFF: g_takeoff (); break;
+	case G_DOC: g_doc (); break;
+	case G_ALPHA: g_alpha (); break;
+	}
+	if (off) {
+		CGContextEndTransparencyLayer (C);
+		CGContextSetAlpha (C, 1);
+		red_x (0.62f);
 	}
 	glyph_end ();
 }
@@ -1165,18 +1408,14 @@ static void tris (float cx, float cy, float gh, float kw, int n, int d)
 	for (i = 0; i < n; i++) tri (x + d * (tw + i * step), cy, tw, gh, d);
 }
 
-/* a time key's sign: 0 pause (or with paused, stopped), 1..5 the speeds */
-static void time_sign (int i, int paused, float cx, float cy, float kw, float kh, unsigned c)
+/* a time key's sign: 0 pause, 1..5 the speeds */
+static void time_sign (int i, float cx, float cy, float kw, float kh, unsigned c, float a)
 {
 	float gh = 0.42f * kh;
 	CGMutablePathRef p;
 
-	fillc (c, 1);
-	if (i == 0 && paused) {
-		p = rrect (cx - 0.4f * gh, cy - 0.4f * gh, cx + 0.4f * gh, cy + 0.4f * gh, 0.12f * gh);
-		CGContextAddPath (C, p);
-		CGPathRelease (p);
-	} else if (i == 0) {
+	fillc (c, a);
+	if (i == 0) {
 		p = rrect (cx - 0.38f * gh, cy - gh / 2, cx - 0.12f * gh, cy + gh / 2, 0.08f * gh);
 		CGPathAddRoundedRect (p, NULL, CGRectMake (cx + 0.12f * gh, cy - gh / 2, 0.26f * gh, gh), 0.08f * gh, 0.08f * gh);
 		CGContextAddPath (C, p);
@@ -1196,13 +1435,17 @@ static void time_sign (int i, int paused, float cx, float cy, float kw, float kh
 
 static void time_keys (void)
 {
+	/* lit < 0: none lit, time stands still while the game's menu is up,
+	 * and the keys are dimmed */
 	int i, lit = L.time;
 	if (!in_art (0, 178, 64, 187)) return;
 	tray (0.35f, 178.5f, 60.65f, 186.45f);
 	for (i = 0; i < 6; i++) {
 		float x0 = 10 * i + 0.95f, x1 = 10 * i + 10.05f, y0 = 179.15f, y1 = 185.8f;
-		int state = lit == 0 ? (i == 0 ? KEY_CAUTION : KEY_NORMAL) : i == lit ? KEY_LIT : KEY_NORMAL;
-		unsigned c = state == KEY_LIT ? 0xffffff : state == KEY_CAUTION ? 0xffe2b8 : 0xc9d4e0;
+		int state = lit < 0 ? KEY_NORMAL : lit == 0 ? (i == 0 ? KEY_CAUTION : KEY_NORMAL)
+			: i == lit ? KEY_LIT : KEY_NORMAL;
+		unsigned c = lit < 0 ? 0x8fa3b8 : state == KEY_LIT ? 0xffffff
+			: state == KEY_CAUTION ? 0xffe2b8 : 0xc9d4e0;
 
 		CGContextSaveGState (C);
 		{	/* the lit key's glow stays in the tray */
@@ -1213,8 +1456,8 @@ static void time_keys (void)
 		}
 		key (x0, y0, x1, y1, state);
 		if (state != KEY_NORMAL) shade (0, 0, 4 * U, state == KEY_LIT ? 0x3fd0ff : 0xffb347, 0.9f);
-		time_sign (i, lit == 0, (X (x0) + X (x1)) / 2, (Y (y0) + Y (y1)) / 2,
-			   X (x1) - X (x0), Y (y1) - Y (y0), c);
+		time_sign (i, (X (x0) + X (x1)) / 2, (Y (y0) + Y (y1)) / 2,
+			   X (x1) - X (x0), Y (y1) - Y (y0), c, lit < 0 ? 0.55f : 1);
 		CGContextRestoreGState (C);
 	}
 }
@@ -1461,14 +1704,12 @@ static void scanner (void)
 
 static void panel (void)
 {
-	static const float notch_l[8] = { 76.3f, 170.6f, 77.2f, 170.6f, 78.4f, 177.4f, 76.3f, 177.4f };
 	static const float notch_r[8] = { 263.0f, 170.6f, 263.9f, 170.6f, 263.9f, 177.4f, 261.9f, 177.4f };
 	static const float chamfer[8] = { 260.7f, 179.4f, 261.6f, 179.4f, 257.3f, 185.8f, 256.3f, 185.8f };
 
 	frame ();
 	display (0.6f, 168.8f, 75.4f, 177.7f);
 	display (264.6f, 168.8f, 319.3f, 177.7f);
-	if (in_art (75, 169, 80, 178)) groove (notch_l, 4);
 	if (in_art (261, 169, 265, 178)) groove (notch_r, 4);
 	if (in_art (256, 179, 262, 186)) groove (chamfer, 4);
 	if (L.flags & F_MAPKEYS) map_keys ();
@@ -1519,6 +1760,38 @@ static void list_key (void)
 	float y0 = Y (OY + 0.2f), y1 = Y (OY + 8.4f);
 	CGMutablePathRef p = rrect (X (OX + 1), y0, X (OX + 9.4f), y1, 4 * U);
 	list_glass (p, y0, y1);
+	CGPathRelease (p);
+}
+
+/* the key beside an option, where the list keys go: lit and ticked when
+ * the option is on.  No glow out of it: the screen's top row is right
+ * above the first. */
+static void opt_key (int on)
+{
+	float x0 = X (OX + 1), x1 = X (OX + 9.4f), y0 = Y (OY + 0.2f), y1 = Y (OY + 8.4f);
+	float w = x1 - x0, h = y1 - y0, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+	CGMutablePathRef p = rrect (x0, y0, x1, y1, 4 * U);
+	if (!on) {
+		list_glass (p, y0, y1);
+		CGPathRelease (p);
+		return;
+	}
+	fill_grad (p, y0, y1, 2, CS2 (0x14465c, 0x0a2533), AS2 (1, 1), NULL);
+	inner_shadow (p, 5 * U, 0, 0x3fd0ff, 0.45f);
+	stroke_inside (p, 1.2f * U, 0x3fd0ff, 0.95f);
+	CGContextSaveGState (C);
+	CGContextAddPath (C, p);
+	CGContextClip (C);
+	shade (0, 0, 3 * U, 0x3fd0ff, 0.9f);
+	CGContextMoveToPoint (C, cx - 0.27f * w, cy + 0.02f * h);
+	CGContextAddLineToPoint (C, cx - 0.07f * w, cy + 0.22f * h);
+	CGContextAddLineToPoint (C, cx + 0.28f * w, cy - 0.22f * h);
+	CGContextSetLineCap (C, kCGLineCapRound);
+	CGContextSetLineJoin (C, kCGLineJoinRound);
+	CGContextSetLineWidth (C, 3 * U);
+	strokec (0xe8faff, 1);
+	CGContextStrokePath (C);
+	CGContextRestoreGState (C);
 	CGPathRelease (p);
 }
 
@@ -1673,6 +1946,10 @@ static void draw_art (const struct art *a, int x, int y)
 	case K_MORE:
 		list_more ();
 		break;
+	case K_OPT_ON:
+	case K_OPT_OFF:
+		opt_key (a->kind == K_OPT_ON);
+		break;
 	default:
 		memset (&L, 0, sizeof (L));
 		L.time = a->v;
@@ -1816,9 +2093,11 @@ static float fade (const struct rec *r, const unsigned int *pal, const unsigned 
 	/* the lists' keys are in the main screen's rows, the rest in the
 	 * control panel's.  A list key goes on its screen's own background,
 	 * whatever colour that is (each screen has its own): only the key's
-	 * colours need be the ones its art was drawn for. */
+	 * colours need be the ones its art was drawn for.  The last line's
+	 * keys reach a row into the panel: that row is left to the panel. */
 	if (ON_MAIN (arts[r->art].kind))
-		return r->y + r->h <= CTRL_Y ? fade_from (r->used & ~(1u << r->bg), pal, pal_list) : -1;
+		return r->y < CTRL_Y ? fade_from (r->used & ~(1u << r->bg), pal,
+			IS_OPT (arts[r->art].kind) ? pal_opt : pal_list) : -1;
 	if (r->y < CTRL_Y) return -1;
 	if (arts[r->art].kind == K_LOGO) return fade_from (r->used, ctrl_pal, pal_logo);
 	k = fade_from (r->used, ctrl_pal, pal_scan);
@@ -2044,7 +2323,7 @@ void hdstill_frame (const unsigned char *raster, unsigned char *out,
 	for (i = 0; i < n_recs; i++) {
 		struct rec *r = order[i];
 		const unsigned int *shown_pal = r->y >= CTRL_Y ? ctrl_pal : pal;
-		int vis = 0, match = 0, dvis = 0, dmatch = 0, taken = 0, on, defer, tex = -1;
+		int vis = 0, match = 0, dvis = 0, dmatch = 0, taken = 0, on, defer, solid, onmain, tex = -1;
 		float k = -1;
 
 		for (yy = 0; yy < r->h; yy++) {
@@ -2063,7 +2342,11 @@ void hdstill_frame (const unsigned char *raster, unsigned char *out,
 				}
 			}
 		}
-		on = vis > 0 && match * 100 >= vis * 85 && dmatch * 100 >= dvis * 75;
+		/* one colour all through (a plain bar): every pixel, as there
+		 * is nothing but background to tell it by */
+		solid = r->used == 1u << r->bg;
+		on = vis > 0 && match * 100 >= vis * 85 &&
+		     (solid ? match == vis : dvis > 0 && dmatch * 100 >= dvis * 75);
 		if (!on) {
 			r->misses++;
 			continue;
@@ -2086,10 +2369,15 @@ void hdstill_frame (const unsigned char *raster, unsigned char *out,
 			}
 			note_seen (r, k > 0);
 		}
+		onmain = r->art >= 0 && ON_MAIN (arts[r->art].kind);
 		for (yy = 0; yy < r->h; yy++) {
 			for (xx = 0; xx < r->w; xx++) {
 				int o = (r->y + yy) * ST_W + r->x + xx, p = r->pix[yy * r->w + xx];
 				if (cover[o]) continue;
+				/* a key replaced on the main screen leaves the row it
+				 * reaches into the panel to the panel: where it is the
+				 * panel's own pixel, the panel's art shows */
+				if (k > 0 && onmain && r->y + yy >= CTRL_Y) continue;
 				cover[o] = 1;
 				if (k > 0 && (raster[o] == p || (out[o] != raster[o] && out[o] != 255)))
 					out[o] = 255;
@@ -2104,7 +2392,8 @@ void hdstill_frame (const unsigned char *raster, unsigned char *out,
 			s->tex = tex;
 			s->k = k;
 			/* its background goes too: the art goes on it */
-			s->bg = ON_MAIN (arts[r->art].kind) ? pal[r->bg] | 0xff000000u : 0;
+			s->bg = onmain ? pal[r->bg] | 0xff000000u : 0;
+			s->vh = onmain && r->y + r->h > CTRL_Y ? CTRL_Y - r->y : r->h;
 		}
 	}
 	/* oldest first, so newer art goes on top */
@@ -2135,9 +2424,10 @@ void hdstill_draw (const unsigned int *pal, const unsigned int *ctrl_pal)
 	for (i = 0; i < n_shown; i++) {
 		const struct shown *d = &shown[i];
 		const struct tex *t = &texs[d->tex];
-		float x0 = d->x, x1 = d->x + d->w, y0 = ST_H - d->y, y1 = ST_H - d->y - d->h;
+		float x0 = d->x, x1 = d->x + d->w, y0 = ST_H - d->y, y1 = ST_H - d->y - d->vh, t1;
 
 		if (d->tex < 0 || !t->id) continue;
+		t1 = t->t1 * d->vh / d->h;	/* the art's top rows only */
 		if (d->bg) {
 			glDisable (GL_TEXTURE_2D);
 			glColor4ub (d->bg & 255, d->bg >> 8 & 255, d->bg >> 16 & 255, 255);
@@ -2156,9 +2446,9 @@ void hdstill_draw (const unsigned int *pal, const unsigned int *ctrl_pal)
 		glVertex2f (x0, y0);
 		glTexCoord2f (t->s1, 0);
 		glVertex2f (x1, y0);
-		glTexCoord2f (t->s1, t->t1);
+		glTexCoord2f (t->s1, t1);
 		glVertex2f (x1, y1);
-		glTexCoord2f (0, t->t1);
+		glTexCoord2f (0, t1);
 		glVertex2f (x0, y1);
 		glEnd ();
 	}
@@ -2173,7 +2463,7 @@ void hdstill_draw (const unsigned int *pal, const unsigned int *ctrl_pal)
 		glBegin (GL_QUADS);
 		for (i = 0; i < n_shown; i++) {
 			const struct shown *d = &shown[i];
-			float x0 = d->x, x1 = d->x + d->w, y0 = d->y, y1 = d->y + d->h;
+			float x0 = d->x, x1 = d->x + d->w, y0 = d->y, y1 = d->y + d->vh;
 			glTexCoord2f (x0 / scr_w, y0 / scr_h);
 			glVertex2f (x0, ST_H - y0);
 			glTexCoord2f (x1 / scr_w, y0 / scr_h);
