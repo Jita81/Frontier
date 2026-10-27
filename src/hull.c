@@ -38,16 +38,16 @@ const struct HullProfile hull_profiles[HP_N] = {
  * some 800000.
  */
 const struct HullClass hull_classes[HC_N] = {
-/*	name		tile			prof		panel	contr seam  wear  chips bump  gloss shine ao    tint */
-	{ "generic",	"hull/generic.png",	HP_GENERIC,	8192,	0.14, 0.14, 0.35, 0.20, 0.90, 0.40, 24, 0.35, 0.15 },
-	{ "police",	"hull/police.png",	HP_MILITARY,	10240,	0.12, 0.22, 0.06, 0.00, 0.60, 0.80, 56, 0.30, 0.00 },
-	{ "civilian",	"hull/civilian.png",	HP_SMALL,	10240,	0.14, 0.14, 0.50, 0.45, 0.90, 0.30, 20, 0.35, 0.30 },
-	{ "freighter",	"hull/freighter.png",	HP_TRADER,	12288,	0.18, 0.18, 0.70, 0.40, 1.20, 0.25, 16, 0.40, 0.40 },
-	{ "armour",	"hull/armour.png",	HP_MILITARY,	8192,	0.14, 0.22, 0.25, 0.10, 1.20, 0.50, 40, 0.45, 0.05 },
-	{ "fighter",	"hull/fighter.png",	HP_SMALL,	6144,	0.16, 0.20, 0.10, 0.00, 0.70, 0.65, 64, 0.30, 0.00 },
-	{ "station",	"hull/station.png",	HP_STATION,	65536,	0.14, 0.16, 0.40, 0.15, 1.00, 0.25, 14, 0.40, 0.30 },
-	{ "hangar",	"hull/hangar.png",	HP_STATION,	49152,	0.12, 0.16, 0.30, 0.05, 0.80, 0.20, 12, 0.40, 0.35 },
-	{ "deck",	"hull/deck.png",	HP_STATION,	32768,	0.12, 0.16, 0.40, 0.10, 0.80, 0.30, 16, 0.40, 0.35 },
+/*	name		tile			prof		panel	contr seam  wear  chips bump  gloss shine ao    tint  graze */
+	{ "generic",	"hull/generic.png",	HP_GENERIC,	8192,	0.14, 0.14, 0.35, 0.20, 0.90, 0.40, 24, 0.35, 0.15, 0 },
+	{ "police",	"hull/police.png",	HP_MILITARY,	10240,	0.12, 0.22, 0.06, 0.00, 0.60, 0.80, 56, 0.30, 0.00, 0 },
+	{ "civilian",	"hull/civilian.png",	HP_SMALL,	10240,	0.14, 0.14, 0.50, 0.45, 0.90, 0.30, 20, 0.35, 0.30, 0 },
+	{ "freighter",	"hull/freighter.png",	HP_TRADER,	12288,	0.18, 0.18, 0.70, 0.40, 1.20, 0.25, 16, 0.40, 0.40, 0 },
+	{ "armour",	"hull/armour.png",	HP_MILITARY,	8192,	0.14, 0.22, 0.25, 0.10, 1.20, 0.50, 40, 0.45, 0.05, 0 },
+	{ "fighter",	"hull/fighter.png",	HP_SMALL,	6144,	0.16, 0.20, 0.10, 0.00, 0.70, 0.65, 64, 0.30, 0.00, 0 },
+	{ "station",	"hull/station.png",	HP_STATION,	131072,	0.10, 0.18, 0.25, 0.15, 1.00, 0.25, 14, 0.40, 0.10, 2.30 },
+	{ "hangar",	"hull/hangar.png",	HP_STATION,	49152,	0.12, 0.16, 0.30, 0.05, 0.80, 0.20, 12, 0.40, 0.35, 0 },
+	{ "deck",	"hull/deck.png",	HP_STATION,	32768,	0.12, 0.16, 0.40, 0.10, 0.80, 0.30, 16, 0.40, 0.35, 0 },
 };
 
 /*
@@ -123,6 +123,38 @@ static int hull_model_row (unsigned int key)
 int hull_key_listed (unsigned int key)
 {
 	return hull_model_row (key) >= 0;
+}
+
+/*
+ * The docking bay's model draws the bay seen through the slot and, from
+ * the slot out to launch range, the station's outside around it as well:
+ * the corner chamfers, the slot's surround and the docking arms. The bay
+ * is the box below in the model's frame (its tunnel, measured, with a
+ * margin); a face with a corner out of it is the station's outside. The
+ * test is on the model's geometry, so it does not change with the light
+ * as a test on the face's lit colour would.
+ */
+static const struct {
+	unsigned short type;
+	float x, y, z0, z1;	/* half width, half height, back, front */
+} hull_bays[] = {
+	{ 84, 60000, 25600, -41500, 195000 },
+};
+
+int hull_bay_outside (unsigned int key, const float w[][3], int n)
+{
+	int i, j;
+
+	if (!HULL_KEY_OK (key)) return 0;
+	for (j = 0; j < (int) (sizeof hull_bays / sizeof hull_bays[0]); j++) {
+		if (hull_bays[j].type != (key & 0xffff)) continue;
+		for (i = 0; i < n; i++)
+			if (fabsf (w[i][0]) > hull_bays[j].x || fabsf (w[i][1]) > hull_bays[j].y ||
+			    w[i][2] < hull_bays[j].z0 || w[i][2] > hull_bays[j].z1)
+				return 1;
+		return 0;
+	}
+	return 0;
 }
 
 int hull_class_of_key (unsigned int key, float *scale, float off[2])

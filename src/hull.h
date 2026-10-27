@@ -94,6 +94,10 @@ struct HullClass {
 	/* shader: normal map strength, specular strength and exponent, edge
 	 * occlusion, warmth of grime */
 	float bump, gloss, shine, ao, tint;
+	/* shader: the footprint's long side over its short side (as e / det,
+	 * r + 1/r) from which a face seen edge on fades to its own colour, flat
+	 * by 1.5 times that; 0 keeps the plating at every angle */
+	float graze;
 };
 extern const struct HullClass hull_classes[HC_N];
 
@@ -102,6 +106,9 @@ extern const struct HullClass hull_classes[HC_N];
 int hull_class_of_key (unsigned int key, float *scale, float off[2]);
 /* 1 if the model is listed in hull_models[], 0 if it gets HC_GENERIC */
 int hull_key_listed (unsigned int key);
+/* 1 if the face (n corners in the model's frame) of a docking bay's model
+ * lies partly out of the bay: it is the station's outside around the slot */
+int hull_bay_outside (unsigned int key, const float w[][3], int n);
 
 /* The maps of a class from its n x n grey tile lum (n a power of two), in
  * the layout of hull_bake. */

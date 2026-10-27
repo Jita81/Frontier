@@ -1818,8 +1818,9 @@ static int hull_load_tile (float *v, double *sum)
 	return 1;
 }
 
-/* repeat, mipmaps, and anisotropic filtering where there is any */
-static void hull_tex_params (void)
+/* repeat, mipmaps, and anisotropic filtering (up to aniso, 1 for none)
+ * where there is any */
+static void hull_tex_params_a (int aniso)
 {
 	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
 	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
@@ -1831,10 +1832,15 @@ static void hull_tex_params (void)
 		if (ext && strstr (ext, "GL_EXT_texture_filter_anisotropic")) {
 			GLfloat a = 1;
 			glGetFloatv (GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &a);
-			glTexParameterf (GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, a < 8 ? a : 8);
+			glTexParameterf (GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, a < aniso ? a : aniso);
 		}
 	}
 #endif
+}
+
+static void hull_tex_params (void)
+{
+	hull_tex_params_a (8);
 }
 
 static void hull_make_texture (void)
@@ -2056,6 +2062,7 @@ static void hull_make_class (int cls, int shader)
 	const struct HullClass *c = &hull_classes[cls];
 	int n = 512, i;
 	unsigned char *lum = hull_class_tile (cls, &n), *buf;
+	int tiled = lum != NULL;
 	Uint32 t = SDL_GetTicks ();
 
 	if (!lum) n = 512;
@@ -2091,14 +2098,16 @@ static void hull_make_class (int cls, int shader)
 		}
 		glGenTextures (1, &hull_cls[cls].lum);
 		glBindTexture (GL_TEXTURE_2D, hull_cls[cls].lum);
-		hull_tex_params ();
+		/* no shader to fade it: plain mipmaps take a face seen edge on
+		 * to the plating's mean, the face's own colour, instead */
+		hull_tex_params_a (1);
 		gluBuild2DMipmaps (GL_TEXTURE_2D, GL_LUMINANCE, n, n, GL_LUMINANCE, GL_UNSIGNED_BYTE, buf);
 	}
 	free (buf);
 	hull_bound = 0;	/* the texture bound now is not the one it names */
 	if (hull_log_on ())
 		fprintf (stderr, "hull: class %s, %s, %dx%d %s made in %u ms\n", c->name,
-			 lum ? "its tile" : "seeded", n, n, shader ? "shader maps" : "plating",
+			 tiled ? "its tile" : "seeded", n, n, shader ? "shader maps" : "plating",
 			 (unsigned) (SDL_GetTicks () - t));
 }
 
@@ -2574,8 +2583,17 @@ static const char hull_fs[] =
  * Style 5's fragment shader. The class's tile is laid on the model, so the
  * light and the eye are in the frame of the model's box face. The maps are
  * hull_bake's; uP: bump, gloss, shine, edge occlusion; uQ: warmth of grime,
- * mean grime, weathering (0 on a face that hosts decals), chipped paint.
- * The second scale (vUV.zw, a blurred lookup) breaks up the repeat. Paint:
+ * mean grime, weathering (0 on a face that hosts decals), chipped paint;
+ * uG: the class's graze. The second scale (vUV.zw, a blurred lookup)
+ * breaks up the repeat. The plating fades to the face's own colour where a
+ * texel is smaller than a pixel (fd) and, in a class with a graze, on a
+ * face seen edge on (fa: the footprint's long side over its short side,
+ * e / det = r + 1/r, from uG to 1.5 uG; the station's 2.3 is r 1.8 to 3,
+ * about 56 to 70 degrees off square), where the anisotropic filtering would
+ * otherwise smear the plating into stripes like boards: it keeps the
+ * seams that run down the slope sharp, averages the ones across it away
+ * and pulls the plates' grain out along it. A floor seen from just above
+ * it is edge on too and keeps its plating (no graze in its class). Paint:
  * a grey face weathers fully, a coloured one less. Only a lit face gets the
  * bump's shading and the sheen, so the dark side stays the game's own. The
  * game already lit the face (vCol), so the bump only tilts that light a
@@ -2589,13 +2607,17 @@ static const char hull_fs5[] =
 	"#version 120\n"
 	"uniform sampler2D tA, tB;\n"
 	"uniform vec4 uP, uQ;\n"
+	"uniform float uG;\n"
 	"varying vec4 vUV, vEd, vVT, vLT, vCol;\n"
 	"void main ()\n"
 	"{\n"
 	"	vec4 a = texture2D (tA, vUV.xy), b = texture2D (tB, vUV.xy);\n"
 	"	vec4 a2 = texture2D (tA, vUV.zw, 4.0), b2 = texture2D (tB, vUV.zw, 4.0);\n"
-	"	float fd = 1.0 - smoothstep (0.015, 0.06, max (length (dFdx (vUV.xy)), length (dFdy (vUV.xy))));\n"
-	"	float tone = mix (1.0, a.b * a.a * 2.0, fd) * mix (1.0, a2.b * a2.a * 2.0, 0.5);\n"
+	"	vec2 jx = dFdx (vUV.xy), jy = dFdy (vUV.xy);\n"
+	"	float e = dot (jx, jx) + dot (jy, jy), det = abs (jx.x * jy.y - jx.y * jy.x);\n"
+	"	float fa = uG > 0.0 ? 1.0 - smoothstep (uG, 1.5 * uG, e / max (det, 1e-4 * e + 1e-30)) : 1.0;\n"
+	"	float fd = (1.0 - smoothstep (0.015, 0.06, sqrt (max (dot (jx, jx), dot (jy, jy))))) * fa;\n"
+	"	float tone = mix (1.0, a.b * a.a * 2.0, fd) * mix (1.0, a2.b * a2.a * 2.0, 0.5 * fa);\n"
 	"	vec3 L = normalize (vLT.xyz), V = normalize (vVT.xyz);\n"
 	"	float mx = max (max (vCol.r, vCol.g), vCol.b), mn = min (min (vCol.r, vCol.g), vCol.b);\n"
 	"	float lum = dot (vCol.rgb, vec3 (0.3, 0.59, 0.11));\n"
@@ -2696,7 +2718,7 @@ static GLuint hull_program (void)
 }
 
 static GLuint hull_prog5;
-static GLint hull_uloc5[2];	/* uP, uQ */
+static GLint hull_uloc5[3];	/* uP, uQ, uG */
 static int hull_prog5_failed;
 
 /* style 5's shader, 0 if it is not there (or FE2_HULL_FIXED is set): then
@@ -2704,6 +2726,20 @@ static int hull_prog5_failed;
 static GLuint hull_program5 (void)
 {
 	if (hull_prog5 || hull_prog5_failed) return hull_prog5;
+	/* FE2_HULL_DBG=1: style 5 paints each face with its graze instead
+	 * (red: the fade fa, 1 plated and 0 flat; green: the class's graze / 3;
+	 * blue: the footprint's ratio e / det / 8), to see which class and fade
+	 * a face gets */
+	if (getenv ("FE2_HULL_DBG")) {
+		static char dbg[sizeof hull_fs5 + 400];
+		char *q;
+		strcpy (dbg, hull_fs5);
+		q = strstr (dbg, "	gl_FragColor = vec4 (col, vCol.a);");
+		if (q) {
+			strcpy (q, "	gl_FragColor = vec4 (fa, uG / 3.0, clamp (e / max (det, 1e-4 * e + 1e-30) / 8.0, 0.0, 1.0), vCol.a);\n}\n");
+			hull_prog5 = hull_link (dbg);
+		}
+	} else
 	if (!getenv ("FE2_HULL_FIXED")) hull_prog5 = hull_link (hull_fs5);
 	if (!hull_prog5) {
 		fprintf (stderr, "GL: hull style 5 %s, using the per-class plating without the shader\n",
@@ -2713,6 +2749,7 @@ static GLuint hull_program5 (void)
 	}
 	hull_uloc5[0] = glGetUniformLocation (hull_prog5, "uP");
 	hull_uloc5[1] = glGetUniformLocation (hull_prog5, "uQ");
+	hull_uloc5[2] = glGetUniformLocation (hull_prog5, "uG");
 	return hull_prog5;
 }
 
@@ -2819,6 +2856,7 @@ static int hull_begin5 (int cls, int calm)
 	glBindTexture (GL_TEXTURE_2D, hull_cls[cls].t[0]);
 	glUniform4f (hull_uloc5[0], c->bump * (calm ? 0.7f : 1.0f), c->gloss, c->shine, c->ao);
 	glUniform4f (hull_uloc5[1], c->tint, hull_cls[cls].grime, calm ? 0.5f : 1.0f, calm ? 0.0f : 1.0f);
+	glUniform1f (hull_uloc5[2], c->graze);
 	hull_on = 2;
 	hull_cur = cur;
 	return 1;
@@ -2883,6 +2921,11 @@ static int hull_paint5 (double p[][3], int n, const struct HullCtx *cx, int host
 
 	if (rgb[2] > mx) mx = rgb[2];
 	if (rgb[2] < mn) mn = rgb[2];
+	/* the docking bay's model also draws the station's outside around the
+	 * slot (its corner chamfers, the slot's surround, the docking arms):
+	 * those faces are the station's plating, with its graze, not the
+	 * hangar's, which a slanting chamfer smears into boards */
+	if (cls == HC_HANGAR && cx->wok && hull_bay_outside (cx->key, cx->w, n)) cls = HC_STATION;
 	lamp = cls == HC_HANGAR && mn >= 208;
 	pure = mx > 191 && mn < 0.2 * mx;
 	/* but in the hangar a face of pure colour whose longest side is more
@@ -2987,9 +3030,10 @@ static int hull_complex_begin (GLdouble c[][3], int n, void **data)
 	int cls, calm, mx, mn, k, j;
 	const int *rgb = complex_col;
 
+	hull_cmode = 0;
+	if (hull_ctx != 2) return 0;	/* no model being read: no word after it */
 	calm = hull_chain || hull_decal_host (data);
 	hull_chain = calm;
-	hull_cmode = 0;
 	if (!hull_cc_on || hull_style < 5 || flat_hulls || n < 3) return 0;
 	cls = hull_class_of_key (hull_cc.key, &sc, off);
 	mx = rgb[0] & 255; mn = mx;

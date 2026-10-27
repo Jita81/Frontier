@@ -14,8 +14,9 @@ hangar looks like an industrial hall with a plated deck.
 
 The code is in `src/hull.c` and `src/hull.h` (plain C, no GL, no 68k
 state) and in the hull region of `src/gl.c` (the shaders, the draw calls
-and the reading of the model's frame). The art is in `art/hull/`, and
-`tools/art/hull_tile.py` makes it.
+and the reading of the model's frame). The art is in `art/hull/`.
+`tools/art/hull_tile.py` makes the tiles that start as Grok pictures, and
+`tools/art/plate_tile.py` draws the station's tile in code.
 
 ## What it does, face by face
 
@@ -70,10 +71,22 @@ and the reading of the model's frame). The art is in `art/hull/`, and
        big, and the weathering stops a face of many tiles looking like
        wallpaper.
      - In the hangar and on unlisted models they stay flat. These are signs.
+   - **The station's outside drawn by the docking bay's model.** Model 84
+     draws the bay seen through the slot, and from the slot out to launch
+     range it also draws the station's outside around it: the corner
+     chamfers, the slot's surround and the docking arms. A face of model 84
+     with a corner outside the bay's box in the model's frame
+     (`hull_bays[]` in `hull.c`: |x| 60000, |y| 25600, z -41500 to 195000,
+     the measured tunnel with a margin) is the station's outside and takes
+     the `station` class with its graze fade (below). The rule is on the
+     model's geometry, not the face's colour, so it does not change with the
+     light. Before it, those faces took the hangar's tile and no graze, and
+     a slanting chamfer smeared the hangar's tile into wooden boards.
    - **Complex shapes** take the plane of the face they lie on:
      - The hangar's own shapes (grey signs and lamps) stay flat.
      - A coloured one, which is the station's outside around the slot,
-       takes the station plating.
+       takes the station plating. (These still go by colour, not by the
+       bay box: a grey complex shape out of the box stays flat.)
 5. **Shading** (`hull_fs5`, GLSL 1.20):
    - The game colour is multiplied by the tile's paint tone and by the
      ratio of bump-lit to flat-lit diffuse. Without light (the dark side)
@@ -91,6 +104,15 @@ and the reading of the model's frame). The art is in `art/hull/`, and
      1/16. Far and grazing faces then do
      not shimmer or moire. Mipmaps (`GL_LINEAR_MIPMAP_LINEAR`) and 8x
      anisotropic filtering, where available, do the rest.
+   - **Graze fade** (classes with a `graze`; only the station has one,
+     2.3): `fa = 1 - smoothstep(graze, 1.5 graze, e / det)`, where `e / det`
+     is the pixel footprint's long side over its short side (r + 1/r). For
+     the station that fades the plating to the face's own colour between
+     about 56 and 70 degrees off square. Without it, anisotropic filtering
+     keeps the seams that run down a slanting face sharp and averages the
+     ones across it away, so plates read as long boards. A floor seen from
+     just above is edge on too, which is why the hangar and deck keep a
+     graze of 0.
 
 ## Caching and cost
 
@@ -100,7 +122,9 @@ and the reading of the model's frame). The art is in `art/hull/`, and
   - t1: hazard, gloss, grime and chips
 - Nothing is loaded or baked per frame.
 - Bakes take 12 to 84 ms each on the test Mac mini (generic 18, station
-  72, hangar 78, deck 71) and happen once per session per class.
+  72, hangar 78, deck 71) and happen once per session per class. So the
+  first face of a class drawn in a session costs a stall of up to about
+  80 ms (one dropped frame or a few); later frames do not.
 - Drawing the 3D view takes about 1.4 to 2.5 ms a frame, and up to about
   6 ms with a ship filling a 1600x1200 window.
 - `FE2_HULL_LOG=1` prints:
@@ -119,7 +143,7 @@ and the reading of the model's frame). The art is in `art/hull/`, and
 | freighter | `freighter.png` | thick welded plates, patch plates, oil and grime | 12288 |
 | armour | `armour.png` | thick bevelled armour plates, deep gaps, bolts | 8192 |
 | fighter | `fighter.png` | sleek composite skin, fine lines, high sheen | 6144 |
-| station | `station.png` | huge irregular armour plates, welded seams | 65536 |
+| station | `station.png` | large rectangular steel plates, straight seams, two hatches and two vents a tile (drawn in code) | 131072 |
 | hangar | `hangar.png` | industrial bulkheads, beams, conduits | 49152 |
 | deck | `deck.png` | tread and plain deck plates, grating (hangar floor and ceiling) | 32768 |
 
@@ -132,6 +156,11 @@ Each class also sets:
 - gloss and shine: specular strength and exponent
 - ao: edge occlusion
 - tint: how warm the grime is
+- graze: where a face seen edge on fades to its own colour (0: never)
+
+The station's row is quieter than the ships' (contrast 0.10, wear 0.25,
+tint 0.10): its faces are tan and large, and warm grime in the grooves of
+a tan face read as grout between paving stones.
 
 All of these are on one line per class in `hull_classes[]` in `hull.c`.
 
@@ -154,7 +183,7 @@ the unlisted ones a session meets):
 | 70 | Transporter | freighter |
 | 72, 80 | orbital station outside, far and close | station |
 | 82 | launch structure | station |
-| 84 | docking bay seen through the slot | hangar |
+| 84 | docking bay seen through the slot | hangar; its faces out of the bay's box (the station's outside) station |
 | 96 | starport building | station |
 | 198 | city | station |
 | 288, 290, 294 | hangar interior and its parts | hangar |
@@ -166,6 +195,7 @@ the unlisted ones a session meets):
   3. List the PNG in `.githooks/allowed-images`.
 
 Words seen in test runs but not listed are 4 and 176. They get `generic`.
+What they are was not identified, so they are not guessed at.
 
 ## Switches
 
@@ -179,14 +209,18 @@ Words seen in test runs but not listed are 4 and 176. They get `generic`.
 | `FE2_HULL_FIXED=1` | style 5 without its shader (the fixed-function path below) |
 | `FE2_HULL_TEX=2048` | texture size for styles 1 to 4 |
 | `FE2_HULL_LOG=1` | the log above |
+| `FE2_HULL_DBG=1` | style 5 paints every face with its fade instead of its plating: red the graze fade (1 plated, 0 flat), green the class's graze / 3 (the station about 195 of 255), blue the footprint ratio / 8. Shows which class and fade a face gets. |
 | `FE2_ART_DIR=dir` | where `hull/*.png` are looked for (default `art`); the macOS launcher points it into the app |
 
 Fallbacks:
 
 - **No GLSL 1.20, or `FE2_HULL_FIXED=1`.** Style 5 draws each class's
   tile in fixed function, as the face colour times the baked paint and
-  groove tone. There is no bump, no sheen and no footprint fade; mipmaps
-  and anisotropy still apply.
+  groove tone. There is no bump, no sheen, no footprint or graze fade, and
+  no calm variant (a decal's host gets the full tone). The class textures
+  there are mipmapped with no anisotropic filtering, so a far or grazing
+  face blurs to the tile's mean, which is the face's own colour, instead of
+  being smeared into stripes.
 - **No tile file for a class, or no image loader.** The class bakes the
   seeded plating of its profile from `hull_profiles[]`, which is drawn in
   code. This applies on non-Apple builds, where `art_load_rgba` has no
@@ -200,6 +234,21 @@ would give every class the one tile. `FE2_ART_DIR` already lets the game
 find both `plating.lum` (style 0) and the class tiles.
 
 ## Making a tile
+
+The station's tile is drawn in code, from a seed:
+
+```
+python3 -I tools/art/plate_tile.py SCRATCH/tiles/station --seed 11
+```
+
+It packs a 16 x 16 grid with plates of mixed sizes, mostly square, so no
+seam runs the length of the tile and no row repeats the next. It adds thin
+straight seams, inset panel lines and corner bolts on some plates, two
+access hatches and two louvred vents, and a faint mottle that is the same
+in every direction. It writes `NAME.png` (1024, mean 128) and
+`NAME-2x2.png`.
+
+The other tiles start as a Grok picture:
 
 ```
 withkey XAI_API_KEY -- python3 -I tools/art/grok_image.py --model grok-imagine-image-2.0 \
@@ -222,14 +271,14 @@ Size: a tile repeats, so its size sets texel density, not screen size.
 - 1024 suits the station, hangar and deck: one tile spans a whole wall
   section, seen across a 1600x1200 window.
 
-The nine tiles total 2.1 MB.
+The nine tiles total 1.6 MB.
 
 ## Provenance of every art file
 
 Every Grok image was made from a text prompt only. No game bitmap,
 screenshot or capture went into any prompt or any processing step. Model:
 `grok-imagine-image-2.0`. Each call made 2 variants at $0.06 each, so $0.12
-per call. Ledger: 12 calls, **$1.44**.
+per call. Ledger: 13 calls, **$1.56**.
 
 Every prompt ends with the same suffix:
 
@@ -249,19 +298,31 @@ Every prompt ends with the same suffix:
 | `armour.png` | Heavy armoured warship hull: large rectangular and trapezoidal armour plates of different sizes laid in staggered rows, each plate thick with bevelled edges and a deep dark gap around it, rows of countersunk bolts along the plate edges, one or two small recessed access hatches, a lightly battered surface, military. No hexagons, no honeycomb. | 2nd | `--size 1024` |
 | `hangar.png` | Inside wall of a huge industrial hangar bay in a space station: large flat steel wall panels, each about a third of the picture wide, separated by deep recessed seams, one heavy horizontal steel beam across the wall, a vertical support column, a few conduit pipes and a small vent, bolts along the beam and the column, light wear and faint grime streaks running down, heavy industrial. | 2nd | `--size 1024` |
 | `deck.png` | Floor of an industrial spaceship hangar seen from straight above: large square heavy steel deck plates, some with a diamond anti-slip tread pattern and some plain, recessed seams between the plates, bolt heads at the plate corners, a strip of drainage grating, light scuffs and tyre marks, heavy industrial. | 2nd | `--size 1024` |
-| `station.png` | Exterior hull of a gigantic orbital space station: broad heavy armour plates of many different sizes in an irregular non-repeating layout, deep welded seams between the plates, sparse detail: an occasional small vent grille, a few rows of bolts, one rare service hatch, mostly large flat plates with subtle dents and surface variation. | 2nd | `--size 1024 --cut` |
 | `plating.lum` | Weathered old cargo spaceship hull: large rectangular welded steel plates in staggered rows with clear dark seams between them, shallow dents, light scorch marks, faint grime streaks, a few patch repairs. (Earlier hull stream, commit 96683e4; its own suffix; Grok Imagine.) | picked from six | 512 raw `.lum`, used by style 0 |
 
-Each shipped file reproduces byte for byte from its raw image with the
-options shown. Three more calls were made and not shipped:
+`station.png` is drawn in code: `tools/art/plate_tile.py OUT --seed 11`
+with its defaults (1024, 16 cells, `--std 0.09`, 2 hatches, 2 vents). No
+picture goes into it.
+
+Each shipped file reproduces byte for byte from its raw image (or, for
+`station.png`, its seed) with the options shown. Four more calls were made
+and not shipped:
 - a first armour prompt, which gave hex plates (hence "no hexagons" in the
   second)
-- a first station prompt: a repeating grid of big plates with ribs and
-  conduits, replaced by the sparser, irregular layout above
+- two station prompts: a repeating grid of big plates with ribs and
+  conduits, then broad armour plates in an irregular layout (shipped
+  before, `--size 1024 --cut`, 2nd variant). On the station's tan faces its
+  irregular cells read as flagstones, and slanting faces turned it to
+  boards.
+- a third station prompt for a strict grid of rectangular plates. Grok
+  gave a grid of equal square tiles: its seams run the whole length of the
+  tile, which a slanting face draws out into long lines again, and the
+  grid does not repeat on the tile's edge. The tile is now drawn in code
+  instead, with plates of mixed sizes so that no seam runs far
 - a first hangar prompt: ribbed bulkheads with vents and grilles, replaced
   by the larger wall panels, beam and column above
 
-All three were superseded by the prompts above.
+All of these were superseded by the prompts above or by the drawn tile.
 
 Drawn in code (no file): the seeded plating that styles 1 to 4 use, and
 that style 5 uses when a tile is missing. This is `hull_bake` in `hull.c`:
@@ -282,17 +343,33 @@ a kd-tree panel layout on a torus, from a seed.
 - **Cobra in flight:**
   - near and far, with no shimmer at range thanks to the fade
   - lit side, and the dark underside, which keeps the game's own shade
-- **Station:** close and far.
+- **Station:** close and far; the Lave approach, the docking face at a
+  few hundred metres, and the launch out through the slot. The chamfers
+  and the slot's surround take the station's plates (`FE2_HULL_DBG=1`
+  shows their graze, 2.29); the steepest of them fade to the flat tan, and
+  no face shows boards or flagstones.
 - **Off switches:** `--flat-hulls` and styles 0 to 4 match the earlier
   build pixel for pixel.
 
 Known limits:
-- Bright, saturated liveries (an orange or red Krait) show little plating.
-  The paint mask keeps their colour clean.
-- The station's grazing faces foreshorten the tile's long grooves into
-  plank-like lines. The mapping is isotropic, so this is true
-  foreshortening, not stretching.
+- Bright, saturated liveries (an orange or red Krait) show little plating,
+  and calm faces less, while grey ships are plated fully. The paint mask
+  keeps their colour clean; the fleet is uneven for it.
+- The lamp and pure-colour tests (lamps, signs and paint stay flat or are
+  plated) read the face's colour as the game hands it over, already lit.
+  The unlit colour is not available to the host (the 68k lights the face
+  before the draw call), so a face near the threshold can change between
+  flat and plated as the light changes. The bay-box rule above is
+  geometric and does not.
+- Signs are treated by colour too: a large yellow sign is plated as paint,
+  a white or grey one stays flat.
+- Only the station has a graze fade. A hangar wall seen edge on from the
+  deck could still stripe.
 - A moving part can switch between its own frame and the top frame at the
-  moment it passes a quarter turn.
+  moment it passes a quarter turn. This was not caught in a capture.
+- The hyperspace and fade-in flashes were not captured with plating.
 - The Viper, Python, Moray, Eagle and Transporter were not met in the test
   captures. They use their classes untested in-game.
+- A change of video mode (`change_vidmode`) recreating the GL context was
+  checked by reading the code only: the textures and the shader are made
+  again on first use.
