@@ -488,6 +488,7 @@ int bindings_key_code (int phys)
 static void act (int i, int down)
 {
 	const struct binding_action *a = &binding_actions[i];
+	if (debug) fprintf (stderr, "controls: %s %s\n", a->name, down ? "down" : "up");
 	if (a->kind == K_KEY) bindings_emit (a->code, down);
 	else if (a->kind == K_TIME) time_action (a->code, down);
 }
