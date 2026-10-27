@@ -1698,7 +1698,16 @@ void Nu_DrawComplexBezier (void **data)
 
 
 /* For engines and industry chimney flares.
- * This is a bit crap, as you will see by panning around the effect. */
+ *
+ * fe2.s L3bc46_ProjectThrust draws the flare as a filled 2D Bezier loop
+ * from the tail point (A1 here) out past the head (A0) and back. Its
+ * control points sit (4/3 of the length + 1/16 of the width) along the
+ * axis from the tail, and half the flare's width either side of it. The
+ * width is the model's own (d7: projected size in ST pixels, as
+ * model width * 256 / head z), not a share of the length, so a long jet
+ * stays slim. We pass d7 and build the same loop in eye space, the width
+ * at right angles to the axis and to the view so it stays face on.
+ */
 void Nu_PutTeardrop ()
 {
 	if (use_renderer == R_OLD) return;
@@ -1706,67 +1715,59 @@ void Nu_PutTeardrop ()
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrvertex (GetReg (REG_A1)+4);
 	znode_wrcolor (GetReg (REG_D6));
+	znode_wrlong ((short) GetReg (REG_D7));
 }
 void Nu_DrawTeardrop (void **data)
 {
-	int i;
+	int i, k;
 	float delta;
 	GLfloat ctrlpoints[4][3];
-	GLfloat dir[3], ppd[3];
+	GLfloat head[3], dir[3], ppd[3];
 	GLdouble out[3];
 	int r, g, b;
+	double width, len_dir, along;
 
 #define TD_STRETCH	1.3333333333
-#define TD_BROADEN	0.33
 #define TD_BEZIER_STEPS	40
 	
 	if (use_renderer == R_OLD) return;
-	znode_rdvertexf (data, dir);
+	znode_rdvertexf (data, head);
 	znode_rdvertexf (data, ctrlpoints[0]);
 	znode_rdcolor (data, &r, &g, &b);
+	width = (double) znode_rdlong (data);
 	
-	dir[0] -= ctrlpoints[0][0];
-	dir[1] -= ctrlpoints[0][1];
-	dir[2] -= ctrlpoints[0][2];
-	
-	/* Broaden the flare perpendicular to both its own axis (dir) and the
-	 * camera's viewing direction, so it stays roughly face-on to the
-	 * viewer instead of being pancake-thin from some angles (the "bit of
-	 * crap" the original author warned about). Falls back to the old
-	 * fixed in-plane perpendicular if degenerate (dir parallel to the
-	 * view axis). */
+	for (k = 0; k < 3; k++) dir[k] = head[k] - ctrlpoints[0][k];
+	len_dir = sqrt (dir[0]*dir[0] + dir[1]*dir[1] + dir[2]*dir[2]);
+	/* ST pixels at the head's depth -> eye units (the ST's 256 is the
+	 * GL view's focal length too: 160 * 1.596) */
+	width = -head[2] > 0.0f ? width * -head[2] / 256.0 : 0.0;
+	if (width <= 0.0) width = 0.33 * len_dir;	/* never seen */
+
+	/* unit vector across the axis and the view, so the flare stays
+	 * roughly face on; the axis itself if they are parallel */
 	{
-		float view_axis[3], len_dir, len_ppd;
+		float view_axis[3], len_ppd;
 
 		get_view_axis (view_axis);
 		cross3 (dir, view_axis, ppd);
 		len_ppd = sqrt (ppd[0]*ppd[0] + ppd[1]*ppd[1] + ppd[2]*ppd[2]);
-		len_dir = sqrt (dir[0]*dir[0] + dir[1]*dir[1] + dir[2]*dir[2]);
-		if (len_ppd > 0.0001f * (len_dir + 1.0f)) {
-			float scale = len_dir / len_ppd;
-			ppd[0] *= scale;
-			ppd[1] *= scale;
-			ppd[2] *= scale;
-		} else {
+		if (len_ppd <= 0.0001f * (len_dir + 1.0f)) {
 			ppd[0] = -dir[1];
 			ppd[1] = dir[0];
-			ppd[2] = dir[2];
+			ppd[2] = 0.0f;
+			len_ppd = sqrt (ppd[0]*ppd[0] + ppd[1]*ppd[1]);
+			if (len_ppd <= 0.0f) { ppd[0] = 1.0f; len_ppd = 1.0f; }
 		}
+		for (k = 0; k < 3; k++) ppd[k] /= len_ppd;
 	}
 
-	//h = sqrt (dir[0]*dir[0] + dir[1]*dir[1] + dir[2]*dir[2]);
-	
-	ctrlpoints[1][0] = ctrlpoints[0][0] + TD_STRETCH*dir[0] + TD_BROADEN*ppd[0];
-	ctrlpoints[1][1] = ctrlpoints[0][1] + TD_STRETCH*dir[1] + TD_BROADEN*ppd[1];
-	ctrlpoints[1][2] = ctrlpoints[0][2] + dir[2];
-	
-	ctrlpoints[2][0] = ctrlpoints[0][0] + TD_STRETCH*dir[0] - TD_BROADEN*ppd[0];
-	ctrlpoints[2][1] = ctrlpoints[0][1] + TD_STRETCH*dir[1] - TD_BROADEN*ppd[1];
-	ctrlpoints[2][2] = ctrlpoints[0][2] + dir[2];
-	
-	ctrlpoints[3][0] = ctrlpoints[0][0];
-	ctrlpoints[3][1] = ctrlpoints[0][1];
-	ctrlpoints[3][2] = ctrlpoints[0][2];
+	along = len_dir > 0.0 ? width / 16.0 / len_dir : 0.0;
+	for (k = 0; k < 3; k++) {
+		double c = ctrlpoints[0][k] + (TD_STRETCH + along) * dir[k];
+		ctrlpoints[1][k] = c + 0.5 * width * ppd[k];
+		ctrlpoints[2][k] = c - 0.5 * width * ppd[k];
+		ctrlpoints[3][k] = ctrlpoints[0][k];
+	}
 
 	delta = 1.0f/TD_BEZIER_STEPS;
 	glColor3ub (r, g, b);
