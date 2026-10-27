@@ -26,16 +26,20 @@
  * Messages (a station's clearance, a pilot's hail, the police) show no
  * face of their own: the console gets one of two fixed 32x30 thumbnails,
  * the same for everybody.  The sender is known though - the message
- * routine keeps its registers in the game's variables, the sender's seed
+ * routine keeps its registers in the game's variables, the sender object
  * among them - and a face is a function of (seed, flags) (L4fe58).  So
  * when the thumbnail is blitted, the parts the face generator would pick
  * for that person are read from its tables (ST memory, read only) and go
  * through the same analysis and choice as a face drawn in the box: the
  * thumbnail becomes the very portrait that person gets on a big screen.
- * A station gets the flags its station services face is drawn with, so
- * the voice of a station is the person behind its counter.  The thumbnail
- * is replaced only while the console shows exactly the game's thumbnail.
- * Under --classic-ui (and --pixel-faces) the thumbnail stays the game's.
+ * The person is the sender object's (its own seed), never the message's
+ * text argument, so one sender keeps one face.  A station speaks with
+ * the seed and flags its station services face is drawn with: every
+ * message from a station, clearance, fee or fine, is the person behind
+ * its counter.  The thumbnail is replaced only while the console shows
+ * exactly the game's thumbnail, and a gutter of the game's black edge is
+ * kept between the portrait and the text.  Under --classic-ui and
+ * --pixel-faces every face, box and thumbnail, stays the game's.
  *
  * Portraits keep their shape: the part of the picture shown is cut to the
  * aspect its rectangle has on the screen (the GL viewport), never
@@ -56,7 +60,8 @@
 #include "../m68000.h"
 #include "../fixups.h"
 
-/* gl.c: --classic-ui keeps the console's own thumbnail (the old look) */
+/* gl.c: --classic-ui keeps the game's own faces, box and thumbnail (the
+ * old look), as --pixel-faces does */
 extern int classic_ui;
 
 #define ST_W		320
@@ -75,11 +80,14 @@ extern int classic_ui;
 #define ST_MEM_SIZE	0x110000
 
 /* The message thumbnail: one of two fixed 32x30 bitmaps (L78d10 for an
- * even seed, L78ef4 for an odd one) at (89,169) in the console, perhaps
+ * even d3, L78ef4 for an odd one) at (89,169) in the console, perhaps
  * with a 32 wide overlay at (88,169) over its top (L790d8, a cap, for
  * flags & 6 == 2; L7919c, a crown, for 6).  The face is in their left
  * part; the message's first letters go over their (black) right edge from
- * x 116.  TX0..TX1 x TY0..TY1 is the face's part of both. */
+ * x 116.  TX0..TX1 x TY0..TY1 is the face's part of both.  The portrait
+ * covers x0..PX1 only: the game's black edge, PX1..TX1, stays as the
+ * gutter between the picture and the text (the game's own face ends at
+ * about x 110). */
 #define TX0		88
 #define TY0		169
 #define TX1		116
@@ -88,21 +96,27 @@ extern int classic_ui;
 #define TH		(TY1 - TY0)
 #define THUMB_X		89
 #define OVER_X		88
+#define PX1		112
 
 /* the game's state, read only (fe2.s) */
 #define A6			__DL5eb6_a6_base
 #define A6_MSG_REGS		11690	/* the message's d0-3/d7/a0/a2 (movem.l, L760ba) */
-#define A6_MSG_SEED		(A6_MSG_REGS + 12)	/* d3: the sender's seed */
-#define A6_MSG_FLAGS		(A6_MSG_REGS + 18)	/* d7's low word: its face flags */
-#define A6_MSG_SENDER		(A6_MSG_REGS + 20)	/* a0: the sender */
+#define A6_MSG_ARG		(A6_MSG_REGS + 12)	/* d3: a text argument (a seed, a fee, a fine) */
+#define A6_MSG_FLAGS		(A6_MSG_REGS + 18)	/* d7's low word: face flags; bit 0, a0 is no object */
+#define A6_MSG_SENDER		(A6_MSG_REGS + 20)	/* a0: the sender (its name at +246) */
 #define A6_FACE_SEED		11736	/* long: the big face's d0 (L4fe58) */
 #define A6_FACE_FLAGS		11740	/* word: its d1 */
+#define A6_BIG_SPACE		14466	/* long: the object slots (as hdback.c) */
+#define OBJ_OFFSETS		__DL44b02	/* word per index: slot offset */
+#define OBJ_SLOTS		115
 #define OBJ_SIZE		286
 #define OBJ_MODEL		90	/* word */
+#define OBJ_INDEX		93	/* byte: its own slot */
 #define OBJ_SEED		118	/* long */
 #define MODEL_PORT_FIRST	0x54	/* orbital stations .. surface starports */
 #define MODEL_PORT_LAST		0x6c
-#define FLAGS_STAFF		0x1c	/* station services: grey, a cap ($3a, the police, while they deal with you) */
+#define FLAGS_STAFF		0x1c	/* station services: grey, a cap */
+#define FLAGS_POLICE		0x3a	/* the same counter while the police deal with you */
 
 enum { EYES_NONE, EYES_GLASSES, EYES_SHADES };
 
@@ -201,6 +215,7 @@ static void log_init (void)
 }
 
 /* ST memory, read only */
+static int rb (unsigned int a) { return STMemory_ReadByte (a) & 0xff; }
 static int rw (unsigned int a) { return STMemory_ReadWord (a) & 0xffff; }
 static unsigned int rl (unsigned int a) { return (unsigned int) STMemory_ReadLong (a); }
 static int st_ok (unsigned int a, unsigned int n) { return a >= 0x400 && a < ST_MEM_SIZE && n <= ST_MEM_SIZE - a; }
@@ -366,6 +381,7 @@ static void face_reset (face_t *f)
 	f->is_face = 0;
 	f->ramp = -1;
 	f->pick = -1;
+	f->male = f->cap = f->bald = f->eyes = f->longhair = f->eye_dark = 0;
 }
 
 static int in_box (int width_words, int height, int x, int y)
@@ -532,39 +548,64 @@ static void compose (face_t *f, unsigned int d0, int d1)
 
 /* ---- the message thumbnail ---- */
 
-/* who the thumbnail stands for, as a face: (seed, flags) */
+/* is p one of the game's objects (it sits in the slot its own index
+ * names)? */
+static int is_object (unsigned int p)
+{
+	unsigned int big = rl (A6 + A6_BIG_SPACE);
+	int idx;
+
+	if (!st_ok (p, OBJ_SIZE) || !st_ok (big, 4)) return 0;
+	idx = rb (p + OBJ_INDEX);
+	if (idx >= OBJ_SLOTS) return 0;
+	return big + (unsigned int) (int) (short) rw (OBJ_OFFSETS + 2 * idx) == p;
+}
+
+/* Who the thumbnail stands for, as a face: (seed, flags).  The person is
+ * the sender, not the message: d3 is only what the text prints (the
+ * station's seed for a clearance, the fee for a docking fee, the amount
+ * of a fine), so the seed is read from the sender itself.
+ *  - A starport: the person at its station services counter, for every
+ *    message it sends (clearance, fees, fines): its seed and the flags
+ *    that page draws its face with (as it last did here, else $1c).
+ *  - Any other object (a ship, a pilot): its own seed, so the same sender
+ *    is always the same face, and the face flags the message gives (the
+ *    game passes face flags in d7: $3a the police uniform, 0 none).
+ *  - No sender object (d7 bit 0: a0 is a text argument): the message's
+ *    own d3 and flags; stable for that message. */
 static void thumb_person (void)
 {
-	unsigned int seed = rl (A6 + A6_MSG_SEED), sender = rl (A6 + A6_MSG_SENDER);
-	int d7 = rw (A6 + A6_MSG_FLAGS), model;
+	unsigned int arg = rl (A6 + A6_MSG_ARG), sender = rl (A6 + A6_MSG_SENDER), seed;
+	int d7 = rw (A6 + A6_MSG_FLAGS), model, ff, obj;
+	const char *who;
 	face_t f;
 
 	thumb.station = 0;
-	/* a starport speaking: its seed is its staff's, the person at the
-	 * station services counter */
-	if (st_ok (sender, OBJ_SIZE)) {
+	obj = !(d7 & 1) && is_object (sender);
+	if (obj) {
+		seed = rl (sender + OBJ_SEED);
 		model = rw (sender + OBJ_MODEL);
-		if (model >= MODEL_PORT_FIRST && model <= MODEL_PORT_LAST && rl (sender + OBJ_SEED) == seed)
-			thumb.station = 1;
+		thumb.station = model >= MODEL_PORT_FIRST && model <= MODEL_PORT_LAST;
+	} else
+		seed = arg;
+	if (thumb.station) {
+		ff = rw (A6 + A6_FACE_FLAGS);
+		thumb.flags = rl (A6 + A6_FACE_SEED) == seed && (ff == FLAGS_STAFF || ff == FLAGS_POLICE)
+			? ff : FLAGS_STAFF;
+		who = "station";
+	} else {
+		thumb.flags = d7 & 0x3e;
+		who = obj ? "object" : "anon";
 	}
-	if (thumb.station)
-		/* as this station's services page last drew its face
-		 * (the police's flags while they deal with you), or, if it
-		 * has not been opened here, as it draws it otherwise */
-		thumb.flags = rl (A6 + A6_FACE_SEED) == seed ? rw (A6 + A6_FACE_FLAGS) : FLAGS_STAFF;
-	else
-		/* anybody else: the headgear the message gives them (its
-		 * overlay), hair and colouring their own */
-		thumb.flags = d7 & 6;
 	compose (&f, seed, thumb.flags);
 	thumb.pick = f.is_face ? choose (&f) : -1;
 	if (logf_) {
-		fprintf (logf_, "f%d thumb seed=%08x flags=%02x d7=%04x %s sender=%06x %016llx %s %s %s eyes=%d -> %s\n",
-			 frame_no, seed, thumb.flags, d7, thumb.station ? "station" : "other", sender,
+		fprintf (logf_, "f%d thumb seed=%08x flags=%02x d7=%04x d3=%08x %s sender=%06x %016llx %s %s %s eyes=%d -> %s\n",
+			 frame_no, seed, thumb.flags, d7, arg, who, sender,
 			 f.is_face ? fnv_int (f.body_hash, f.ramp) : 0ULL,
 			 f.is_face ? (f.male ? "m" : "f") : "-",
-			 f.ramp >= 0 ? ramp_names[f.ramp] : "-",
-			 f.cap ? "cap" : f.bald ? "bald" : "hair", f.eyes,
+			 f.is_face && f.ramp >= 0 ? ramp_names[f.ramp] : "-",
+			 !f.is_face ? "-" : f.cap ? "cap" : f.bald ? "bald" : "hair", f.eyes,
 			 thumb.pick >= 0 ? pool[thumb.pick].file : "-");
 		fflush (logf_);
 	}
@@ -614,9 +655,9 @@ void hdface_blit (const unsigned char *planes, int width_words, int height,
 	int i, w = width_words * 16;
 
 	(void) scr;
-	if (pixel_faces) return;
+	if (pixel_faces || classic_ui) return;
 	log_init ();
-	if (!classic_ui && thumb_blit (planes, width_words, height, x, y, bmp)) return;
+	if (thumb_blit (planes, width_words, height, x, y, bmp)) return;
 	/* only whole parts inside the face box */
 	if (!in_box (width_words, height, x, y)) return;
 	/* a new group: the first part after a frame was shown, or a part
@@ -717,7 +758,7 @@ static void thumb_frame (const unsigned char *raster, unsigned char *out)
 	}
 	x0 = thumb.overlay ? OVER_X : THUMB_X;
 	for (y = TY0; y < TY1; y++)
-		memset (out + y * ST_W + x0, 255, TX1 - x0);
+		memset (out + y * ST_W + x0, 255, PX1 - x0);
 	thumb_shown = thumb.pick;
 }
 
@@ -731,9 +772,9 @@ void hdface_frame (const unsigned char *raster, unsigned char *out,
 	frame_no++;
 	shown = -1;
 	thumb_shown = -1;
-	if (pixel_faces) return;
+	if (pixel_faces || classic_ui) return;
 	log_init ();
-	if (!classic_ui) thumb_frame (raster, out);
+	thumb_frame (raster, out);
 	if (live.nparts == 0) return;
 	if (!live.analysed) analyse (&live);
 	if (!live.is_face) return;
@@ -832,13 +873,13 @@ void hdface_draw (const unsigned int *pal, const unsigned int *ctrl_pal)
 {
 	(void) pal;
 	(void) ctrl_pal;
-	if (pixel_faces) return;
+	if (pixel_faces || classic_ui) return;
 	/* the whole portrait, head and shoulders */
 	if (shown >= 0)
 		draw_portrait (shown, BX0, BY0, BX1, BY1, 0.0f, 0.0f, 1.0f, 1.0f, shade);
 	/* the thumbnail is the size of a stamp: the head */
 	if (thumb_shown >= 0)
-		draw_portrait (thumb_shown, thumb.overlay ? OVER_X : THUMB_X, TY0, TX1, TY1,
+		draw_portrait (thumb_shown, thumb.overlay ? OVER_X : THUMB_X, TY0, PX1, TY1,
 			       0.15f, 0.05f, 0.85f, 0.77f, 1.0f);
 }
 

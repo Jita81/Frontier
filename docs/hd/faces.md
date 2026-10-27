@@ -29,11 +29,13 @@ It also covers the face in the console when a message comes in (see
 
 A message (a station's clearance, another pilot's hail, the police) shows
 no face of its own. The console at the bottom gets one of two fixed 32 x 30
-thumbnails, the same for everyone, sometimes with a small overlay at its
-foot. The thumbnail sits at ST x 89..120, y 169..198.
+thumbnails, the same for everyone, sometimes with a small overlay over its
+top rows (y 169 on, 12 or 14 rows). The bitmap sits at ST x 89..120,
+y 169..198; the face is in x 89..115, and the message text starts drawing
+over the bitmap's black edge at x 116.
 
 The sender is known, though. The message routine keeps its registers in
-the game's variables, and the sender's seed is among them. A face is a
+the game's variables, and the sender object is among them. A face is a
 function of (seed, flags): the face generator picks its parts from tables
 in ST memory by the seed. So when the thumbnail is blitted, the layer reads
 the parts the generator would pick for that person (reading ST memory
@@ -41,22 +43,35 @@ only) and passes them through the same analysis and choice as a face drawn
 in the box. The thumbnail becomes the very portrait that person gets on a
 big screen.
 
-- **A station** (the sender is a starport object whose seed matches) gets
-  the flags its station services face is drawn with. The voice of a
-  station is therefore the person behind its counter: in the test run the
-  Lave clearance message and the Lave services screen show the same
-  portrait, with the same person id.
-- **Anyone else** gets the flags the message carries (`d7 & 6`), so each
-  sender gets one stable portrait.
+The seed is always the sender object's own, never the message's text
+argument. That argument (`d3`) is whatever the text prints: the station's
+seed for a clearance, the fee for a docking fee, the amount for a fine. An
+earlier version used it, so a fine from the station showed a
+stranger.
+
+- **A station** (the sender is a game object, found in the slot its own
+  index names, with a starport model) speaks for every message it sends,
+  clearance, fee or fine, as the person behind its station services
+  counter: its seed, and the flags that page draws its face with (as it
+  last did here, otherwise `$1c`). In the test runs the Lave launch
+  clearance, the docking clearance, a fine and the Lave services
+  screen all show the same portrait, with the same person id.
+- **Any other object** (a ship, a pilot) gets its own seed and the face
+  flags the message carries (`d7` without bit 0; the game passes face
+  flags there: `$3a` is the police uniform, `0` none). The same sender is
+  always the same face for the same kind of message.
+- **No sender object** (`d7` bit 0 set: the slot holds a text argument)
+  gets the message's own `d3` and flags.
 
 The thumbnail is replaced only while the console shows exactly the game's
-thumbnail, pixel for pixel, over the face's own columns (x 89..115; the
-message text starts drawing over the thumbnail's black edge at x 116). The
-portrait is cropped to the head and shoulders, because the rectangle is
-small.
+thumbnail, pixel for pixel, over x 89..115. The portrait covers x 89..111;
+x 112..115 keeps the game's black edge as a gutter, so the text does not
+touch the picture (the game's own face ends at about x 110). The portrait
+is cropped to the head and shoulders, because the rectangle is small.
 
 With `FE2_HDFACE_LOG` set, each thumbnail logs a `thumb` line with the
-seed, flags, sender, person id and portrait. A `check` line also compares
+seed, flags, `d7`, `d3`, the kind of sender (station, object, anon), the
+sender, person id and portrait. A `check` line also compares
 the face composed from the game's own (seed, flags) with the face in the
 box, to show that the composition matches the game.
 
@@ -149,7 +164,7 @@ and the oracle replay ends on the same hashes.
 | switch | effect |
 |---|---|
 | `--pixel-faces` | Keep the game's own faces. The layer returns before doing anything, so the picture is exactly the one without it. |
-| `--classic-ui` | Keeps the console's own message thumbnail. The face box still shows the portrait, as before this change; `--pixel-faces` removes both. |
+| `--classic-ui` | Keep the game's own faces, in the face box and the message thumbnail, as `--pixel-faces` does: the classic screens show the classic faces. |
 | `FE2_HDFACE_LOG=file` | Write one line per person to `file`: frame, id, the attributes read (sex, ramp, hair/cap/shaved, eyewear, eye darkness, hair length) and the portrait chosen. |
 | `FE2_ART_DIR=dir` | Where `art/` is, shared with the other HD layers (default `art` in the current directory). |
 
@@ -319,9 +334,11 @@ were never processed and are not in the repository.
   drawn anywhere else on the screen keeps the game's pixels. None has been
   seen.
 - **Message senders other than stations are not yet seen live.** The code
-  path for a pilot's or the police's message (flags from the message, the
-  two overlays) was not reached in the test drive. A sender whose seed the
-  generator would not make into a face keeps the game's thumbnail.
+  path for a ship's or a pilot's message (its own seed, flags from the
+  message, the two overlays) was not reached in the test drives. A sender
+  whose seed the generator would not make into a face keeps the game's
+  thumbnail.
 - **A station's message uses the services flags.** The game's own
-  thumbnail is a fixed face without a cap. The portrait instead is the
-  services person, cap included, because that is who the station is.
+  thumbnail is a fixed face without a cap, and a fine carries the police
+  flags (`$3a`). The portrait instead is the services person, cap
+  included, for every message, because that is who the station is.

@@ -130,8 +130,8 @@ $(HOST_OBJS): $(HOST_OBJDIR)%.o: %.c $(HOST_STAMP) host.h
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(HOST_CFLAGS) -c -o $@ $<
 
-# gl.c reads engine variables at their label addresses (P-2)
-$(HOST_OBJDIR)src/gl.o: fixups.h
+# gl.c, hdface.c and hdback.c read engine variables at their label addresses (P-2)
+$(HOST_OBJDIR)src/gl.o $(HOST_OBJDIR)src/hdface.o $(HOST_OBJDIR)src/hdback.o: fixups.h
 
 $(CORE_STAMP): FORCE
 	@mkdir -p $(@D)
