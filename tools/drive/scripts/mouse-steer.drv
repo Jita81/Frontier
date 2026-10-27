@@ -7,7 +7,7 @@
 # Screen positions are ST coordinates (320x200): the comms icon is at
 #           (57,193), the launch request at (130,19), the view icon at (8,193).
 # Run:  python3 tools/drive/drive.py --script tools/drive/scripts/mouse-steer.drv \
-#           --out RUN_DIR --timeout 120
+#           --out RUN_DIR --timeout 200
 # Expect: exit 0; 7 shots: docked, station services, two flight shots 2 s
 #         apart that match (no steering), one after a yaw and one after a
 #         pitch that each show a different part of the sky, and the next
