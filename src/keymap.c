@@ -15,6 +15,10 @@
 #include "joystick.h"
 #include "shortcut.h"
 #include "screen.h"
+#include "bindings.h"
+
+/* the code each held key sent (bindings_key_code), so its release matches */
+static signed short sym_code[SDLK_LAST];
 
 /*-----------------------------------------------------------------------*/
 /*
@@ -684,6 +688,13 @@ void Keymap_KeyDown(SDL_keysym *sdlkey)
   if (symkey < 0 || symkey >= SDLK_LAST)
     return;  /* key_states[] is indexed by sym */
 
+  /* The Controls page takes every key while it is open */
+  if (controls_page_open())
+  {
+    controls_page_key(sdlkey, 1);
+    return;
+  }
+
   /* Handle special keys */
   if(symkey == SDLK_MODE || symkey == SDLK_LMETA || symkey == SDLK_NUMLOCK)
   {
@@ -710,10 +721,15 @@ void Keymap_KeyDown(SDL_keysym *sdlkey)
   else
   {
     STScanCode = Keymap_RemapKeyToSTScanCode(sdlkey);
-    if(STScanCode != (char)-1)
+    if(!bPreviousKeyState)
     {
-      if(!bPreviousKeyState)
-        Input_PressSTKey(STScanCode, TRUE);
+      /* the controls layer: the same code unless controls.ini rebinds it */
+      int code = bindings_key_code(STScanCode == (char)-1 ? -1 : STScanCode);
+      sym_code[symkey] = code;
+      if(code <= -2)
+        bindings_time_key(code, TRUE);
+      else if(code != -1)
+        bindings_emit(code, TRUE);
     }
   }
 }
@@ -734,6 +750,12 @@ void Keymap_KeyUp(SDL_keysym *sdlkey)
   if (symkey < 0 || symkey >= SDLK_LAST)
     return;  /* key_states[] is indexed by sym */
 
+  if (controls_page_open())
+  {
+    controls_page_key(sdlkey, 0);
+    return;
+  }
+
   /* Handle special keys */
   if(symkey == SDLK_MODE || symkey == SDLK_LMETA || symkey == SDLK_NUMLOCK)
   {
@@ -753,12 +775,39 @@ void Keymap_KeyUp(SDL_keysym *sdlkey)
   /* Release key (only if was pressed) */
   if(input.key_states[symkey])
   {
-    STScanCode = Keymap_RemapKeyToSTScanCode(sdlkey);
-    if(STScanCode != (char)-1)
+    if(bindings_are_default())
     {
-      Input_PressSTKey(STScanCode,FALSE);
+      /* exactly as before the controls layer */
+      STScanCode = Keymap_RemapKeyToSTScanCode(sdlkey);
+      if(STScanCode != (char)-1)
+      {
+        Input_PressSTKey(STScanCode,FALSE);
+      }
     }
+    else if(sym_code[symkey] <= -2)
+      bindings_time_key(sym_code[symkey], FALSE);
+    else if(sym_code[symkey] != -1)
+      bindings_emit(sym_code[symkey], FALSE);
   }
 
   input.key_states[symkey] = FALSE;
+}
+
+/*-----------------------------------------------------------------------*/
+/*
+  Let go of every key held (the Controls page opening): each one's release
+  goes to the game as if the key had come up.
+*/
+void Keymap_ReleaseAll(void)
+{
+  int sym;
+  for (sym = 0; sym < SDLK_LAST; sym++)
+  {
+    if (!input.key_states[sym]) continue;
+    input.key_states[sym] = FALSE;
+    if (sym_code[sym] <= -2)
+      bindings_time_key(sym_code[sym], FALSE);
+    else if (sym_code[sym] > 0)
+      bindings_emit(sym_code[sym], FALSE);
+  }
 }
