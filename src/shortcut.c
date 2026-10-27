@@ -11,6 +11,7 @@
 #include "screen.h"
 #include "shortcut.h"
 #include "hostcall.h"
+#include "bindings.h"
 #include "../m68000.h"
 
 
@@ -60,6 +61,9 @@ void ShortCut_CheckKeys(void)
   switch(ShortCutKey.Key) {
      case SDLK_F11:                  /* Switch between fullscreen/windowed mode */
        ShortCut_FullScreen();
+       break;
+     case SDLK_F12:                  /* The Controls page */
+       controls_page_toggle();
        break;
      case SDLK_m:                    /* Toggle mouse mode */
        ShortCut_MouseMode();
