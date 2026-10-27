@@ -60,7 +60,7 @@ noise library.  The first is built: the Milky Way, switched off with
 |---|---|---|---|---|---|
 | 1 | Planet limb glow | Every planet seen from space gets a lit, coloured rim instead of a flat disc. | ~80 | noise, program, glow quad, body class | Low |
 | 2 | Star corona by class | The star becomes a glowing sun with soft streamers, not a flat disc. | ~60 | noise, program, glow quad, object reader, star class | Low |
-| 3 | **Sky band (built)** | The flat blue cut-outs become soft star clouds with dust lanes, on every space screen. | 137 + 45 hooks | noise, program, object reader | Low |
+| 3 | **Sky band (built)** | The flat blue cut-outs become soft star clouds with dust lanes, on every space screen. | 150 + 33 hooks | noise, program, object reader | Low |
 | 4 | Planet rings | Probably also a fix: rings look to be black discs today. They would become banded and see-through. | ~90 | noise, program, object reader | Medium |
 | 5 | Backdrop variation | Ports of the same class stop looking identical. | ~30 | identity tables | Low |
 | 6 | Close planet detail | The ground keeps its grain when flying low. | ~60 + seams | noise, program | Medium |
@@ -117,9 +117,9 @@ exists.
 
 ## Prototype notes: the sky band
 
-- **Size.**  `src/procfx.c` is 230 lines: 93 shared, 137 for the layer.
-  `src/procfx.h` is 39 lines.  Hooks: gl.c +39, main.c +3, soft.c +1,
-  screen.h +1, and one word in Makefile-C.
+- **Size.**  `src/procfx.c` is 243 lines: 93 shared, 150 for the layer.
+  `src/procfx.h` is 41 lines.  Hooks: gl.c +27 -2, main.c +3, soft.c
+  +2 -1, screen.h +1, and one word in Makefile-C.  That is 33 hook lines.
 - **Put.**  `Nu_ComplexStart` checks the object's model.  For `$b0`, the
   shape's data gets an `NU_SKYBAND` znode carrying the object's rotation.
   If the shape aborts, the znode goes with it.
@@ -127,14 +127,53 @@ exists.
   projection and turns it into the sky's own frame, so the pattern stays
   fixed to the sky.  This was checked: band vertices keep their sky
   direction while the view turns.
-- **Soft edge.**  A fade by distance from the band's plane straightened
-  the game's winding ribbon, so it was dropped.  Instead, `flush_contour`
-  draws a strip outside each outline, 3% of the screen high, fading to
-  nothing.  Where two patches meet, the strip lies on the same colour and
-  does not show.
+  - The band blends with `GL_MAX`: the brighter of band and sky wins, so
+    overlapping patches and seams never add up.
+  - `procfx_sky_begin` saves the enable and colour-buffer state and sets
+    the blend equation itself.  `procfx_sky_end` restores both.
+- **Soft edge.**
+  - A fade by distance from the band's plane straightened the game's
+    winding ribbon, so it was dropped.
+  - The noise sets coverage, `smoothstep(0.10, 0.40, cloud)`.  Thin cloud
+    fades out, so the visible edge follows the clouds, not the polygon's
+    straight Bezier chords.
+  - `procfx_sky_feather` draws a strip outside each outline, `FEATHER`
+    (6%) of the 3D view's height wide: about 60 px at 1600x1200, where the
+    view is 1008 px high.  Its alpha runs from 1 at the outline to 0 and
+    scales the coverage.
+  - Fans round the strip's corners.  Repeated vertices are skipped, so a
+    patch's end cap is round, not a straight cut.
+  - The outline is now only an upper bound for the fill.  The visible
+    extent is set by the noise threshold.  Measured at blue >= 40 in the
+    same frames against `--flat-sky`, the band is 50 to 97 px wider.  The
+    old 3% strip made it 12 to 60 px wider.  Narrow tails widen most.
+  - The strip's side comes from the contour's signed area, not the ODD
+    rule, so a hole wound like its outline would keep a hard edge.  In the
+    frames dumped here, no contour lay inside another.
+  - Dust lanes are value noise and can run straight for a short way.  They
+    lie inside the band, not on its edge.
+- **Colour.**  Mean blue over the flat band's pixels, same frames, as flat
+  / new / old:
+  - front: 96.5 / 97.2 / 74.7
+  - front, ship in view: 110.1 / 108.8 / 103.5
+  - rear: 96.1 / 122.8 / 95.0, brighter where the cloud is dense
+  - Up to 2% of the flat band's pixels fall back to the sky.
+- **GPU.**  The review timed the first version on an M4 at 3400x1360
+  (3D view 1813x1143).
+  - 9 noise octaves per band pixel: 42 fps, against 51-53 with
+    `--flat-sky`.  The band took 1.95 ms a frame, against 0.77 ms flat.
+  - 4 + 3 octaves: 50-51 fps, 1.4 ms.
+  - The layer now uses 4 + 3.  A pixel with no coverage is discarded
+    before the lane noise.
 - **Oracle.**  End line unchanged, `end 3100 g=14a8e1f0b71dbab4
   m=0ec88beb674ab6e9 c=dcad3c8a8bf9c46d s=cbf29ce484222325
   r=cbf29ce484222325 f=e2cf48f9f4d07294 p=d0b676b2ffc4d3cb`.
-- **Switch.**  `--flat-sky` writes no znode and binds no shader.
-- **Not yet checked.**  Other systems' band colours, and slow GPUs (9 noise
-  octaves per band pixel).  The wireframe renderer is untouched.
+- **Switch.**  `--flat-sky` writes no znode, binds no shader and draws no
+  strip.  Checked: with it, the band is the game's flat (0, 23, 96), as
+  before this layer.
+- **Not yet checked.**
+  - Other systems' band colours.
+  - This build's frame rate on an idle machine.  The machine here was
+    loaded, so the 4 + 3 numbers above are the review's.
+  - A real hole contour.
+  - The wireframe renderer is untouched.

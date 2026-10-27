@@ -35,5 +35,7 @@ int procfx_sky_begin (const float m[9], const double proj[16], const int vp[4]);
  * in window coordinates */
 void procfx_sky_feather (const double (*v)[3], int n);
 void procfx_sky_end (void);
+/* change_vidmode, before the GL context goes */
+void procfx_forget (void);
 
 #endif

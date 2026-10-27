@@ -123,12 +123,11 @@ int procfx_sky_put (float m[9])
 }
 
 /* The eye ray of each pixel comes back from gl_FragCoord through the
- * projection the polygon was drawn with, and uSky turns it into the
- * background object's own frame: a fixed direction in the sky gets a
- * fixed pattern.  Star clouds are broad noise, the dust lanes a ridge of
- * finer noise, and a few faint specks follow the clouds.  On average the
- * band keeps the game's colour.  Alpha is the vertex colour's: 1 inside
- * the polygon, falling to 0 across the feather strip below. */
+ * projection the polygon was drawn with; uSky turns it into the sky's own
+ * frame, so the pattern is fixed to the sky.  Star clouds are broad noise,
+ * the dust lanes a ridge of finer noise, plus a few faint specks.  Cloud
+ * sets coverage, which alpha (1 in the polygon, 0 at the strip's far side)
+ * scales: thin cloud fades first and bright cloud reaches further out. */
 static const char sky_glsl[] =
 	"uniform mat3 uSky;\n"
 	"uniform vec4 uVp;\n"
@@ -136,16 +135,19 @@ static const char sky_glsl[] =
 	"void main () {\n"
 	"	vec2 ndc = (gl_FragCoord.xy - uVp.xy) / uVp.zw * 2.0 - 1.0;\n"
 	"	vec3 d = normalize (uSky * vec3 (ndc.x / uFoc.x, ndc.y / uFoc.y, -1.0));\n"
-	"	float cloud = pf_fbm (d * 3.5 + vec3 (11.0), 5);\n"
-	"	float lane = 1.0 - abs (2.0 * pf_fbm (d * 9.0 + vec3 (3.0), 4) - 1.0);\n"
-	"	float lum = 0.6 + 1.3 * smoothstep (0.35, 0.80, cloud);\n"
+	"	float cloud = pf_fbm (d * 3.5 + vec3 (11.0), 4);\n"
+	"	float cover = smoothstep (0.10, 0.40, cloud) * gl_Color.a;\n"
+	"	if (cover <= 0.0) discard;\n"
+	"	float lane = 1.0 - abs (2.0 * pf_fbm (d * 9.0 + vec3 (3.0), 3) - 1.0);\n"
+	"	float lum = 0.8 + 1.8 * smoothstep (0.35, 0.80, cloud);\n"
 	"	lum *= 1.0 - 0.4 * smoothstep (0.84, 0.98, lane);\n"
 	"	vec3 base = gl_Color.rgb;\n"
 	"	vec3 core = mix (base, vec3 (0.66, 0.72, 0.98), 0.5);\n"
 	"	vec3 col = mix (base, core, smoothstep (0.55, 0.85, cloud)) * lum;\n"
-	"	float speck = step (0.996, pf_hash (floor (d * 900.0)));\n"
+	"	vec3 g = d * 450.0;\n"
+	"	float speck = step (0.996, pf_hash (floor (g))) * smoothstep (0.45, 0.15, length (fract (g) - 0.5));\n"
 	"	col += speck * (0.25 + 0.6 * smoothstep (0.4, 0.75, cloud)) * vec3 (0.6, 0.65, 0.75);\n"
-	"	gl_FragColor = vec4 (col, gl_Color.a);\n"
+	"	gl_FragColor = vec4 (col * cover, 1.0);\n"
 	"}\n";
 
 static GLuint sky_prog;
@@ -174,8 +176,10 @@ int procfx_sky_begin (const float m[9], const double proj[16], const int vp[4])
 		s[3*j + 1] = m[3*j + 1];
 		s[3*j + 2] = -m[3*j + 2];
 	}
-	glPushAttrib (GL_ENABLE_BIT);
-	glEnable (GL_BLEND);	/* the blend function is set once, in gl.c */
+	/* the brighter of band and sky wins, so overlaps never add up */
+	glPushAttrib (GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT);
+	glEnable (GL_BLEND);
+	glBlendEquation (GL_MAX);
 	glUseProgram (sky_prog);
 	glUniformMatrix3fv (u_sky, 1, GL_TRUE, s);
 	glUniform4f (u_vp, (float) vp[0], (float) vp[1], (float) vp[2], (float) vp[3]);
@@ -184,19 +188,16 @@ int procfx_sky_begin (const float m[9], const double proj[16], const int vp[4])
 	return 1;
 }
 
-/* The polygon's outline is a hard edge on a dark sky.  Outside it, a strip
- * FEATHER of the screen height wide runs from the band's colour (alpha 1)
- * to nothing (alpha 0); the shader is still bound, so the clouds carry on
- * into it.  Where two patches of the band meet, the strip lies over the
- * same colour and does not show.  The strip goes out on the side away
- * from the contour's own inside, whichever way the contour winds. */
-#define FEATHER	0.03
+/* Outside each outline, a strip FEATHER of the 3D view's height wide
+ * carries alpha from 1 to 0, on the side away from the contour's inside
+ * whichever way it winds (a hole keeps its hard edge); fans round corners. */
+#define FEATHER	0.06
 
 void procfx_sky_feather (const double (*v)[3], int n)
 {
-	double area = 0, w;
+	double area = 0, w, a0, a1, turn, a;
 	float c[4];
-	int i;
+	int i, j, k, m;
 
 	if (n < 3) return;
 	for (i = 0; i < n; i++)
@@ -205,19 +206,23 @@ void procfx_sky_feather (const double (*v)[3], int n)
 	glGetFloatv (GL_CURRENT_COLOR, c);
 	glBegin (GL_QUAD_STRIP);
 	for (i = 0; i <= n; i++) {
-		const double *p = v[(i + n - 1) % n], *q = v[i % n], *r = v[(i + 1) % n];
-		double ex = q[0] - p[0], ey = q[1] - p[1], fx = r[0] - q[0], fy = r[1] - q[1];
-		double le = hypot (ex, ey), lf = hypot (fx, fy), nx = 0, ny = 0, l;
-
-		/* the mean of the right-hand normals of the two edges at q */
-		if (le > 0) { nx += ey / le; ny -= ex / le; }
-		if (lf > 0) { nx += fy / lf; ny -= fx / lf; }
-		l = hypot (nx, ny);
-		if (l > 0) { nx /= l; ny /= l; }
-		glColor4f (c[0], c[1], c[2], 1.0f);
-		glVertex3d (q[0], q[1], q[2]);
-		glColor4f (c[0], c[1], c[2], 0.0f);
-		glVertex3d (q[0] + w * nx, q[1] + w * ny, q[2]);
+		const double *p, *q = v[i % n], *r;
+		/* the nearest vertices either side that differ from q (a contour
+		 * may end on its first vertex), then the right-hand normals of the
+		 * edges into and out of q, and the turn */
+		for (j = i + n - 1; p = v[j % n], j > i && p[0] == q[0] && p[1] == q[1]; j--) ;
+		for (j = i + 1; r = v[j % n], j < i + n && r[0] == q[0] && r[1] == q[1]; j++) ;
+		a0 = atan2 (p[0] - q[0], q[1] - p[1]);
+		a1 = atan2 (q[0] - r[0], r[1] - q[1]);
+		turn = remainder (a1 - a0, 2 * M_PI);
+		m = turn * w > 0 ? (int) ceil (fabs (turn) / 0.3) : 0;
+		for (k = 0; k <= m; k++) {
+			a = a0 + turn * (m ? (double) k / m : 0.5);
+			glColor4f (c[0], c[1], c[2], 1.0f);
+			glVertex3d (q[0], q[1], q[2]);
+			glColor4f (c[0], c[1], c[2], 0.0f);
+			glVertex3d (q[0] + w * cos (a), q[1] + w * sin (a), q[2]);
+		}
 	}
 	glEnd ();
 	glColor4fv (c);
@@ -227,4 +232,12 @@ void procfx_sky_end (void)
 {
 	glUseProgram (0);
 	glPopAttrib ();
+}
+
+/* the GL context is about to go: compile again in the next one */
+void procfx_forget (void)
+{
+	if (sky_prog) glDeleteProgram (sky_prog);
+	sky_prog = 0;
+	sky_failed = 0;
 }

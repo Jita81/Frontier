@@ -227,6 +227,7 @@ static void change_vidmode ()
 	hdface_forget ();
 	hdui_forget ();
 	hdback_forget ();
+	procfx_forget ();
 	if (screen_tex) {
 		glDeleteTextures (1, &screen_tex);
 		screen_tex = 0;
@@ -1334,25 +1335,17 @@ static bool complex_aborted;
  * Nu_ComplexStart), 0 if there is no shape */
 static unsigned int complex_st_start;
 
-/* procfx sky band: set by Nu_ComplexStart for the background object */
-static int complex_sky;
-static float complex_sky_m[9];
-/* and on the draw side: the next complex polygon is the Milky Way */
-static int sky_pending, sky_active;
-static float sky_m[9];
+/* procfx sky band: complex_sky when Nu_ComplexStart meets the background
+ * object; sky_pending when the next polygon drawn is the Milky Way */
+static int complex_sky, sky_pending, sky_active;
+static float complex_sky_m[9], sky_m[9];
 
 static void put_complex_start_4real ()
 {
 	complex_data_start = obj_data_pos;
-	if (complex_sky) {
-		/* inside the shape's data, so an abort forgets it too */
-		int i;
+	if (complex_sky) {	/* in the shape's data, so an abort forgets it too */
 		znode_wrlong (NU_SKYBAND);
-		for (i = 0; i < 9; i++) {
-			int w;
-			memcpy (&w, &complex_sky_m[i], 4);
-			znode_wrlong (w);
-		}
+		znode_wrblock (complex_sky_m, sizeof complex_sky_m);
 	}
 	znode_wrlong (NU_COMPLEX_START);
 	znode_wrcolor (complex_col_rgb444);
@@ -1517,11 +1510,8 @@ void Nu_ComplexStart ()
 }
 void Nu_DrawSkyBand (void **data)
 {
-	int i, w;
-	for (i = 0; i < 9; i++) {
-		w = znode_rdlong (data);
-		memcpy (&sky_m[i], &w, 4);
-	}
+	memcpy (sky_m, *data, sizeof sky_m);
+	*data += sizeof sky_m;
 	sky_pending = 1;
 }
 
