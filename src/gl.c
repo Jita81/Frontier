@@ -2323,8 +2323,9 @@ static void hull_put_ctx (int n)
 
 	hull_read_light (lt);
 	/* the face's own number: the ST's polygon is told by which of the
-	 * object's vertices it uses, which does not change as it turns */
-	seed = hull_mix ((key & 0xffff) + 0x5bd1e995u);
+	 * object's vertices it uses, which does not change as it turns
+	 * (from the type word's low byte, as styles 1 to 4 always had it) */
+	seed = hull_mix ((key & 255) + 0x5bd1e995u);
 	seed = hull_mix (seed ^ (a0 - a6));
 	seed = hull_mix (seed ^ (a1 - a0));
 	seed = hull_mix (seed ^ (a2 - a0));
@@ -2434,8 +2435,8 @@ static void hull_log_frame (Uint32 t0)
 
 /* does the engine open a complex shape (a sign, a logo) on the polygon
  * just read? Then it is a host of decals. A known ship's get the quiet
- * plating, so a decal does not sit on busy panels; anything else (the
- * station's signs) is drawn flat. */
+ * plating, so a decal does not sit on busy panels; see hull_paint5 for
+ * the rest. */
 static int hull_decal_host (void **data)
 {
 	return *(int *) *data == NU_COMPLEX_START;
@@ -2518,12 +2519,13 @@ static const char hull_fs5[] =
 	"{\n"
 	"	vec4 a = texture2D (tA, vUV.xy), b = texture2D (tB, vUV.xy);\n"
 	"	vec4 a2 = texture2D (tA, vUV.zw, 4.0), b2 = texture2D (tB, vUV.zw, 4.0);\n"
-	"	float tone = a.b * a.a * 2.0 * mix (1.0, a2.b * a2.a * 2.0, 0.5);\n"
+	"	float fd = 1.0 - smoothstep (0.015, 0.06, max (length (dFdx (vUV.xy)), length (dFdy (vUV.xy))));\n"
+	"	float tone = mix (1.0, a.b * a.a * 2.0, fd) * mix (1.0, a2.b * a2.a * 2.0, 0.5);\n"
 	"	vec3 L = normalize (vLT.xyz), V = normalize (vVT.xyz);\n"
 	"	float mx = max (max (vCol.r, vCol.g), vCol.b), mn = min (min (vCol.r, vCol.g), vCol.b);\n"
 	"	float lum = dot (vCol.rgb, vec3 (0.3, 0.59, 0.11));\n"
 	"	float paint = 1.0 - smoothstep (0.2, 0.6, (mx - mn) / max (mx, 0.02));\n"
-	"	vec3 n = normalize (vec3 ((a.xy - 0.5) * 2.0 * uP.x, 1.0));\n"
+	"	vec3 n = normalize (vec3 ((a.xy - 0.5) * 2.0 * uP.x * fd, 1.0));\n"
 	"	float lit = smoothstep (0.0, 0.2, L.z);\n"
 	"	float d0 = max (L.z, 0.0), d1 = max (dot (n, L), 0.0);\n"
 	"	float ratio = mix (1.0, clamp ((0.35 + 0.65 * d1) / (0.35 + 0.65 * d0), 0.7, 1.3), lit);\n"
@@ -2531,7 +2533,7 @@ static const char hull_fs5[] =
 	"	float ao = 1.0 - uP.w * 0.5 * (1.0 - smoothstep (0.0, 0.03, d))\n"
 	"		 * smoothstep (0.5, 2.0, 0.03 / max (fwidth (d), 1e-5));\n"
 	"	vec3 col = vCol.rgb * tone * ratio * ao;\n"
-	"	float w = uQ.z * mix (0.4, 1.0, paint);\n"
+	"	float w = uQ.z * mix (0.4, 1.0, paint) * fd;\n"
 	"	float g = clamp (b.b * (0.5 + 0.5 * b2.b / max (uQ.y, 0.02)), 0.0, 1.0) * w;\n"
 	"	col *= (1.0 - 0.6 * g) / (1.0 - 0.6 * uQ.y * w);\n"
 	"	col *= mix (vec3 (1.0), vec3 (1.10, 0.97, 0.82), uQ.x * g);\n"
@@ -2790,21 +2792,37 @@ static void hull_attr (const struct HullFrame *f, int i) { }
  * or lit sign (a bright face of nearly pure colour, one channel all but
  * off, or a near-white face in the hangar, its light strips) keeps its flat
  * colour, while bright paint (an orange or a pink) is plated; a face
- * that hosts decals gets calm plating on a known ship, and is flat on a
- * station or an unknown model (its signs). */
+ * that hosts decals gets calm plating on a known ship, the full plating on
+ * a station (its lettering is big, and the weathering keeps a face of
+ * many tiles from looking like wallpaper), and is flat in the hangar or on
+ * an unknown model (their signs). */
 static int hull_paint5 (double p[][3], int n, const struct HullCtx *cx, int host,
 			const int rgb[3], float st[][2], struct HullFrame *hf)
 {
 	float sc, off[2];
 	int cls = hull_class_of_key (cx->key, &sc, off), i;
 	int mx = rgb[0] > rgb[1] ? rgb[0] : rgb[1], mn = rgb[0] < rgb[1] ? rgb[0] : rgb[1];
-	int calm = host && cls != HC_STATION && cls != HC_HANGAR && hull_key_listed (cx->key);
+	int calm = host && !HULL_BUILDING (cls) && hull_key_listed (cx->key);
+	int lamp, pure;
 	double light[3];
 
 	if (rgb[2] > mx) mx = rgb[2];
 	if (rgb[2] < mn) mn = rgb[2];
+	lamp = cls == HC_HANGAR && mn >= 208;
+	pure = mx > 191 && mn < 0.2 * mx;
+	/* but in the hangar a face of pure colour more than about half a tile
+	 * across (the band over the hall, the big hazard stripes, the docking
+	 * bay's doors; the small stripes and lamps are a third of one or less)
+	 * is paint, plated calm when it carries decals */
+	if (pure && cls == HC_HANGAR && cx->wok &&
+	    hull_obj_size (cx->w, n) >= 0.6 * hull_classes[cls].panel * sc) {
+		pure = 0;
+		calm |= host;
+	}
+	/* the hangar's floor and ceiling are its deck plating */
+	if (cls == HC_HANGAR && cx->wok && hull_obj_axis (cx->w, n) == HULL_DECK_AXIS) cls = HC_DECK;
 	light[0] = cx->light[0]; light[1] = cx->light[1]; light[2] = cx->light[2];
-	if ((mx > 191 && mn < 0.2 * mx) || (cls == HC_HANGAR && mn >= 208) || (host && !calm) ||
+	if (pure || lamp || (host && !calm && cls != HC_STATION) ||
 	    (!(cx->wok && hull_frame_obj (p, cx->w, n, light, hull_classes[cls].panel * sc, off, hf)) &&
 	     !hull_frame (p, n, light, cx->seed, hf))) {
 		hull_end ();
@@ -2849,8 +2867,9 @@ static int hull_paint (double p[][3], int n, int have_ctx, const struct HullCtx 
  * shape's plane in the model's frame (hull_plane_obj), and sent with the
  * clip w it had: the plating is then interpolated in perspective like any
  * other face's. A decal, and a shape that hosts decals, gets the calm
- * plating of the face it sits on; a lamp's colour, the station's and the
- * hangar's shapes (their signs) and an unlisted model's stay flat.
+ * plating of the face it sits on, so lettering reads as paint on the
+ * panels; a lamp's colour, the hangar's own shapes (its light strips and
+ * grey signs) and an unlisted model's stay flat.
  */
 static struct HullPlane hull_cplane;
 static int hull_cmode;		/* 2 shader, 1 fixed function */
@@ -2897,13 +2916,19 @@ static int hull_complex_begin (GLdouble c[][3], int n, void **data)
 	hull_cmode = 0;
 	if (!hull_cc_on || hull_style < 5 || flat_hulls || n < 3) return 0;
 	cls = hull_class_of_key (hull_cc.key, &sc, off);
-	if (cls == HC_STATION || cls == HC_HANGAR) return 0;
 	mx = rgb[0] & 255; mn = mx;
 	for (k = 1; k < 3; k++) {
 		if ((rgb[k] & 255) > mx) mx = rgb[k] & 255;
 		if ((rgb[k] & 255) < mn) mn = rgb[k] & 255;
 	}
 	if (mx > 191 && mn < 0.2 * mx) return 0;
+	/* the hangar's own shapes are its lamps and grey signs, kept flat; a
+	 * coloured one is the station's outside around the slot (the docking
+	 * bay's model carries the face it opens in): the station's plating */
+	if (cls == HC_HANGAR) {
+		if (mx - mn < 24 || mn >= 208) return 0;
+		cls = HC_STATION;
+	}
 	for (k = 0; k < 9; k++) M[k] = hull_cc.M[k];
 	for (k = 0; k < 3; k++) light[k] = hull_cc.light[k];
 	if (!hull_plane_obj ((const double (*)[3]) c, n, M, hull_cc.o, light,
@@ -2915,6 +2940,7 @@ static int hull_complex_begin (GLdouble c[][3], int n, void **data)
 		for (k = 0; k < 4; k++) hull_cw[j] += tessProjMatrix[3 + 4 * k] * tessModelMatrix[k + 4 * j];
 	}
 #ifdef HULL_SHADERS
+	if (cls == HC_STATION) calm = 0;	/* as hull_paint5 */
 	if (hull_program5 () && hull_begin5 (cls, calm)) hull_cmode = 2;
 #endif
 	if (!hull_cmode && !hull_cls[cls].failed && hull_fixed5 (cls)) hull_cmode = 1;

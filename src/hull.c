@@ -39,51 +39,75 @@ const struct HullProfile hull_profiles[HP_N] = {
  */
 const struct HullClass hull_classes[HC_N] = {
 /*	name		tile			prof		panel	contr seam  wear  chips bump  gloss shine ao    tint */
-	{ "generic",	"hull/generic.png",	HP_GENERIC,	8192,	0.16, 0.14, 0.40, 0.25, 0.90, 0.40, 24, 0.35, 0.15 },
+	{ "generic",	"hull/generic.png",	HP_GENERIC,	8192,	0.14, 0.14, 0.35, 0.20, 0.90, 0.40, 24, 0.35, 0.15 },
 	{ "police",	"hull/police.png",	HP_MILITARY,	10240,	0.12, 0.22, 0.06, 0.00, 0.60, 0.80, 56, 0.30, 0.00 },
-	{ "civilian",	"hull/civilian.png",	HP_SMALL,	8192,	0.18, 0.14, 0.65, 0.55, 0.90, 0.30, 20, 0.35, 0.30 },
-	{ "freighter",	"hull/freighter.png",	HP_TRADER,	12288,	0.22, 0.18, 0.85, 0.40, 1.20, 0.25, 16, 0.40, 0.40 },
-	{ "armour",	"hull/armour.png",	HP_MILITARY,	6144,	0.16, 0.20, 0.25, 0.10, 1.20, 0.50, 40, 0.45, 0.05 },
-	{ "fighter",	"hull/fighter.png",	HP_SMALL,	6144,	0.14, 0.16, 0.10, 0.00, 0.60, 0.65, 64, 0.30, 0.00 },
-	{ "station",	"hull/station.png",	HP_STATION,	32768,	0.18, 0.16, 0.50, 0.15, 1.10, 0.25, 14, 0.40, 0.30 },
-	{ "hangar",	"hull/hangar.png",	HP_STATION,	40960,	0.14, 0.14, 0.50, 0.05, 0.80, 0.20, 12, 0.40, 0.35 },
+	{ "civilian",	"hull/civilian.png",	HP_SMALL,	10240,	0.14, 0.14, 0.50, 0.45, 0.90, 0.30, 20, 0.35, 0.30 },
+	{ "freighter",	"hull/freighter.png",	HP_TRADER,	12288,	0.18, 0.18, 0.70, 0.40, 1.20, 0.25, 16, 0.40, 0.40 },
+	{ "armour",	"hull/armour.png",	HP_MILITARY,	8192,	0.14, 0.22, 0.25, 0.10, 1.20, 0.50, 40, 0.45, 0.05 },
+	{ "fighter",	"hull/fighter.png",	HP_SMALL,	6144,	0.16, 0.20, 0.10, 0.00, 0.70, 0.65, 64, 0.30, 0.00 },
+	{ "station",	"hull/station.png",	HP_STATION,	65536,	0.14, 0.16, 0.40, 0.15, 1.00, 0.25, 14, 0.40, 0.30 },
+	{ "hangar",	"hull/hangar.png",	HP_STATION,	49152,	0.12, 0.16, 0.30, 0.05, 0.80, 0.20, 12, 0.40, 0.35 },
+	{ "deck",	"hull/deck.png",	HP_STATION,	32768,	0.12, 0.16, 0.40, 0.10, 0.80, 0.30, 16, 0.40, 0.35 },
 };
 
 /*
- * Which profile (style 4) and class (style 5) a model gets, by the type
- * word the 68k keeps at object+90 (a byte offset into the model table, so
- * twice the model's number; FE2_HULL_LOG=1 prints the ones a session
- * meets, and says which are not listed here). One line per model; edit
- * freely. scale multiplies the class's panel size for that model. A model
- * not listed gets HP_GENERIC and HC_GENERIC. Parts a model draws (a hangar
- * door, a landing leg) carry its type word and so its class.
+ * Style 4: which profile a model gets, by the low byte of the type word the
+ * 68k keeps at object+90. This is the table --hull-style 4 always had,
+ * looked up the way it always was (a model of 256 or more takes the row of
+ * its low byte), so that style still gives the picture it gave. Style 5
+ * has its own table, hull_models[] below. A model not listed gets
+ * HP_GENERIC.
+ */
+static const struct { unsigned char type, prof; } hull_style4[] = {
+	{ 20, HP_SMALL }, { 32, HP_STATION }, { 40, HP_MILITARY }, { 42, HP_SMALL },
+	{ 44, HP_TRADER }, { 46, HP_MILITARY }, { 50, HP_TRADER }, { 56, HP_TRADER },
+	{ 66, HP_TRADER }, { 72, HP_STATION },
+};
+
+int hull_profile_of_key (unsigned int key)
+{
+	unsigned int i;
+	if (!HULL_KEY_OK (key)) return HP_GENERIC;
+	for (i = 0; i < sizeof hull_style4 / sizeof hull_style4[0]; i++)
+		if (hull_style4[i].type == (key & 255)) return hull_style4[i].prof;
+	return HP_GENERIC;
+}
+
+/*
+ * Style 5: which class a model gets, by the whole type word the 68k keeps
+ * at object+90 (a byte offset into the model table, so twice the model's
+ * number; FE2_HULL_LOG=1 prints the ones a session meets, and says which
+ * are not listed here). One line per model; edit freely. scale multiplies
+ * the class's panel size for that model. A model not listed gets
+ * HC_GENERIC. Parts a model draws (a hangar door, a landing leg) carry its
+ * type word and so its class.
  */
 static const struct {
 	unsigned short type;
-	unsigned char prof, cls;
+	unsigned char cls;
 	float scale;
 } hull_models[] = {
-	{ 20,  HP_SMALL,	HC_CIVIL,	1.0f },	/* Shuttle */
-	{ 32,  HP_STATION,	HC_STATION,	1.0f },	/* landing pad */
-	{ 40,  HP_MILITARY,	HC_FIGHTER,	1.0f },	/* Krait */
-	{ 42,  HP_SMALL,	HC_FIGHTER,	1.0f },	/* Gecko */
-	{ 44,  HP_TRADER,	HC_CIVIL,	1.0f },	/* Adder */
-	{ 46,  HP_MILITARY,	HC_POLICE,	1.0f },	/* Viper */
-	{ 50,  HP_TRADER,	HC_CIVIL,	1.0f },	/* Moray */
-	{ 52,  HP_TRADER,	HC_CIVIL,	1.0f },	/* Cobra Mk III */
-	{ 56,  HP_TRADER,	HC_ARMOUR,	1.0f },	/* Asp */
-	{ 58,  HP_SMALL,	HC_FIGHTER,	1.0f },	/* Eagle */
-	{ 66,  HP_TRADER,	HC_FREIGHT,	1.0f },	/* Python */
-	{ 70,  HP_TRADER,	HC_FREIGHT,	1.0f },	/* Anaconda */
-	{ 72,  HP_STATION,	HC_STATION,	1.0f },	/* orbital station, outside */
-	{ 80,  HP_STATION,	HC_HANGAR,	1.0f },	/* station interior part */
-	{ 82,  HP_STATION,	HC_STATION,	1.0f },	/* launch structure */
-	{ 84,  HP_STATION,	HC_HANGAR,	1.0f },	/* station interior part */
-	{ 96,  HP_STATION,	HC_STATION,	1.0f },	/* starport building */
-	{ 198, HP_STATION,	HC_STATION,	1.0f },	/* city */
-	{ 288, HP_STATION,	HC_HANGAR,	1.0f },	/* hangar interior */
-	{ 290, HP_STATION,	HC_HANGAR,	1.0f },	/* hangar interior part */
-	{ 294, HP_STATION,	HC_HANGAR,	1.0f },	/* hangar interior part */
+	{ 20,  HC_CIVIL,	1.0f },	/* Shuttle */
+	{ 32,  HC_STATION,	1.0f },	/* landing pad */
+	{ 40,  HC_FIGHTER,	1.0f },	/* Krait */
+	{ 42,  HC_FIGHTER,	1.0f },	/* Gecko */
+	{ 44,  HC_CIVIL,	1.0f },	/* Adder */
+	{ 46,  HC_POLICE,	1.0f },	/* Viper */
+	{ 50,  HC_CIVIL,	1.0f },	/* Moray */
+	{ 52,  HC_CIVIL,	1.0f },	/* Cobra Mk III */
+	{ 56,  HC_ARMOUR,	3.0f },	/* Asp: a big hull, so bigger plates */
+	{ 58,  HC_FIGHTER,	1.0f },	/* Eagle */
+	{ 66,  HC_FREIGHT,	1.0f },	/* Python */
+	{ 70,  HC_FREIGHT,	1.0f },	/* Transporter */
+	{ 72,  HC_STATION,	1.0f },	/* orbital station, outside */
+	{ 80,  HC_STATION,	1.0f },	/* orbital station, outside, close up */
+	{ 82,  HC_STATION,	1.0f },	/* launch structure */
+	{ 84,  HC_HANGAR,	1.0f },	/* docking bay seen through the slot */
+	{ 96,  HC_STATION,	1.0f },	/* starport building */
+	{ 198, HC_STATION,	1.0f },	/* city */
+	{ 288, HC_HANGAR,	1.0f },	/* hangar interior */
+	{ 290, HC_HANGAR,	1.0f },	/* hangar interior part */
+	{ 294, HC_HANGAR,	1.0f },	/* hangar interior part */
 };
 #define HULL_NMODELS	(int) (sizeof hull_models / sizeof hull_models[0])
 
@@ -94,12 +118,6 @@ static int hull_model_row (unsigned int key)
 	for (i = 0; i < HULL_NMODELS; i++)
 		if (hull_models[i].type == (key & 0xffff)) return i;
 	return -1;
-}
-
-int hull_profile_of_key (unsigned int key)
-{
-	int r = hull_model_row (key);
-	return r < 0 ? HP_GENERIC : hull_models[r].prof;
 }
 
 int hull_key_listed (unsigned int key)
@@ -618,9 +636,9 @@ void hull_bake_tile (int cls, const unsigned char *lum, int n, unsigned char *t0
 	for (y = 0; y < N; y++)
 		for (x = 0; x < N; x++) {
 			float u = (float) x / N, v = (float) y / N;
-			float stain = fbm (u, v, 5, seed), streak = vnoise (u, v, 80, 2, seed + 5);
-			float g = 0.9f * sstep (0.5f, 0.85f, stain)
-				+ 0.8f * sstep (0.6f, 0.9f, streak) * (0.3f + stain)
+			float stain = fbm (u, v, 5, seed), streak = vnoise (u, v, 32, 3, seed + 5);
+			float g = 0.45f * sstep (0.55f, 0.9f, stain)
+				+ 0.4f * sstep (0.6f, 0.95f, streak) * (0.3f + stain)
 				+ 1.1f * (1 - cav[y * N + x]);
 			GR[y * N + x] = clampf (c->wear * g, 0, 1);
 		}
@@ -784,10 +802,43 @@ int hull_frame (const double p[][3], int n, const double light[3], unsigned int 
  */
 #define HULL_MACRO	0.2071		/* the second scale, per tile */
 
+/* the square root of a face's area (for a quad, from its diagonals) */
+double hull_obj_size (const float w[][3], int n)
+{
+	double a[3], b[3], Nw[3];
+	int k;
+
+	if (n < 3) return 0;
+	for (k = 0; k < 3; k++) {
+		a[k] = w[n == 4 ? 2 : 1][k] - w[0][k];
+		b[k] = w[n == 4 ? 3 : 2][k] - w[n == 4 ? 1 : 0][k];
+	}
+	cross3 (a, b, Nw);
+	return sqrt (0.5 * sqrt (Nw[0] * Nw[0] + Nw[1] * Nw[1] + Nw[2] * Nw[2]));
+}
+
+/* the side of the model's box a face looks at most (a near tie goes to
+ * the first axis, so a face does not flicker between two) */
+int hull_obj_axis (const float w[][3], int n)
+{
+	double a[3], b[3], Nw[3];
+	int k, ax = 0;
+
+	if (n < 3) return -1;
+	for (k = 0; k < 3; k++) {
+		a[k] = w[n == 4 ? 2 : 1][k] - w[0][k];
+		b[k] = w[n == 4 ? 3 : 2][k] - w[n == 4 ? 1 : 0][k];
+	}
+	cross3 (a, b, Nw);
+	for (k = 1; k < 3; k++)
+		if (fabs (Nw[k]) > 1.02 * fabs (Nw[ax])) ax = k;
+	return fabs (Nw[ax]) > 0 ? ax : -1;
+}
+
 int hull_frame_obj (const double p[][3], const float w[][3], int n, const double light[3],
 		    double panel, const float off[2], struct HullFrame *f)
 {
-	double a[3], b[3], N3[3], Nw[3], T[3], B[3], Tr[3], Br[3], d[3], c[3] = { 0, 0, 0 };
+	double a[3], b[3], N3[3], T[3], B[3], Tr[3], Br[3], d[3], c[3] = { 0, 0, 0 };
 	double L[3], m[3], e[3], U[4][2], base[2], mb[2], t, best = 0, lmax = 0, l, sc, near = 1e30;
 	int i, j, k, ax, cu, cv;
 
@@ -809,17 +860,8 @@ int hull_frame_obj (const double p[][3], const float w[][3], int n, const double
 	unit3 (N3);
 	if (dot3 (N3, p[0]) > 0) for (k = 0; k < 3; k++) N3[k] = -N3[k];
 
-	/* the side of the model's box the face looks at most (a near tie goes
-	 * to the first axis, so a face does not flicker between two) */
-	for (k = 0; k < 3; k++) {
-		a[k] = w[n == 4 ? 2 : 1][k] - w[0][k];
-		b[k] = w[n == 4 ? 3 : 2][k] - w[n == 4 ? 1 : 0][k];
-	}
-	cross3 (a, b, Nw);
-	ax = 0;
-	for (k = 1; k < 3; k++)
-		if (fabs (Nw[k]) > 1.02 * fabs (Nw[ax])) ax = k;
-	if (!(fabs (Nw[ax]) > 0)) return 0;
+	/* the side of the model's box the face looks at most */
+	if ((ax = hull_obj_axis (w, n)) < 0) return 0;
 	cu = ax == 0 ? 2 : 0;
 	cv = ax == 1 ? 2 : 1;
 	for (i = 0; i < n; i++) {

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Turn a picture of hull plating into a hull detail tile for the GL renderer.
 
-    python3 -I tools/art/hull_tile.py IN.jpg OUT [--std 0.09] [--size 512]
+    python3 -I tools/art/hull_tile.py IN.jpg OUT [--std 0.09] [--size 512] [--cut]
 
 writes OUT.png (an 8-bit grey PNG: the per-class tiles of --hull-style 5
 are these, art/hull/*.png), OUT-2x2.png to look at the repeat, and at
@@ -69,6 +69,50 @@ def seam_error(v, n):
     return edge / inner if inner else 0
 
 
+def cut_seamless(v, n, feather=3):
+    """Seamless along x without ghosting: the copy shifted half a tile (whose
+    edges wrap) is kept near the tile's left and right edges and the original
+    in the middle, the two joined along the path of least difference down
+    each side (as in image quilting), softened over a few texels."""
+    s = [v[y * n + (x + n // 2) % n] for y in range(n) for x in range(n)]
+    err = [(v[i] - s[i]) ** 2 for i in range(n * n)]
+
+    def path(lo, hi):
+        # cheapest top-to-bottom path inside columns lo..hi, a column a row
+        cost = [err[x] for x in range(lo, hi)]
+        back = []
+        for y in range(1, n):
+            row, nb = [], []
+            for i in range(hi - lo):
+                j = min((cost[k], k) for k in (i - 1, i, i + 1) if 0 <= k < hi - lo)[1]
+                row.append(cost[j] + err[y * n + lo + i])
+                nb.append(j)
+            cost = row
+            back.append(nb)
+        i = min(range(hi - lo), key=lambda k: cost[k])
+        xs = [0] * n
+        xs[n - 1] = lo + i
+        for y in range(n - 1, 0, -1):
+            i = back[y - 1][i]
+            xs[y - 1] = lo + i
+        return xs
+
+    left, right = path(n // 16, n // 4), path(3 * n // 4, 15 * n // 16)
+    out = []
+    for y in range(n):
+        a, b = left[y], right[y]
+        for x in range(n):
+            # weight of the original: 0 outside the cuts, 1 inside
+            w = min(1.0, max(0.0, (x - a) / (2 * feather) + 0.5),
+                    max(0.0, (b - x) / (2 * feather) + 0.5))
+            out.append(w * v[y * n + x] + (1 - w) * s[y * n + x])
+    return out
+
+
+def transpose(v, n):
+    return [v[x * n + y] for y in range(n) for x in range(n)]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("src")
@@ -79,6 +123,9 @@ def main():
                     help="high-pass radius in texels (default 40 per 512 texels)")
     ap.add_argument("--size", type=int, default=512, choices=(256, 512, 1024, 2048),
                     help="tile side in texels")
+    ap.add_argument("--cut", action="store_true",
+                    help="make it seamless along a cut of least difference, not by "
+                         "blending (no ghosted double image; for pictures far from seamless)")
     a = ap.parse_args()
     global N
     N = a.size
@@ -103,10 +150,13 @@ def main():
     def blend(a, b, w):
         return mu + (w * (a - mu) + (1 - w) * (b - mu)) / math.sqrt(w * w + (1 - w) * (1 - w))
 
-    t = [blend(v[y * N + x], v[y * N + (x + N // 2) % N], wgt[x])
-         for y in range(N) for x in range(N)]
-    t = [blend(t[y * N + x], t[((y + N // 2) % N) * N + x], wgt[y])
-         for y in range(N) for x in range(N)]
+    if a.cut:
+        t = transpose(cut_seamless(transpose(cut_seamless(v, N), N), N), N)
+    else:
+        t = [blend(v[y * N + x], v[y * N + (x + N // 2) % N], wgt[x])
+             for y in range(N) for x in range(N)]
+        t = [blend(t[y * N + x], t[((y + N // 2) % N) * N + x], wgt[y])
+             for y in range(N) for x in range(N)]
 
     # high-pass as a ratio to the local mean, twice-blurred (near Gaussian);
     # the blur wraps, which is right now that the tile does

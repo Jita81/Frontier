@@ -34,7 +34,8 @@ struct HullProfile {
 extern const struct HullProfile hull_profiles[HP_N];
 
 /* Model key: bit 31 set when valid, the low 16 bits the model's type
- * word (object+90). Which profile style 4 gives a model. */
+ * word (object+90). Which profile style 4 gives a model (by the word's low
+ * byte, as that style always read it). */
 #define HULL_KEY_OK(k)	((unsigned int) (k) >> 31)
 int hull_profile_of_key (unsigned int key);
 
@@ -74,7 +75,13 @@ unsigned int hull_mix (unsigned int x);
  * class; a model not listed is HC_GENERIC.
  */
 enum { HC_GENERIC, HC_POLICE, HC_CIVIL, HC_FREIGHT, HC_ARMOUR, HC_FIGHTER,
-       HC_STATION, HC_HANGAR, HC_N };
+       HC_STATION, HC_HANGAR, HC_DECK, HC_N };
+/* HC_STATION and after are buildings and interiors: their decal hosts and
+ * complex shapes (signs) stay flat. HC_DECK is no model's class: it is the
+ * hangar's floor and ceiling (a hangar face that looks along the model's
+ * HULL_DECK_AXIS), see hull_obj_axis. */
+#define HULL_BUILDING(cls)	((cls) >= HC_STATION)
+#define HULL_DECK_AXIS	1
 
 struct HullClass {
 	const char *name;
@@ -100,6 +107,13 @@ int hull_key_listed (unsigned int key);
  * the layout of hull_bake. */
 void hull_bake_tile (int cls, const unsigned char *lum, int n, unsigned char *t0,
 		     unsigned char *t1, float *mean_grime);
+
+/* The axis of the model's frame (0 x, 1 y, 2 z) a face of n vertices w
+ * (model units) looks along most, a near tie going to the first; -1 if
+ * the face is degenerate. */
+int hull_obj_axis (const float w[][3], int n);
+/* the square root of the face's area, in model units; 0 if n < 3 */
+double hull_obj_size (const float w[][3], int n);
 
 /* Style 5 coordinates: as hull_frame, but the tile is laid on the model
  * itself, not on the face: w are the n vertices in the model's own frame
