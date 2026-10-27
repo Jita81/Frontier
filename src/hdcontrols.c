@@ -821,11 +821,21 @@ static void set_status (int warn, const char *fmt, const char *a, const char *b)
 	status_warn = warn;
 }
 
+/* a hand-edited controls.ini gave two actions one key or button */
+static int show_clash (void)
+{
+	int a, b;
+	if (!bindings_clash (&a, &b)) return 0;
+	set_status (1, "%s and %s share a key or button: rebind one.", binding_actions[a].label,
+		    binding_actions[b].label);
+	return 1;
+}
+
 static void changed (void)
 {
 	bindings_changed ();
 	if (bindings_save ()) {
-		if (!status_warn || !status[0]) set_status (0, "Saved to controls.ini.", NULL, NULL);
+		if (!show_clash () && (!status_warn || !status[0])) set_status (0, "Saved to controls.ini.", NULL, NULL);
 	} else
 		set_status (1, "Could not write controls.ini: the change lasts until the game quits.", NULL, NULL);
 	dirty = 1;
@@ -923,6 +933,7 @@ static void open_page (void)
 	hover = pressed = cap_action = -1;
 	modal = M_NONE;
 	status[0] = 0;
+	show_clash ();
 	paused_by_us = 0;
 	rate_before = rate_index ();
 	if (dbg)

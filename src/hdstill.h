@@ -37,6 +37,12 @@ void hdstill_frame (const unsigned char *raster, unsigned char *out,
  * GL_REPLACE and the colour white, as hdtext_draw leaves them. */
 void hdstill_draw (const unsigned int *pal, const unsigned int *ctrl_pal);
 
+/* The HD gauges' red thresholds, for hover text: the laser will not fire
+ * above LASER_CUT, the hull nears damage at HEAT_WARN.  The SPEED/HEAT
+ * plate covers ST x 201-233, y 169.8-174.6. */
+#define HDSTILL_LASER_CUT	0xf000
+#define HDSTILL_HEAT_WARN	0xc000
+
 /* The GL context is going away: drop this layer's textures. */
 void hdstill_forget (void);
 

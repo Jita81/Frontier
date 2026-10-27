@@ -68,6 +68,9 @@ int bindings_are_default (void);
  * skip, or -1 */
 int bindings_key_owner (int k, int skip);
 int bindings_mouse_owner (int mb, int skip);
+/* two actions sharing a key or button (a hand-edited controls.ini; the
+ * later one has it): 1 and their indices, or 0 */
+int bindings_clash (int *a, int *b);
 
 /* "Left click fires laser" */
 int bindings_left_fires_laser (void);
@@ -75,7 +78,8 @@ void bindings_set_left_fires_laser (int on);
 
 /* From keymap.c: a key that would go to the game as ST code phys (or -1).
  * Returns the code to send instead, -1 to send nothing, or -2 or less
- * for an action that is not a key (bindings_time_key). */
+ * for an action that is not a key (bindings_time_key).  A typing key is
+ * not moved in the game menu or out of a game, where it types. */
 int bindings_key_code (int phys);
 /* From keymap.c: a code of -2 or less from bindings_key_code is a time
  * action; this runs it */
