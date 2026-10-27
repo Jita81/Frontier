@@ -117,6 +117,7 @@ static unsigned int text_rgb (unsigned int c)
 #define H_REPLY_HEAD	0xc32da9c8u	/* a conversation's answers heading */
 #define H_START_TITLE	0x0f9ffb64u	/* the start menu's title */
 #define H_CASH		0x962530d2u	/* the cargo panel's cash label */
+#define H_DOCKED	0xf5e33b2bu	/* the console's flight status: docked */
 
 static const unsigned int prefs_heads[] = {
 	0xdfb0e074u, 0x0662faa5u, 0x9f9c4fd4u, 0xfa2e3895u, 0xd9893ebfu
@@ -131,8 +132,8 @@ struct button {
 	unsigned char used;	/* the layout replaced it */
 };
 
-enum { P_NONE, P_STATION, P_F3, P_PREFS, P_START, P_OTHER };
-static const char *const page_name[] = { "none", "station", "f3", "prefs", "start", "other" };
+enum { P_NONE, P_STATION, P_F3, P_PREFS, P_START, P_OTHER, P_DOCK };
+static const char *const page_name[] = { "none", "station", "f3", "prefs", "start", "other", "dock" };
 
 /* layers */
 enum { L_BACK, L_UNDER, L_OVER };
@@ -2819,6 +2820,71 @@ static void layout_prefs (const unsigned int *pal)
 	}
 }
 
+/*
+ * Docked, with the 3D view up (the hangar, or the ship from outside): the
+ * console says docked and nothing is written over the view but the speed
+ * line at its foot.  Station services are a click away on the console
+ * (its comms icon), and nothing on the view says so; here the name the
+ * speed line gives (what the ship is relative to) is set as a card at the
+ * view's top left, in the services page's style and place, and a click
+ * on it is a click on that icon.  The view itself is left alone.
+ */
+#define COMMS_X		57	/* the console's comms icon: station services when docked */
+#define COMMS_Y		193
+
+static int docked_view (void)
+{
+	int i, docked = 0;
+
+	if (n_btn || fr_ca_n) return 0;
+	for (i = 0; i < n_runs; i++) {
+		const struct hdtext_run *r = &runs[i];
+		if (r->hash == H_DOCKED && r->y >= CTRL_Y - 2 && r->y <= CTRL_Y + 4 && r->x0 >= 240)
+			docked = 1;
+		else if (ON_PAGE (r) && r->y < FOOT_Y)
+			return 0;
+	}
+	return docked;
+}
+
+static void layout_dock (void)
+{
+	struct hdtext_run *name = NULL;
+	struct elem *e;
+	char c[96];
+	unsigned char sp[96];
+	int i, k, n;
+	float x0 = 4, y0 = 4, y1 = 22, w;
+
+	/* the speed line's last part: "relative to: <name>" */
+	for (i = n_runs - 1; i >= 0 && !name; i--) {
+		struct hdtext_run *r = &runs[i];
+		if (!ON_PAGE (r) || r->y < FOOT_Y || r->x0 < 160) continue;
+		n = hdtext_chars (r, c, sp, sizeof (c));
+		for (k = 0; k < n - 1 && c[k] != ':'; k++)
+			;
+		if (k >= n - 1 || !hdtext_split (i, k + 1)) return;
+		n_runs = hdtext_runs (&runs);
+		runs[i].hide = 1;
+		name = &runs[i + 1];
+	}
+	if (!name) return;
+	style (name, HDT_LABEL, C_TEXT);
+	name->scale = 1.3f;
+	name->align = HDT_LEFT;
+	name->ax = x0 + 21;
+	name->maxw = 200;
+	centre_y (name, (y0 + y1) / 2);
+	w = hdtext_measure (name);
+	e = add (E_CARD, L_UNDER, x0, y0, name->ax + w + 13, y1);
+	e->icon = I_STATION;
+	e->flags = F_CHEVRON;
+	e->a = x0 + 10;
+	e->b = (y0 + y1) / 2;
+	e->c = 72;
+	e->hot = add_hot (e->x0, e->y0, e->x1, e->y1, COMMS_X, COMMS_Y, 1);
+}
+
 /* The start menu: each choice a card */
 static void layout_start (void)
 {
@@ -2911,7 +2977,9 @@ void hdui_frame (const unsigned char *raster, unsigned char *out,
 	n_runs = hdtext_runs (&runs);
 	find_buttons (raster);
 	page = classify ();
+	if (page == P_NONE && docked_view ()) page = P_DOCK;
 	switch (page) {
+	case P_DOCK: layout_dock (); if (!n_el) page = P_NONE; break;
 	case P_STATION: layout_station (raster, out); break;
 	case P_F3: layout_f3 (out); break;
 	case P_PREFS: layout_prefs (pal); break;
