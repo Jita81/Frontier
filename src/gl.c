@@ -3751,10 +3751,11 @@ static void draw_sky_strips (void)
 	int y1 = MIN (fb_h, (int) floor (cy + hy*0.5/t)), y0 = oy;
 	int r[4][4];
 
-	if (!STMemory_ReadByte (__DL60cf_hblank_do_pal)) {
+	if (!STMemory_ReadByte (__DL60cf_hblank_do_pal))
 		y0 = MAX (0, (int) ceil (cy - hy*0.5/t));
-		v3d_under = 1;
-	}
+	/* a 4:3 window with the panel: nothing to do */
+	if (x0 == ox && x1 == ox + ow && y0 == oy && y1 == oy + oh) return;
+	v3d_under = y0 < oy;
 	r[0][0] = x0;      r[0][1] = y0;      r[0][2] = ox - x0;           r[0][3] = y1 - y0;
 	r[1][0] = ox + ow; r[1][1] = y0;      r[1][2] = x1 - ox - ow;      r[1][3] = y1 - y0;
 	r[2][0] = ox;      r[2][1] = y0;      r[2][2] = ow;                r[2][3] = oy - y0;
@@ -3762,6 +3763,7 @@ static void draw_sky_strips (void)
 	wide_3d = 1;
 	v3d_x = x0; v3d_y = y0; v3d_w = x1 - x0; v3d_h = y1 - y0;
 	glMatrixMode (GL_PROJECTION);
+	glPushMatrix ();
 	glLoadIdentity ();
 	glFrustum (1.9*t*GL_NEAR_PLANE*(x0 - cx)/hx, 1.9*t*GL_NEAR_PLANE*(x1 - cx)/hx,
 		   t*GL_NEAR_PLANE*(y0 - cy)/hy, t*GL_NEAR_PLANE*(y1 - cy)/hy,
@@ -3779,11 +3781,35 @@ static void draw_sky_strips (void)
 		hull_end ();
 	}
 	sky_pass = 0;
+	/* Frame the picture: the strips under dark glass and a thin light rim
+	 * on the 4:3 edge, so a ship or a logo cut there reads as passing
+	 * behind the frame of a window, not as a glitch.  Each pass is one
+	 * quad over the whole ortho view, cut to its rect by the scissor. */
+	glPushAttrib (GL_COLOR_BUFFER_BIT | GL_ENABLE_BIT);
+	glEnable (GL_BLEND);
+	glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	glViewport (0, 0, fb_w, fb_h);
+	push_ortho ();
+	for (i = 0; i < 8; i++) {
+		int e = MAX (1, pic_h/400), *q = r[i & 3];
+		int x = (i & 3) == 1 ? ox + ow : ox - e, y = (i & 3) == 3 ? oy + oh : oy - e;
+		if (q[2] <= 0 || q[3] <= 0) continue;
+		if (i < 4) {
+			glScissor (q[0], q[1], q[2], q[3]);
+			glColor4f (0.02f, 0.04f, 0.08f, 0.45f);
+		} else {
+			if (i < 6) glScissor (x, oy, e, oh);
+			else glScissor (ox - e, y, ow + 2*e, e);
+			glColor4f (0.55f, 0.7f, 0.9f, 0.4f);
+		}
+		glRectf (0, 0, 320, 200);
+	}
+	pop_ortho ();
+	glPopAttrib ();
 	glDisable (GL_SCISSOR_TEST);
 	wide_3d = 0;
 	glMatrixMode (GL_PROJECTION);
-	glLoadIdentity ();
-	gluPerspective (36.5f, 1.9f, GL_NEAR_PLANE, GL_FAR_PLANE);
+	glPopMatrix ();
 	glMatrixMode (GL_MODELVIEW);
 	set_main_viewport ();
 }
