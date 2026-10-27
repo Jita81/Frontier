@@ -3271,6 +3271,25 @@ void Nu_PutPlanet ()
 	}
 }
 
+/*
+ * Edges for a filled circle of eye-space radius size at depth z: 32 (as
+ * before) up to about 80 pixels across the view, then one edge per 16
+ * pixels of rim, at most 256. The intro's blue star fills the screen
+ * (about 800 pixels radius at 1600 wide) and was a visible 32-gon.
+ */
+static int circle_slices (double size, double z)
+{
+	GLdouble pm[16];
+	double rpx;
+
+	if (z >= 0.0 || size <= 0.0) return 32;
+	glGetDoublev (GL_PROJECTION_MATRIX, pm);
+	rpx = size / -z * pm[0] * pic_w * 0.5;
+	if (rpx * 2.0 * M_PI / 16.0 <= 32.0) return 32;
+	if (rpx * 2.0 * M_PI / 16.0 >= 256.0) return 256;
+	return (int) (rpx * 2.0 * M_PI / 16.0);
+}
+
 void Nu_PutCircle ()
 {
 	if (use_renderer == R_OLD) return;
@@ -3300,7 +3319,7 @@ void Nu_DrawCircle (void **data)
 	/* billboard: this is used for distant planets/stars rendered as a
 	 * flat shaded dot, which must always face the camera. */
 	billboard_begin (v1[0], v1[1], v1[2]);
-	gluDisk (qobj, 0.0, size, 32, 1);
+	gluDisk (qobj, 0.0, size, circle_slices (size, v1[2]), 1);
 	billboard_end ();
 }
 
@@ -3420,20 +3439,37 @@ void Nu_PutOval ()
 	znode_wrlong (GetReg (REG_D6));
 }
 
-/* segments per circle: at the intro's largest (the orbit ring, about the
- * picture's width) a 64-gon is within a pixel of the circle at 1600 wide.
- * Two circles a shape stay well inside MAX_TESS_VERTICES. */
-#define OVAL_STEPS	64
+/* Segments per circle: one per 16 pixels of rim, from 64 up to 180. The
+ * orbit ring passes the camera wider than the picture, where a fixed
+ * 64-gon showed its corners. Two circles a shape (the ring) stay inside
+ * MAX_TESS_VERTICES. */
+#define OVAL_STEPS_MIN	64
+#define OVAL_STEPS_MAX	180
+
+static int oval_steps (const GLdouble c[3], double r)
+{
+	GLdouble pm[16];
+	double rpx, n;
+
+	if (-c[2] <= r) return OVAL_STEPS_MAX;	/* at or around the eye */
+	glGetDoublev (GL_PROJECTION_MATRIX, pm);
+	rpx = r / -c[2] * pm[0] * pic_w * 0.5;
+	n = rpx * 2.0 * M_PI / 16.0;
+	if (n <= OVAL_STEPS_MIN) return OVAL_STEPS_MIN;
+	if (n >= OVAL_STEPS_MAX) return OVAL_STEPS_MAX;
+	return (int) n;
+}
 
 void Nu_DrawComplexOval (void **data)
 {
 	GLdouble c[3], n[3], u[3], w[3], v[3];
 	double len, lxy, r;
-	int i, k;
+	int i, k, steps;
 
 	znode_rdvertexd (data, c);
 	znode_rdvertexd (data, n);
 	r = fabs ((double) znode_rdlong (data));
+	steps = oval_steps (c, r);
 
 	len = sqrt (n[0]*n[0] + n[1]*n[1] + n[2]*n[2]);
 	if (len <= 0.0) { n[0] = 0.0; n[1] = 0.0; n[2] = 1.0; len = 1.0; }
@@ -3454,12 +3490,12 @@ void Nu_DrawComplexOval (void **data)
 		gluTessEndContour (tobj);
 		gluTessBeginContour (tobj);
 	}
-	for (i = 0; i <= OVAL_STEPS; i++) {
-		double a = 2.0 * M_PI * (i % OVAL_STEPS) / OVAL_STEPS;
+	for (i = 0; i <= steps; i++) {
+		double a = 2.0 * M_PI * (i % steps) / steps;
 		double ca = r * cos (a), sa = r * sin (a);
 		for (k = 0; k < 3; k++) v[k] = c[k] + ca*u[k] + sa*w[k];
 		if (use_renderer == R_GLWIRE) glVertex3dv (v);
-		else if (i < OVAL_STEPS) push_contour_vertex (v);
+		else if (i < steps) push_contour_vertex (v);
 	}
 	if (use_renderer == R_GL) {
 		flush_contour ();
