@@ -14,6 +14,7 @@
 #include "hdback.h"
 #include "hdui.h"
 #include "art.h"
+#include "procfx.h"
 #include "../m68000.h"
 #include "../fixups.h"
 
@@ -57,7 +58,6 @@ extern unsigned short MainPalette[256];	/* ST $0rgb words, read only */
 enum kind { K_NONE, K_ORBITAL, K_SURFACE };
 static const char *kind_name[] = { "none", "orbital", "surface" };
 
-enum light { L_NONE, L_RED, L_ORANGE, L_YELLOW, L_WHITE, L_BLUE, L_MAX };
 static const char *light_name[] = { "none", "red", "orange", "yellow", "white", "blue" };
 
 struct where {
@@ -91,52 +91,6 @@ static unsigned int obj_ptr (int idx)
 	if (idx < 0 || idx >= OBJ_SLOTS || !sane (big)) return 0;
 	p = big + (short) rw (OBJ_OFFSETS + 2 * idx);
 	return sane (p) ? p : 0;
-}
-
-static int is_star (int model) { return model >= 0x98 && model <= 0xae; }
-
-static enum light star_light (int model)
-{
-	switch (model) {
-	case 0x98:		/* brown dwarf */
-	case 0x9a:		/* M dwarfs */
-	case 0x9c:		/* red giant */
-		return L_RED;
-	case 0x9e:		/* K */
-		return L_ORANGE;
-	case 0xa0:		/* G */
-		return L_YELLOW;
-	case 0xa2:		/* F */
-	case 0xa4:		/* A */
-	case 0xa8:		/* bright giant */
-	case 0xaa:		/* supergiant */
-	case 0xae:		/* white dwarf */
-		return L_WHITE;
-	case 0xa6:		/* B */
-	case 0xac:		/* blue supergiant */
-		return L_BLUE;
-	}
-	return L_NONE;
-}
-
-/* the class any port falls back to: a body outside the table, or one
- * with no picture of its own (a star, a surface port on a giant) */
-#define DEFAULT_CLASS "airless"
-
-/* the look of a body, by the model the game draws it with */
-static const char *body_class (int model)
-{
-	switch (model) {
-	case 0x7a: case 0x7c: case 0x80: return "airless";	/* bare rock, no air ($7c: asteroids) */
-	case 0x7e: case 0x82: return "rocky";	/* thin dusty air, desert ($82: hot rock, Sirius) */
-	case 0x84: return "corrosive";		/* thick hot or ammonia murk */
-	case 0x86: return "methane";		/* cold orange smog */
-	case 0x88: case 0x8a: case 0x90: return "terran";	/* oxygen, oceans, cloud ($90: Earth) */
-	case 0x8c: return "ice";		/* oxygen but frozen */
-	case 0x8e: return "ocean";		/* corrosive water world */
-	case 0x92: case 0x94: case 0x96: return "gasgiant";
-	}
-	return is_star (model) ? "star" : DEFAULT_CLASS;
 }
 
 static void locate (struct where *w)

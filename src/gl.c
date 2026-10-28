@@ -1255,6 +1255,23 @@ static void billboard_end ()
 	glPopMatrix ();
 }
 
+/* procfx glows: a square of half side h facing the eye at c, texture
+ * coordinates -1..1 across it */
+static void glow_quad (const float c[3], float h)
+{
+	static const float q[4][2] = { {-1, -1}, {1, -1}, {1, 1}, {-1, 1} };
+	int i;
+
+	billboard_begin (c[0], c[1], c[2]);
+	glBegin (GL_QUADS);
+	for (i = 0; i < 4; i++) {
+		glTexCoord2fv (q[i]);
+		glVertex2f (h * q[i][0], h * q[i][1]);
+	}
+	glEnd ();
+	billboard_end ();
+}
+
 /* Object-space position of the eye, i.e. the inverse modelview applied
  * to the origin (rotation plus uniform scale and translation assumed).
  * The scene's vertices arrive already in eye space, so this is normally
@@ -2188,6 +2205,30 @@ void Nu_DrawQuad (void **data)
 		glEnd ();
 	}
 }
+/* procfx corona: which star a disc belongs to, after the disc's data */
+static void put_star (void)
+{
+	struct procfx_star s;
+
+	s.model = 0;
+	if (use_renderer == R_GL) procfx_star_put (&s);
+	znode_wrblock (&s, sizeof s);
+}
+
+/* under the disc of radius size at v */
+static void draw_corona (void **data, const int v[3], float size)
+{
+	struct procfx_star s;
+	float c[3] = { v[0], v[1], v[2] }, h;
+
+	memcpy (&s, *data, sizeof s);
+	*data += sizeof s;
+	if (s.model && (h = procfx_corona_begin (&s, c, size > 0 ? size : 0)) > 0) {
+		glow_quad (c, h);
+		procfx_glow_end ();
+	}
+}
+
 void Nu_PutTwinklyCircle ()
 {
 	if (use_renderer == R_OLD) return;
@@ -2195,6 +2236,7 @@ void Nu_PutTwinklyCircle ()
 	znode_wrlong (GetReg (REG_D2));
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrcolor (GetReg (REG_D6));
+	put_star ();
 }
 void Nu_DrawTwinklyCircle (void **data)
 {
@@ -2213,6 +2255,7 @@ void Nu_DrawTwinklyCircle (void **data)
 	//printf ("%x (%x)\n", GetReg (2), isize);
 	
 	size = -0.002*((short)dreg2)*v1[2];
+	draw_corona (data, v1, size);
 	
 	/* billboard: always face the camera, otherwise this twinkle/star
 	 * dot degenerates to an invisible line when viewed edge-on. */
@@ -2324,6 +2367,8 @@ struct PlanetPrim {
 	double atm_scale[8];
 	unsigned short atm_col[8];
 	double atm_th[8];
+	/* procfx limb glow: colour times strength, width (procfx_limb_put) */
+	float limb[4];
 };
 
 #define PLANET_FACE_RES		512
@@ -3345,8 +3390,14 @@ void Nu_PutPlanet ()
 		p.flags = 0;
 		p.natm = 0;
 	}
+	/* procfx: a rim glow from the outer air layer, none where the ST
+	 * draws its own air */
+	memset (p.limb, 0, sizeof p.limb);
+	if (use_renderer == R_GL && p.natm)
+		procfx_limb_put (p.atm_col[p.natm-1], p.atm_scale[p.natm-1], p.centre, p.R, p.limb);
 	/* V-1: only where the ST draws it */
 	planet_atmosphere_band (&p);
+	if (p.natm) p.limb[3] = 0;
 
 	znode_wrlong (NU_PLANET);
 	/* S-7: through the checked writer */
@@ -3386,6 +3437,26 @@ static int circle_slices (double size, double z)
 	return (int) (rpx * 2.0 * M_PI / 16.0);
 }
 
+/* procfx limb glow: over the planet's sphere, under anything nearer */
+static void Nu_DrawPlanetGlow (void **data)
+{
+	struct PlanetPrim p;
+	double d, sun[3];
+	float c[3], h;
+
+	memcpy (&p, *data, sizeof p);
+	Nu_DrawPlanet (data);
+	d = sqrt (pdot (p.centre, p.centre));
+	if (p.limb[3] <= 0 || p.R <= 0 || d <= 0) return;
+	planet_fix_radius (&p, d);
+	planet_sun (&p, sun);
+	c[0] = p.centre[0]; c[1] = p.centre[1]; c[2] = -p.centre[2];
+	if ((h = procfx_limb_begin (p.limb, p.centre, p.R, sun)) > 0) {
+		glow_quad (c, h);
+		procfx_glow_end ();
+	}
+}
+
 void Nu_PutCircle ()
 {
 	if (use_renderer == R_OLD) return;
@@ -3393,6 +3464,7 @@ void Nu_PutCircle ()
 	znode_wrlong (GetReg (REG_D2));
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrcolor (GetReg (REG_D6));
+	put_star ();
 }
 void Nu_DrawCircle (void **data)
 {
@@ -3411,6 +3483,7 @@ void Nu_DrawCircle (void **data)
 	//printf ("%x (%x)\n", GetReg (2), isize);
 	
 	size = -0.002*((short)dreg2)*v1[2];
+	draw_corona (data, v1, size);
 	
 	/* billboard: this is used for distant planets/stars rendered as a
 	 * flat shaded dot, which must always face the camera. */
@@ -3798,7 +3871,7 @@ NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	&Nu_DrawComplexStartInner, // 9
 	&Nu_DrawComplexBezier,
 	&Nu_DrawTwinklyCircle,
-	&Nu_DrawPlanet,
+	&Nu_DrawPlanetGlow,
 	&Nu_DrawCircle,
 	&Nu_DrawCylinder,
 	&Nu_DrawBlob,

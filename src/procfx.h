@@ -15,9 +15,25 @@
  * object's own rotation, so the pattern turns with the band, and a thin
  * strip outside its outline fades the hard edge out.
  * Off: --flat-sky.
+ *
+ * Layer 2, the limb glow: a lit rim of the planet's own air colour round
+ * a planet seen from afar, where the game draws no air.  Off: --flat-limb.
+ *
+ * Layer 3, the corona: soft light and streamers round a star's disc, in
+ * the colour of its class, the disc drawn over it.  Off: --flat-stars.
  */
 #ifndef _PROCFX_H
 #define _PROCFX_H
+
+/* What a body is, by the model word the game draws it with (hdback.c picks
+ * its backdrops by these too). */
+enum light { L_NONE, L_RED, L_ORANGE, L_YELLOW, L_WHITE, L_BLUE, L_MAX };
+int is_star (int model);
+enum light star_light (int model);
+/* the class any port falls back to: a body outside the table, or one
+ * with no picture of its own (a star, a surface port on a giant) */
+#define DEFAULT_CLASS "airless"
+const char *body_class (int model);
 
 /* --flat-sky: the game's flat Milky Way band */
 extern int flat_sky;
@@ -39,6 +55,29 @@ void procfx_sky_end (void);
  * viewport under the tombstone (see endcard_frame in hdcontrols.c), faded
  * up from black by fade 0..1.  Changes nothing if the shader fails. */
 void procfx_endgame_backdrop (float fade);
+
+/* --flat-limb, --flat-stars */
+extern int flat_limb, flat_stars;
+
+/* Put side of the limb glow, in Nu_PutPlanet before the game's air test:
+ * col and scale are the outer air layer (0 for none), c and r the
+ * planet's view position and radius.  limb gets the rim's colour times
+ * its strength and its width as a share of the radius; all 0 for none. */
+void procfx_limb_put (int col, double scale, const double c[3], double r, float limb[4]);
+/* Draw side, after the planet's sphere: c, r and sun (unit) in view
+ * coordinates.  Returns the half side of the square to fill about the
+ * planet's centre with the program bound, 0 (nothing bound) for none. */
+float procfx_limb_begin (const float limb[4], const double c[3], double r, const double sun[3]);
+
+/* Put side of the corona, in the circle hcalls: which star the disc
+ * belongs to (model 0: none, or not a star). */
+struct procfx_star { int model; unsigned int seed; };
+void procfx_star_put (struct procfx_star *s);
+/* Draw side, before the disc of radius r at c (GL eye coordinates): as
+ * procfx_limb_begin. */
+float procfx_corona_begin (const struct procfx_star *s, const float c[3], float r);
+/* after the square of either */
+void procfx_glow_end (void);
 
 /* change_vidmode, before the GL context goes */
 void procfx_forget (void);
