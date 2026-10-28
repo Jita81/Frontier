@@ -833,6 +833,7 @@ static void draw_control_panel ()
 		hdback_frame (VideoRaster, hd_screen);
 		scr = hd_screen;
 		if (galmap == 2) galaxy_soften (VideoRaster, hd_screen);
+		if (use_renderer == R_GL) hdback_concourse (fb_w, fb_h, hd_screen);
 	}
 	
 	/* intro likes black at the bottom */

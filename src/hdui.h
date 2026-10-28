@@ -72,6 +72,10 @@ int hdui_clear_area (int x1, int y1, int x2, int y2);
  * Never called by an oracle replay (it writes the tape's values itself). */
 int hdui_mouse (short *ax, short *ay, int buttons);
 
+/* For hdback's concourse, this frame: 0 something is over the 3D view, 1
+ * nothing, 2 nothing and docked or landed; date: the console's, or "". */
+int hdui_concourse (const char **date);
+
 /* The GL context is going away: drop this layer's textures. */
 void hdui_forget (void);
 
