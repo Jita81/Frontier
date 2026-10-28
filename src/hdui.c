@@ -2689,6 +2689,7 @@ static void f3_panel (float right)
 #define SHEET_X		5	/* the sheet's left column: 20 px inside the glass at 1600 */
 #define SUB_DY		8	/* a value's second line */
 #define ROW_DY		10	/* the game's row pitch */
+#define LIST_DX		5	/* a list item's step in, its dash in the step */
 static int sheet_add[8], sheet_head[8], n_sheet_add;	/* our runs; a heading or not */
 
 static void sheet_text (const char *s, float x, float y, float right, int head)
@@ -2790,9 +2791,15 @@ static void f3_sheet (float right)
 				;
 			if (k < nrow) ty[i] = yh + ROW_DY * (k - foot + 1);
 			else if (runs[i].y >= list0 && runs[i].y < row_y[foot]) {
-				/* the list: rows of the same heading, on its pitch and in its face */
+				/* the list: on the heading's pitch; an item without a
+				 * value is a list item, a step in, not a row's name */
 				ty[i] = ylist + runs[i].y - list0;
-				if (!(runs[i].kind & HDT_K_COLON) && !is_head (&runs[i])) runs[i].role = HDT_LABEL;
+				if (!(runs[i].kind & HDT_K_COLON) && !is_head (&runs[i])) {
+					runs[i].role = HDT_BODY;
+					runs[i].align = HDT_LEFT;
+					runs[i].ax = (runs[i].x0 <= 10 ? SHEET_X : runs[i].x0) + LIST_DX;
+					runs[i].maxw = right - 4 - runs[i].ax;
+				}
 			}
 		}
 		sheet_text ("Fitted equipment", SHEET_X, yh, right, 1);
@@ -2903,7 +2910,11 @@ static void layout_f3 (unsigned char *out)
 			}
 		} else if ((r->kind & HDT_K_COLON) || (r->role == HDT_LABEL && r->x0 < right))
 			style (r, HDT_LABEL, C_TEXT2);
-		else
+		else if (r->role == HDT_BODY && r->x0 < right) {
+			style (r, HDT_BODY, C_TEXT);
+			quad (L_BACK, r->ax - LIST_DX + 0.5f, r->y + r->dy + 3.25f, r->ax - 2.5f, r->y + r->dy + 3.75f,
+			      C_ACCENT, 0.9f);
+		} else
 			/* a value on the sheet reads as its neighbours do: the
 			 * condensed figures are the panel's; a second line is quieter */
 			style (r, r->role == HDT_DESC ? HDT_DESC : HDT_BODY, r->role == HDT_DESC ? C_TEXT2 : C_TEXT);
