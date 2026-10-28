@@ -20,6 +20,9 @@
 /* --pixel-text: keep the original 8x8 bitmap font */
 extern int pixel_text;
 
+/* DrawStr starts a string (the glyphs that follow are its) */
+void hdtext_string (void);
+
 /* The galaxy map is up (not under --classic-ui): 1, its names are found
  * though the grid and other names cross them; 2 (the GL renderer), they
  * also get a halo and are kept apart (declutter). */
@@ -53,6 +56,11 @@ void hdtext_draw (const unsigned char *font, const unsigned int *pal,
 
 /* The GL context is going away: drop the glyph textures. */
 void hdtext_forget (void);
+
+/* A lit sign's lettering (hdback's concourse): s in the title face, centred
+ * in w x h, as alpha textures, the letters and their glow; two slots, each
+ * kept until asked for something else.  0: none (not on Apple). */
+int hdtext_sign (int slot, const char *s, int w, int h, unsigned int *tex, unsigned int *glow);
 
 /* The design system's text roles */
 enum {
@@ -105,6 +113,11 @@ struct hdtext_run {
 /* After hdtext_frame: the runs it found, top to bottom and left to right
  * on each line, for hdui to style.  Valid until the next hdtext_frame. */
 int hdtext_runs (struct hdtext_run **runs);
+
+/* After hdtext_frame: drop the game's frame counter (its F key) from the
+ * runs.  Returns how many of its glyphs were dropped; then call
+ * hdtext_runs again. */
+int hdtext_hide_counter (void);
 
 /* Run r's glyphs as ASCII ('?' for anything else), and whether a word
  * space comes before each; returns how many (at most max). */

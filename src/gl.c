@@ -48,6 +48,7 @@ typedef void (*_GLUfuncptr)();
 #include "hull.h"
 #include "art.h"
 #include "hdback.h"
+#include "fx.h"
 #include "procfx.h"
 #include "bindings.h"
 #include "hdtip.h"
@@ -265,6 +266,7 @@ static void change_vidmode ()
 	hdui_forget ();
 	controls_page_forget ();
 	hdback_forget ();
+	fx_forget ();
 	if (galaxy_tex) {
 		glDeleteTextures (1, &galaxy_tex);
 		galaxy_tex = 0;
@@ -571,6 +573,7 @@ int DrawStr (int xpos, int ypos, int col, unsigned char *str, bool shadowed)
 	y = ypos;
 	
 	if ((y > 192) || (y<0)) return x;
+	hdtext_string ();
 set_line:
 	screen = LOGSCREEN2;
 	screen += SCREENBYTES_LINE * y;
@@ -832,6 +835,7 @@ static void draw_control_panel ()
 		hdback_frame (VideoRaster, hd_screen);
 		scr = hd_screen;
 		if (galmap == 2) galaxy_soften (VideoRaster, hd_screen);
+		if (use_renderer == R_GL) hdback_concourse (fb_w, fb_h, hd_screen);
 	}
 	
 	/* intro likes black at the bottom */
@@ -1179,8 +1183,15 @@ enum NuPrimitive {
 	NU_ATMOSPHERE,
 	NU_SKYBAND,
 	NU_COMPLEX_OVAL,
+	NU_FX,		/* fx.c's tag for the primitive that follows */
 	NU_MAX
 };
+/* the next primitive belongs to a weapon, missile, explosion...: say which (fx.c) */
+static void put_fx (void)
+{
+	unsigned int tag[3];
+	if (use_renderer == R_GL && fx_tag_for (tag)) { znode_wrlong (NU_FX); znode_wrblock (tag, sizeof (tag)); }
+}
 
 static inline void end_node ()
 {
@@ -1345,12 +1356,14 @@ void Nu_InsertZNode ()
 
 void Nu_3DViewInit ()
 {
+	fx_frame_begin ();
 	queued_string_pos = 0;
 	//printf ("3dviewinit()\n");
 	znode_buf_pos = 0;
 	//printf ("%d bytes object data\n", obj_data_pos);
 	obj_data_pos = 0;
 	detached_pos = 0;
+	procfx_sky_seen = 0;
 
 	//add_node (&znode_start, 0);
 	znode_start = NULL;
@@ -1571,6 +1584,7 @@ static void put_complex_start_4real ()
 		znode_wrlong (NU_SKYBAND);
 		znode_wrblock (complex_sky_m, sizeof complex_sky_m);
 	}
+	put_fx ();
 	znode_wrlong (NU_COMPLEX_START);
 	znode_wrcolor (complex_col_rgb444);
 	hull_put_cctx ();
@@ -2473,7 +2487,7 @@ static void hull_end (void)
 /* Plating for this polygon: 1 with st filled in, 0 to draw it flat */
 static int hull_use (double p[][3], int n, float st[][2])
 {
-	if (flat_hulls || !hull_coords (p, n, st)) {
+	if (flat_hulls || fx_tagged () || !hull_coords (p, n, st)) {	/* fx objects stay unplated */
 		hull_end ();
 		return 0;
 	}
@@ -3629,7 +3643,7 @@ static int hull_paint (double p[][3], int n, int have_ctx, const struct HullCtx 
 	 * hull_models[]: anything else (the intro's titles and banners,
 	 * text, planets, buildings, missiles, debris, cargo) is drawn flat,
 	 * as with --flat-hulls */
-	if (flat_hulls || !have_ctx || !hull_key_listed (cx->key)) {
+	if (flat_hulls || fx_tagged () || !have_ctx || !hull_key_listed (cx->key)) {
 		hull_end ();
 		return 0;
 	}
@@ -3709,7 +3723,7 @@ static int hull_complex_begin (GLdouble c[][3], int n, void **data)
 	if (hull_ctx != 2) return 0;	/* no model being read: no word after it */
 	calm = hull_chain || hull_decal_host (data);
 	hull_chain = calm;
-	if (!hull_cc_on || hull_style < 5 || flat_hulls || n < 3) return 0;
+	if (!hull_cc_on || hull_style < 5 || flat_hulls || fx_tagged () || n < 3) return 0;
 	cls = hull_class_of_key (hull_cc.key, &sc, off);
 	mx = mn = c8[0];
 	for (k = 1; k < 3; k++) {
@@ -3826,6 +3840,7 @@ static void hull_complex_end (void)
 void Nu_PutTriangle ()
 {
 	if (use_renderer == R_OLD) return;
+	put_fx ();
 	znode_wrlong (NU_TRIANGLE);
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrvertex (GetReg (REG_A1)+4);
@@ -3844,6 +3859,7 @@ void Nu_DrawTriangle (void **data)
 	znode_rdvertexf (data, v3);
 	znode_rdcolorv (data, rgb);
 	if (hull_ctx) hull_rdctx (data, &cx, 3);
+	if (fx_tri (v1, v2, v3)) return;
 	glColor3ub (rgb[0], rgb[1], rgb[2]);
 	if (use_renderer == R_GLWIRE) {
 		glBegin (GL_LINE_STRIP);
@@ -3873,6 +3889,8 @@ void Nu_DrawTriangle (void **data)
 void Nu_PutQuad ()
 {
 	if (use_renderer == R_OLD) return;
+	if (use_renderer == R_GL && fx_laser_quad ()) return;	/* a laser beam: fx draws it */
+	put_fx ();	/* a missile's body: flat, never plated */
 	znode_wrlong (NU_QUAD);
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrvertex (GetReg (REG_A1)+4);
@@ -3923,6 +3941,38 @@ void Nu_DrawQuad (void **data)
 		if (hull_glow) hull_glow_draw (p, 4);
 	}
 }
+/* procfx corona: which star a disc belongs to, after the disc's data */
+static void put_star (void)
+{
+	struct procfx_star s = { 0, 0 };
+
+	if (use_renderer == R_GL) procfx_star_put (&s);
+	znode_wrblock (&s, sizeof s);
+}
+
+/* under the disc of radius size at v: a square facing the eye, texture
+ * coordinates -1..1 across it */
+static void draw_corona (void **data, const int v[3], float size)
+{
+	static const float q[4][2] = { {-1, -1}, {1, -1}, {1, 1}, {-1, 1} };
+	struct procfx_star s;
+	float c[3] = { v[0], v[1], v[2] }, h;
+	int i;
+
+	memcpy (&s, *data, sizeof s);
+	*data += sizeof s;
+	if (!s.model || (h = procfx_corona_begin (&s, c, size > 0 ? size : 0)) <= 0) return;
+	billboard_begin (c[0], c[1], c[2]);
+	glBegin (GL_QUADS);
+	for (i = 0; i < 4; i++) {
+		glTexCoord2fv (q[i]);
+		glVertex2f (h * q[i][0], h * q[i][1]);
+	}
+	glEnd ();
+	billboard_end ();
+	procfx_corona_end ();
+}
+
 void Nu_PutTwinklyCircle ()
 {
 	if (use_renderer == R_OLD) return;
@@ -3930,6 +3980,7 @@ void Nu_PutTwinklyCircle ()
 	znode_wrlong (GetReg (REG_D2));
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrcolor (GetReg (REG_D6));
+	put_star ();
 }
 void Nu_DrawTwinklyCircle (void **data)
 {
@@ -3948,6 +3999,7 @@ void Nu_DrawTwinklyCircle (void **data)
 	//printf ("%x (%x)\n", GetReg (2), isize);
 	
 	size = -0.002*((short)dreg2)*v1[2];
+	draw_corona (data, v1, size);
 	
 	/* billboard: always face the camera, otherwise this twinkle/star
 	 * dot degenerates to an invisible line when viewed edge-on. */
@@ -5331,10 +5383,12 @@ static int circle_slices (double size, double z)
 void Nu_PutCircle ()
 {
 	if (use_renderer == R_OLD) return;
+	put_fx ();
 	znode_wrlong (NU_CIRCLE);
 	znode_wrlong (GetReg (REG_D2));
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrcolor (GetReg (REG_D6));
+	put_star ();
 }
 /* The galaxy map's stars and markers: a camera-facing disc whose alpha
  * rises from 0 at r0 to a at r1, holds to r2 and falls to 0 at r3 (a
@@ -5399,6 +5453,10 @@ void Nu_DrawCircle (void **data)
 	dreg2 = znode_rdlong (data);
 	znode_rdvertex (data, v1);
 	znode_rdcolor (data, &r, &g, &b);
+	if (fx_circle (v1, dreg2, r, g, b)) {	/* an explosion's fireball */
+		*data += sizeof (struct procfx_star);	/* put_star's bytes, unread */
+		return;
+	}
 	
 	glColor3ub (r, g, b);
 
@@ -5406,6 +5464,7 @@ void Nu_DrawCircle (void **data)
 	//printf ("%x (%x)\n", GetReg (2), isize);
 	
 	size = -0.002*((short)dreg2)*v1[2];
+	draw_corona (data, v1, size);
 	if (galmap == 1) {
 		/* a star as a glow in its class's colour, white hot at the
 		 * middle; the selected one (the game's big disc) as a ring */
@@ -5655,6 +5714,7 @@ void Nu_DrawOval (void **data)
 void Nu_PutBlob ()
 {
 	if (use_renderer == R_OLD) return;
+	put_fx ();
 	znode_wrlong (NU_BLOB);
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrlong (GetReg (REG_D0));
@@ -5672,6 +5732,7 @@ void Nu_DrawBlob (void **data)
 	split_rgb444i (c, &r, &g, &b);
 	rad = znode_rdlong (data) & 0xffff;
 	edges = rad+4;
+	if (fx_blob (v1, rad, r >> 24, g >> 24, b >> 24)) return;
 	
 	if (galmap == 1 && rad >= 3) {
 		/* the map: where you are (magenta) as a ring, a nebula as a
@@ -5735,6 +5796,7 @@ void Nu_DrawPoint (void **data)
 void Nu_PutLine ()
 {
 	if (use_renderer == R_OLD) return;
+	put_fx ();
 	znode_wrlong (NU_LINE);
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrvertex (GetReg (REG_A1)+4);
@@ -5947,7 +6009,8 @@ NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	NULL,	/* NU_SUBTREE, see Nu_DrawPrimitive */
 	&Nu_DrawAtmosphereFaded,
 	&Nu_DrawSkyBand,
-	&Nu_DrawComplexOval
+	&Nu_DrawComplexOval,
+	&fx_draw_tag
 };
 
 /*
@@ -5972,6 +6035,7 @@ static void Nu_DrawPrimitive (void *data)
 			continue;
 		}
 		nu_drawfuncs[fnum] (&data);
+		if (fnum != NU_FX) fx_prim_done (fnum == NU_COMPLEX_START ? 1 : fnum == NU_COMPLEX_END ? 2 : 0);
 	}
 }
 
@@ -6136,8 +6200,47 @@ static int draw_wide_flight (void)
  * come from the planet primitive itself - see draw_ground_dome.
  */
 
+/* the next frame: its clear, the backdrops under it */
+static void begin_frame (void)
+{
+	/* frontier background color... */
+	if (use_renderer == R_GLWIRE) {
+		glClearColor (0,0,0,0);
+	} else {
+		set_gl_clear_col (MainRGBPalette[fe2_bgcol]);
+	}
+	
+	glMatrixMode (GL_MODELVIEW);
+	if (pic_w < fb_w || pic_h < fb_h) {
+		/* black bars beside the picture, the sky colour inside it */
+		GLfloat sky[4];
+		glGetFloatv (GL_COLOR_CLEAR_VALUE, sky);
+		glClearColor (0, 0, 0, 0);
+		glClear (GL_COLOR_BUFFER_BIT);
+		glClearColor (sky[0], sky[1], sky[2], sky[3]);
+		glScissor (pic_x, pic_y, pic_w, pic_h);
+		glEnable (GL_SCISSOR_TEST);
+		glClear (GL_COLOR_BUFFER_BIT);
+		glDisable (GL_SCISSOR_TEST);
+	} else {
+		glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	}
+	if (use_renderer == R_GL) hdback_draw (fb_w, fb_h);
+	glLoadIdentity ();
+	
+	set_main_viewport ();
+	/* a 2D page's backdrop, under everything the next frame draws */
+	hdui_backdrop (MainRGBPalette, fe2_bgcol);
+	if (galmap == 1) galmap_backdrop ();
+	/* the game-over backdrop, under the tombstone */
+	endcard_frame ();
+}
+
+static int stalled;	/* host updates since the last frame */
+
 void Nu_DrawScreen ()
 {
+	stalled = 0;
 	/* build RGB palettes */
 	_BuildRGBPalette (MainRGBPalette, MainPalette, len_main_palette);
 	_BuildRGBPalette (CtrlRGBPalette, CtrlPalette, 16);
@@ -6172,6 +6275,7 @@ void Nu_DrawScreen ()
 		if (t) hull_log_frame (t);
 	}
 	hull_end ();
+	fx_frame_end ();	/* beams and flashes that outlive the frame they were put in */
 	if (hangar_faces) hull_hangar_grade ();
 	//fprintf (stderr, "\n");
 
@@ -6190,35 +6294,20 @@ void Nu_DrawScreen ()
 	
 	SDL_GL_SwapBuffers ();
 
-	/* frontier background color... */
-	if (use_renderer == R_GLWIRE) {
-		glClearColor (0,0,0,0);
-	} else {
-		set_gl_clear_col (MainRGBPalette[fe2_bgcol]);
-	}
-	
-	glMatrixMode (GL_MODELVIEW);
-	if (pic_w < fb_w || pic_h < fb_h) {
-		/* black bars beside the picture, the sky colour inside it */
-		GLfloat sky[4];
-		glGetFloatv (GL_COLOR_CLEAR_VALUE, sky);
-		glClearColor (0, 0, 0, 0);
-		glClear (GL_COLOR_BUFFER_BIT);
-		glClearColor (sky[0], sky[1], sky[2], sky[3]);
-		glScissor (pic_x, pic_y, pic_w, pic_h);
-		glEnable (GL_SCISSOR_TEST);
-		glClear (GL_COLOR_BUFFER_BIT);
-		glDisable (GL_SCISSOR_TEST);
-	} else {
-		glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-	}
-	if (use_renderer == R_GL) hdback_draw (fb_w, fb_h);
-	glLoadIdentity ();
-	
-	set_main_viewport ();
-	/* a 2D page's backdrop, under everything the next frame draws */
-	hdui_backdrop (MainRGBPalette, fe2_bgcol);
-	if (galmap == 1) galmap_backdrop ();
-	/* the game-over backdrop, under the tombstone */
-	endcard_frame ();
+	begin_frame ();
+}
+
+/* The game draws no frames while it waits for a name typed on the save
+ * page (it draws each letter straight to the screen) or a file chosen:
+ * there, from the third host update with no frame, show the screen as it
+ * is each update.  Only the HD layers' picture of it is redrawn: nothing
+ * writes ST memory (the queued strings, which would, hold it back). */
+void Screen_Stalled (void)
+{
+	if (stalled < 3) stalled++;	/* no further: it would wrap */
+	if (stalled < 3 || queued_string_pos || !hdui_still_page ()) return;
+	draw_control_panel ();
+	glFlush ();
+	SDL_GL_SwapBuffers ();
+	begin_frame ();
 }

@@ -56,7 +56,7 @@ static int rw (p68K a) { return STMemory_ReadWord (a) & 0xffff; }
 static unsigned int rl (p68K a) { return (unsigned int) STMemory_ReadLong (a); }
 
 static unsigned int last_pl;
-static int last_sh = -1, last_hull = -1, was_flying;
+static int last_sh = -1, last_hull = -1, was_flying, log_on = -1;
 static Uint32 flash_at, sh_hit, hull_hit, last_hit, last_ms;
 static float flash_a, card_a;
 
@@ -246,9 +246,11 @@ void hddamage_draw (int fb_w, int fb_h)
 			flash_a = hull < last_hull ? 0.55f : 0.35f;
 		}
 	}
-	{ static int dbg = -1; if (dbg < 0) dbg = getenv ("FE2_DMG_LOG") != NULL;	/* DEBUG-TEMP */
-	  if (dbg && (sh != last_sh || hull != last_hull || flying != was_flying || pl != last_pl))
-		fprintf (stderr, "DMG t=%u pl=%x fly=%d sh=%d/%d hull=%d raw=%d ht=%d\n", now, pl, flying, sh, rw (pl + OBJ_SHIELD_MAX), hull, rw (pl + OBJ_HULL), hull_t); }
+	/* FE2_DMG_LOG set: each change of the figures to stderr, to check
+	 * them against the F3 page */
+	if (log_on < 0) log_on = getenv ("FE2_DMG_LOG") != NULL;
+	if (log_on && (sh != last_sh || hull != last_hull || flying != was_flying || pl != last_pl))
+		fprintf (stderr, "DMG t=%u pl=%x fly=%d sh=%d/%d hull=%d raw=%d ht=%d\n", now, pl, flying, sh, rw (pl + OBJ_SHIELD_MAX), hull, rw (pl + OBJ_HULL), hull_t);
 	last_pl = pl, last_sh = sh, last_hull = hull, was_flying = flying;
 	if (!flying) {
 		card_a = 0;

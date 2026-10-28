@@ -43,6 +43,7 @@
 #include "hdui.h"
 #include "hdtext.h"
 #include "hdback.h"
+#include "hdstill.h"
 #include "../m68000.h"
 #include "../fixups.h"
 
@@ -119,7 +120,9 @@ static unsigned int text_rgb (unsigned int c)
 #define H_REPLY_HEAD	0xc32da9c8u	/* a conversation's answers heading */
 #define H_START_TITLE	0x0f9ffb64u	/* the start menu's title */
 #define H_CASH		0x962530d2u	/* the cargo panel's cash label */
+#define H_FILE_UP	0xc908770cu	/* a file page's first entry: the parent directory */
 #define H_DOCKED	0xf5e33b2bu	/* the console's flight status: docked */
+#define H_LANDED	0xbb34a54du	/* ... landed */
 
 static const unsigned int prefs_heads[] = {
 	0xdfb0e074u, 0x0662faa5u, 0x9f9c4fd4u, 0xfa2e3895u, 0xd9893ebfu
@@ -134,8 +137,8 @@ struct button {
 	unsigned char used;	/* the layout replaced it */
 };
 
-enum { P_NONE, P_STATION, P_F3, P_PREFS, P_START, P_OTHER, P_DOCK };
-static const char *const page_name[] = { "none", "station", "f3", "prefs", "start", "other", "dock" };
+enum { P_NONE, P_STATION, P_F3, P_PREFS, P_START, P_OTHER, P_DOCK, P_FILE, P_INFO };
+static const char *const page_name[] = { "none", "station", "f3", "prefs", "start", "other", "dock", "file", "info" };
 
 /* layers */
 enum { L_BACK, L_UNDER, L_OVER };
@@ -163,6 +166,7 @@ enum { I_NONE, I_LAUNCH, I_SHIP, I_DOC, I_MARKET, I_SHIELD, I_CHIP, I_WRENCH, I_
 #define F_ROUND		1024	/* button: a circle */
 #define F_OFF		2048	/* button: not there now (dimmed, no hover) */
 #define F_VIEW		4096	/* glass: a 3D view's card, darkened to its edges */
+#define F_BLINK		8192	/* quad: blinks (a caret) */
 
 struct elem {
 	unsigned char kind, layer, icon, state;	/* state: 0, 1 hover, 2 pressed */
@@ -220,6 +224,11 @@ static int layer_on (void)
 #else
 	return 0;
 #endif
+}
+
+int hdui_layer_on (void)
+{
+	return layer_on () && !pixel_text;
 }
 
 /* FE2_HDUI_DUMP=dir: write each new picture (the screen, its palettes and
@@ -1593,6 +1602,7 @@ static void draw_elems (int layer)
 		if (e->pressed) state = 2;
 		switch (e->kind) {
 		case E_QUAD:
+			if ((e->flags & F_BLINK) && (frame_no & 32)) break;
 			rect_px (PX (e->x0), PY (e->y0), PX (e->x1), PY (e->y1), e->rgb, e->alpha);
 			break;
 		case E_FRAME:
@@ -1788,13 +1798,18 @@ static struct hdtext_run *label_of (const struct button *b, int lo, int hi)
 
 static int classify (void)
 {
-	int i, k, icons = 0, heads = 0, colons = 0, station = 0, f3 = 0, title = 0;
+	int i, k, icons = 0, icon_x = -1, heads = 0, colons = 0, station = 0, f3 = 0, title = 0;
 
 	for (i = 0; i < n_runs; i++) {
 		const struct hdtext_run *r = &runs[i];
 		if (!ON_PAGE (r)) continue;
 		if (r->hash == H_START_TITLE) return P_START;
-		if ((r->kind & HDT_K_ICON) && r->chr0 == 0x61) icons++;
+		if ((r->kind & HDT_K_ICON) && r->chr0 == 0x61) {
+			/* a menu's choices: one column of them */
+			if (icons++ && r->x0 != icon_x) icon_x = -2;
+			if (icon_x != -2) icon_x = r->x0;
+		}
+		if (r->hash == H_FILE_UP && r->x0 == 10 && r->y == 30) return P_FILE;
 		if (r->hash == H_STATS_HEAD && r->y >= 134 && r->y <= 142 && r->ink0 < 60) station = 1;
 		if (r->hash == H_STATS_ROOM && r->y >= 144 && r->y <= 152 && r->ink0 <= 2) station = 1;
 		if (r->hash == H_STATS_HEAD && r->ink0 >= 180) f3 = 1;
@@ -1804,7 +1819,7 @@ static int classify (void)
 			if (r->hash == prefs_heads[k]) heads++;
 		if ((r->kind & HDT_K_COLON) && r->y <= 12) colons++;
 	}
-	if (icons >= 3) return P_START;
+	if (icons >= 3 || (icons == 2 && icon_x >= 0)) return P_START;
 	if (station) return P_STATION;
 	if (f3) return P_F3;
 	for (i = 0; i < fr_ca_n; i++)
@@ -1812,7 +1827,40 @@ static int classify (void)
 		    fr_ca[i][3] >= 120 && fr_ca[i][3] <= 140)
 			return P_F3;
 	if (heads >= 2 || (n_btn >= 10 && colons >= 2)) return P_PREFS;
+	/* a star's information page: its keys in the panel (the market's
+	 * is on no other) */
+	{
+		struct hdstill_panel p;
+		if (hdstill_panel (&p) && p.slot[7] == G_MARKET) return P_INFO;
+	}
 	return P_NONE;
+}
+
+/* A star's information page: its text, under the picture of its bodies,
+ * on a card */
+static void layout_info (unsigned char *out)
+{
+	int i, x, y, x0 = ST_W, y0 = CTRL_Y, x1 = -1, y1 = -1;
+
+	for (i = 0; i < n_runs; i++) {
+		struct hdtext_run *r = &runs[i];
+		if (!ON_PAGE (r)) continue;
+		style (r, HDT_BODY, C_TEXT);
+		if (r->ink0 < x0) x0 = r->ink0;
+		if (r->ink1 > x1) x1 = r->ink1;
+		if (r->y < y0) y0 = r->y;
+		if (r->y + 8 > y1) y1 = r->y + 8;
+	}
+	if (x1 < 0) return;
+	x0 = x0 < 7 ? 0 : x0 - 7;
+	x1 = x1 + 7 > ST_W ? ST_W : x1 + 7;
+	y0 = y0 < 4 ? 0 : y0 - 4;
+	y1 = y1 + 4 > CTRL_Y ? CTRL_Y : y1 + 4;
+	add (E_CARD, L_UNDER, x0, y0, x1, y1);
+	/* the page's black there: the card */
+	for (y = y0; y < y1; y++)
+		for (x = x0; x < x1; x++)
+			if (out[y * ST_W + x] == 0) out[y * ST_W + x] = 255;
 }
 
 /* The station's pages.  Across the top a header bar: the station's emblem
@@ -1834,12 +1882,13 @@ static int classify (void)
 #define BODY_Y0		15.5f	/* the cards' top */
 #define FOOT_Y		150	/* a page's foot: go back, more */
 
-/* A box at the foot of a page with its label (go back): a pill.  Go back
- * is moved to the column's left edge (dx from the game's place, when
- * left is set); a click on it still goes to the game's box. */
-static void foot_pill (struct button *b, int left)
+/* A box at the foot of a page with its label right of it, hi pixels at
+ * most (go back): a pill.  Go back is moved to the column's left edge (dx
+ * from the game's place, when left is set); a click on it still goes to
+ * the game's box. */
+static struct elem *foot_pill (struct button *b, int hi, int left)
 {
-	struct hdtext_run *lab = label_of (b, 6, 16);
+	struct hdtext_run *lab = label_of (b, 6, hi);
 	int back = lab && lab->hash == H_GO_BACK;
 	float dx = back && left ? COL_X0 + 1 - (b->x - 2.5f) : 0;
 	float x1 = (lab ? lab->ink1 + 5 : b->x + 14) + dx;
@@ -1856,6 +1905,7 @@ static void foot_pill (struct button *b, int left)
 		lab->dx = dx;
 	}
 	b->used = 1;
+	return e;
 }
 
 static float my_d0, my_s0, my_k = 1;
@@ -2929,7 +2979,7 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 	for (i = 0; i < n_runs; i++)
 		if (ON_PAGE (&runs[i]) && runs[i].y >= FOOT_Y && runs[i].x0 >= 118 && runs[i].hash == H_MORE && !more) odd_more = 1;
 	for (i = 0; i < n_btn; i++)
-		if (btn[i].x >= 118 && btn[i].y >= FOOT_Y) foot_pill (&btn[i], !odd_more && !inplace);
+		if (btn[i].x >= 118 && btn[i].y >= FOOT_Y) foot_pill (&btn[i], 16, !odd_more && !inplace);
 	for (i = 0; i < n_runs; i++) {
 		struct hdtext_run *r = &runs[i];
 		if (!ON_PAGE (r) || r->y < FOOT_Y || r->x0 < 118) continue;
@@ -3434,6 +3484,80 @@ static void layout_prefs (const unsigned int *pal)
 	}
 }
 
+/* Load and save: a directory's files in columns of rows, and on the save
+ * page the name to save under (a box the game clears black while it is
+ * typed in, rubbing letters out in black) with its OK */
+#define NAME_X0		138	/* the name's box, ST */
+#define NAME_X1		193
+
+static void layout_file (const unsigned char *raster, unsigned char *out, const unsigned int *pal)
+{
+	struct hdtext_run *name = NULL;
+	struct elem *e;
+	int i, x, y, ok = 0, counter = 0, box = raster[14 * ST_W + NAME_X1 - 4];
+	float title_x = 10;
+
+	/* the game's frame counter (its F key) over the title: not shown */
+	if ((counter = hdtext_hide_counter ())) n_runs = hdtext_runs (&runs);
+	e = add (E_GLASS, L_BACK, 1.5f, 1.5f, 318.5f, 166.5f);
+	e->flags = F_ALL;
+	for (i = 0; i < n_btn; i++)
+		if (btn[i].y < 10) {
+			foot_pill (&btn[i], 24, 0)->icon = I_CHECK;
+			ok = 1;
+		}
+	for (i = 0; i < n_runs; i++) {
+		struct hdtext_run *r = &runs[i];
+		if (!ON_PAGE (r) || r->role || hide_bg (r)) continue;
+		if (r->y <= 8 && ok && r->x0 >= NAME_X0 && r->x0 < NAME_X1) {
+			if (box != BG && (pal[r->col] & 0xffffff) == (pal[box] & 0xffffff)) r->hide = 1;
+			else name = r;
+		} else if (r->y <= 8) {
+			/* the title, from the left */
+			style (r, HDT_TITLE, C_TEXT);
+			r->align = HDT_LEFT;
+			r->ax = title_x;
+			r->maxw = (ok ? NAME_X0 - 4 : 230) - title_x;
+			title_x += hdtext_measure (r) + 1.6f;
+		} else if (r->y < 28) {
+			style (r, HDT_BODY, C_TEXT2);
+		} else if ((r->x0 - 10) % 62 == 0) {
+			/* a file (or the way up): the game's columns are 62 wide */
+			e = add (E_ROW, L_UNDER, r->x0 - 4, r->y - 1, r->x0 + 57, r->y + 9);
+			e->flags = F_HOVERONLY;
+			e->hot = add_hot (e->x0, e->y0, e->x1, e->y1, r->x0 + 4, r->y + 3, 1);
+			style (r, HDT_BODY, r->col == 3 ? C_TEXT2 : C_TEXT);
+			r->align = HDT_LEFT;
+			r->maxw = 56;
+		}
+	}
+	/* what is left of the counter */
+	if (counter)
+		for (y = 2; y <= 13; y++)
+			for (x = 0; x < NAME_X0; x++)
+				if (out[y * ST_W + x] != BG) out[y * ST_W + x] = 255;
+	if (!ok) return;
+	for (y = 4; y <= 15; y++)
+		memset (out + y * ST_W + NAME_X0 + 2, 255, NAME_X1 - NAME_X0 - 4);
+	e = add (E_ROW, L_UNDER, NAME_X0, 2.5f, NAME_X1, 16.5f);
+	e->hot = add_hot (e->x0, e->y0, e->x1, e->y1, 155, 9, 1);
+	e->pressed = box != BG;	/* being typed in: focused */
+	if (name) {
+		style (name, HDT_BODY, C_TEXT);
+		name->align = HDT_LEFT;
+		name->maxw = NAME_X1 - 3 - name->ink0;
+	}
+	if (e->pressed) {
+		float w = name ? hdtext_measure (name) : 0, cx;
+		if (name && w > name->maxw) w = name->maxw;
+		cx = name ? name->ink0 + w + 0.8f : NAME_X0 + 4;
+		e = add (E_QUAD, L_OVER, cx, 4.5f, cx + 0.8f, 14);
+		e->rgb = C_ACCENT;
+		e->alpha = 1;
+		e->flags = F_BLINK;
+	}
+}
+
 /*
  * Docked, with the 3D view up (the hangar, or the ship from outside): the
  * console says docked and nothing is written over the view but the speed
@@ -3520,9 +3644,11 @@ static void svc_seen (const struct hdtext_run *lab, int tx, int ty)
 	svc_label[i][o] = 0;
 }
 
-static int docked_view (void)
+/* nothing over the 3D view but the console.  0: not bare; 2: bare and
+ * the console says docked (or landed); 1: bare. */
+static int bare_view (int landed)
 {
-	int i, docked = 0;
+	int i, st = 1;
 
 	if (n_btn) return 0;
 	/* a page's 3D view; not a comms face down in the console */
@@ -3530,12 +3656,13 @@ static int docked_view (void)
 		if (fr_ca[i][1] < CTRL_Y - 2) return 0;
 	for (i = 0; i < n_runs; i++) {
 		const struct hdtext_run *r = &runs[i];
-		if (r->hash == H_DOCKED && r->y >= CTRL_Y - 2 && r->y <= CTRL_Y + 4 && r->x0 >= 240)
-			docked = 1;
+		if ((r->hash == H_DOCKED || (landed && r->hash == H_LANDED)) &&
+		    r->y >= CTRL_Y - 2 && r->y <= CTRL_Y + 4 && r->x0 >= 240)
+			st = 2;
 		else if (ON_PAGE (r) && r->y < FOOT_Y)
 			return 0;
 	}
-	return docked;
+	return st;
 }
 
 /* a card on the view: icon, label (run i), chevron; a click goes to the
@@ -3561,6 +3688,39 @@ static void dock_card (float x0, float y0, float x1, float y1, int icon, int i, 
 	h = add_hot (e->x0, e->y0, e->x1, e->y1, COMMS_X, COMMS_Y, 1);
 	e->hot = h;
 	if (h >= 0) hot[h].chain = chain;
+}
+
+/* For hdback's concourse (hdui.h), from this frame */
+static int conc_ok;
+static char conc_date[32];
+
+static void concourse_scan (void)
+{
+	char c[32];
+	unsigned char sp[32];
+	int i, k, n, o = 0;
+
+	conc_ok = page == P_DOCK ? 2 : page == P_NONE ? bare_view (1) : 0;
+	for (i = 0; conc_ok == 2 && i < n_runs; i++) {
+		const struct hdtext_run *r = &runs[i];
+		/* the console's clock and date: the date after the first space */
+		if (r->y < CTRL_Y - 2 || r->y > CTRL_Y + 4 || r->x0 >= 60 || r->letters < 8) continue;
+		n = hdtext_chars (r, c, sp, sizeof (c));
+		for (k = 1; k < n && !sp[k]; k++)
+			;
+		for (; k < n && o < (int) sizeof (conc_date) - 2; k++) {
+			if (o && sp[k]) conc_date[o++] = ' ';
+			conc_date[o++] = c[k];
+		}
+		break;
+	}
+	conc_date[o] = 0;
+}
+
+int hdui_concourse (const char **date)
+{
+	*date = conc_date;
+	return conc_ok;
 }
 
 static void layout_dock (void)
@@ -3707,6 +3867,9 @@ static void layout_start (void)
 			lab[i]->dx = 3;
 		}
 	}
+	for (i = 0; i < n_runs; i++)
+		if (runs[i].hash == H_START_TITLE) break;
+	if (i == n_runs) return;	/* a menu in flight (comms): the HUD under it stays */
 	for (i = 0; i < n_runs; i++) {
 		struct hdtext_run *r = &runs[i];
 		if (!ON_PAGE (r) || r->role) continue;
@@ -3754,6 +3917,7 @@ void hdui_frame (const unsigned char *raster, unsigned char *out,
 	n_el = n_hot = 0;
 	page = P_NONE;
 	if (!layer_on () || pixel_text) {
+		conc_ok = 0;
 		n_live = stable = n_runs = n_btn = 0;
 		page_key = 0;
 		page_log (out, pal);
@@ -3764,17 +3928,20 @@ void hdui_frame (const unsigned char *raster, unsigned char *out,
 	n_runs = hdtext_runs (&runs);
 	find_buttons (raster);
 	page = classify ();
-	if (page == P_NONE && docked_view ()) page = P_DOCK;
+	if (page == P_NONE && bare_view (0) == 2) page = P_DOCK;
+	concourse_scan ();	/* before layout_dock adds its runs */
 	switch (page) {
 	case P_DOCK: layout_dock (); if (!n_el) page = P_NONE; break;
 	case P_STATION: layout_station (raster, out); break;
 	case P_F3: layout_f3 (out); break;
 	case P_PREFS: layout_prefs (pal); break;
 	case P_START: layout_start (); break;
+	case P_FILE: layout_file (raster, out, pal); break;
+	case P_INFO: layout_info (out); break;
 	}
 	for (i = 0; i < n_btn; i++)
 		if (btn[i].used) take_out (raster, out, &btn[i]);
-	if (page == P_STATION || page == P_F3 || page == P_PREFS) text_bg_out (raster, out);
+	if (backdrop_page ()) text_bg_out (raster, out);
 	page_bg = pal[BG];
 	key = page == P_NONE ? 0 : layout_key ();
 	if (key != page_key) {
@@ -3840,12 +4007,17 @@ int hdui_mouse (short *ax, short *ay, int buttons)
 
 static int backdrop_page (void)
 {
-	return page == P_STATION || page == P_F3 || page == P_PREFS;
+	return page == P_STATION || page == P_F3 || page == P_PREFS || page == P_FILE;
 }
 
 int hdui_owns_page (void)
 {
 	return layer_on () && !pixel_text && page_key && backdrop_page ();
+}
+
+int hdui_still_page (void)
+{
+	return layer_on () && page == P_FILE;
 }
 
 void hdui_backdrop (const unsigned int *pal, int bgcol)
