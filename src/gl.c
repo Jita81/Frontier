@@ -5359,7 +5359,7 @@ static int circle_slices (double size, double z)
 #define A6_HYPER_LEFT	722	/* long: transit time left */
 #define A6_HYPER_TOTAL	13882	/* long: the transit's time */
 #define HYPERCLOUD	0xba	/* the cloud's model word (hull_model_key) */
-#define BLOB_HYPER	0x80000000u	/* on a disc's colour or radius: one of the cloud's */
+#define BLOB_HYPER	0x80000000u	/* on a blob's colour, a circle's tag word: one of the cloud's */
 
 static int hyper_hd (void)
 {
@@ -5377,9 +5377,10 @@ void Nu_PutCircle ()
 	if (use_renderer == R_OLD) return;
 	put_fx ();
 	znode_wrlong (NU_CIRCLE);
-	znode_wrlong ((GetReg (REG_D2) & ~BLOB_HYPER) | hyper_tag ());
+	znode_wrlong (GetReg (REG_D2));	/* untouched: its high word is the radius's fraction */
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrcolor (GetReg (REG_D6));
+	znode_wrlong (hyper_tag ());
 }
 /* The galaxy map's stars and markers: a camera-facing disc whose alpha
  * rises from 0 at r0 to a at r1, holds to r2 and falls to 0 at r3 (a
@@ -5520,13 +5521,14 @@ static int here_n;
 void Nu_DrawCircle (void **data)
 {
 	int v1[3];
-	unsigned int dreg2, isize;
+	unsigned int dreg2, isize, hyper;
 	float size;
 	int r, g, b;
 
 	dreg2 = znode_rdlong (data);
 	znode_rdvertex (data, v1);
 	znode_rdcolor (data, &r, &g, &b);
+	hyper = znode_rdlong (data);
 	if (fx_circle (v1, dreg2, r, g, b)) return;	/* an explosion's fireball */
 	
 	glColor3ub (r, g, b);
@@ -5554,7 +5556,7 @@ void Nu_DrawCircle (void **data)
 		}
 		return;
 	}
-	if (dreg2 & BLOB_HYPER) {
+	if (hyper) {
 		hyper_glow (v1, size, (unsigned char) r / 255.0f, (unsigned char) g / 255.0f, (unsigned char) b / 255.0f);
 		return;
 	}
