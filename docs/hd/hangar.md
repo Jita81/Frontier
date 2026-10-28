@@ -8,7 +8,9 @@ cards keep their Frost style.
 
 Two blank signs in the picture are lit at run time:
 
-- the yellow sign shows the port's name, the same text the station card shows;
+- the yellow sign shows the port's own name, read from the port's object
+  in game memory: the same name the station services page carries in its
+  title (at a surface port too, where the speed line names the world);
 - the blue sign shows the game date.
 
 On a launch, or a switch to the external view, the concourse cross-fades
@@ -26,30 +28,33 @@ No new switch. Each of these gives exactly the old 3D bay:
 | `--old-renderer` | No concourse (`gl.c` calls it only for `R_GL`). |
 | `FE2_HD_BACKDROP=0` | No concourse and no page backdrop; the other HD layers stay on. |
 
-`FE2_HD_DEBUG=1` adds `view=$xx` (the 3D view mode) to hdback's location line.
-
 ## When it shows
 
-`hdback_concourse` runs once a frame in `gl.c`, after the 3D view and the
-hangar grade, and before the control panel (hdui's cards and the game's
-raster). It draws only when all of these hold:
+`hdback_concourse` runs once a frame in `gl.c`'s `draw_control_panel`
+(GL only), after the HD frame hooks have edited the screen and before it
+is uploaded, so it lies over the 3D view and under the console and cards.
+It draws only when all of these hold:
 
-1. hdback can place the location (`locate`: an orbital or surface port it knows).
-2. `hdui_concourse` says yes. hdui reads the console's own label runs, the
-   same way it lays out the dock card:
-   - the status is **Docked** or **Landed**;
-   - the view label is **Front View** or **Rear View**;
-   - no game buttons are up;
-   - the page is the plain 3D view or the station-home page;
-   - the speed line names the port (`Relative to:`).
+1. hdback can place the location (`locate`: an orbital or surface port it
+   knows; not a rough landing).
+2. `hdui_concourse` returns 2. hdui decides it from this frame's own label
+   runs, the way it finds the dock card:
+   - the page is the plain 3D view or the station-home page (no game
+     buttons, no page text over the view, no comms face on it);
+   - the console's status is **Docked** or **Landed**.
 3. The 3D view mode byte (A6+706) is 0 (front) or 1 (rear).
 4. The space mode byte (A6+536) has bit 0 set, so a 3D view fills the frame.
 
-If any of these fails the concourse fades out. It covers the 3D view and
-the bars beside it at 16:9, down to the top of the console.
+When 2 fails because a page or a map has opened (hdui returns 0), the
+concourse is gone in that same frame: it never shows behind another
+screen. When the view is still a bare 3D view (a launch has started, or
+the external view is up) it cross-fades out over 0.3 s.
 
 The labels are matched by hash (FNV-1a 32 over lowercase letters and
 digits). No game text is in the source.
+
+While the concourse is mostly faded in, the game's gunsight is cleared
+from the screen over the signs and the middle door.
 
 ## The pictures
 
@@ -65,31 +70,16 @@ the same in all four; only what shows through the glass ceiling changes.
 
 Each picture is 1280x720 (16:9), a JPEG under 350 KB.
 
-### Manifest
+### Where things are
 
-`art/hangar/manifest.txt` says where things are in each picture and which
-picture goes where. It has two kinds of line.
-
-```
-pic FILE CEIL  yx0 yy0 yx1 yy1 yx2 yy2 yx3 yy3  bx0 by0 bx1 by1 bx2 by2 bx3 by3
-use KIND CLASS LIGHT FILE [R G B]
-```
-
-**`pic` lines**
-
-- `CEIL` is where the ceiling opening ends, as a fraction of the height.
-  The tint fades out over the next 0.08.
-- The 16 numbers are the yellow sign's corners, then the blue sign's. Each
-  sign is given TL, TR, BR, BL as x,y fractions of the picture, measured
-  on the art.
-
-**`use` lines**
-
-- They match hdback's location key: kind `orbital`/`surface`, the world
-  class, and the star's light.
-- The first match wins, and `*` matches anything.
-- `R G B` multiplies the ceiling opening, so a few pictures cover many
-  worlds.
+A small static table in `hdback.c` (`cpics`) gives, for each picture, where
+its ceiling opening ends (a fraction of the height; the tint fades out over
+the next 0.08) and the two signs' corners (TL, TR, BR, BL as x,y fractions
+of the picture, measured on the art). There is no manifest file for the
+concourse: `conc_pick` chooses the picture from hdback's own location key
+(orbital or surface, the world class, the star's light), and the tint of
+the ceiling opening is the page backdrops' star-light grading, read from
+`art/backdrops/manifest.txt` as before.
 
 ## The signs
 
@@ -111,8 +101,7 @@ Off Apple, `hdtext_sign` returns 0 and the signs are left blank.
 
 ## Life
 
-A slow, faint band of light sweeps along the wall's light strips every 9 s
-(additive, peak 10 %). Nothing in the picture moves, and there are no people.
+None: nothing in the picture moves, and there are no people.
 
 ## Making the art
 

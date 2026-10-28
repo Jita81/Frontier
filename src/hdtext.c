@@ -1805,11 +1805,7 @@ done:
 	return sign[slot].tex != 0;
 }
 #else
-int hdtext_sign (int slot, const char *s, int w, int h, unsigned int *tex, unsigned int *glow)
-{
-	(void) slot; (void) s; (void) w; (void) h; (void) tex; (void) glow;
-	return 0;
-}
+int hdtext_sign (int slot, const char *s, int w, int h, unsigned int *tex, unsigned int *glow) { return 0; }
 
 float hdtext_measure (const struct hdtext_run *r)
 {
