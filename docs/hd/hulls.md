@@ -85,8 +85,13 @@ and the reading of the model's frame). The art is in `art/hull/`.
      nearly pure colour (the brightest channel above 191 and the darkest
      below a fifth of it). In the hangar, near-white faces (all channels
      at 208 or more, the light strips) also stay flat.
-   - **Large pure-colour faces in the hangar are plated.** These are paint:
-     the band over the hall, the hazard stripes and the doors. The test is
+   - **Markings stay flat.** On the station, its bay and its hangar a
+     yellow face (red and green up, blue all but off, by their ratios so a
+     stripe in shade is still one) is a marking: the hazard stripes, the
+     floor markings and the yellow signs. They are paint, not hull, and
+     are drawn flat like the other signs (`hull_marking`).
+   - **Large pure-colour faces in the hangar are plated.** These are the
+     doors (the red bay doors) and other big painted plates. The test is
      a face whose longest side is at least 0.4 of a tile. The lamps and
      small plaques are under a quarter of a tile, so they stay flat.
    - **The hangar's floor and ceiling use the `deck` class.** These are the
@@ -111,7 +116,8 @@ and the reading of the model's frame). The art is in `art/hull/`.
      light. Before it, those faces took the hangar's tile and no graze, and
      a slanting chamfer smeared the hangar's tile into wooden boards.
    - **Complex shapes** take the plane of the face they lie on:
-     - The hangar's own shapes (grey signs and lamps) stay flat.
+     - The hangar's own shapes (grey signs and lamps) and markings stay
+       flat.
      - A coloured one, which is the station's outside around the slot,
        takes the station plating. (These still go by colour, not by the
        bay box: a grey complex shape out of the box stays flat.)
@@ -164,6 +170,12 @@ and the reading of the model's frame). The art is in `art/hull/`.
   - `hull: model M face S (a6 A) moves, tile bound to it` the first time a
     face moved by its vertices is bound, and `... changes shape, drawn
     flat` the first time one is drawn flat
+  - `hull: model M face S rgb R,G,B <why>, drawn flat` once for each face
+    of a listed model kept flat by its colour or its decals: a marking
+    (`sign/marking (yellow paint)`), a sign (`sign/marking (hosts
+    lettering or a decal)`), a lamp, window or lit sign, and each complex
+    shape (`complex shape: sign/marking or decal`; its S is the shape's
+    point count and colour, as it has no face number)
 
 ## Classes
 
@@ -401,8 +413,10 @@ Known limits:
   before the draw call), so a face near the threshold can change between
   flat and plated as the light changes. The bay-box rule above is
   geometric and does not.
-- Signs are treated by colour too: a large yellow sign is plated as paint,
-  a white or grey one stays flat.
+- Signs are treated by colour and by their decals: a yellow sign is a
+  marking and a sign that carries lettering hosts decals, and both stay
+  flat. A large sign of another pure colour with no lettering of its own
+  would be plated as paint.
 - Only the station has a graze fade. A hangar wall seen edge on from the
   deck could still stripe.
 - A part's plates are its own, so they do not line up with the wall

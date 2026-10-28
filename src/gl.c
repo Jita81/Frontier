@@ -2325,8 +2325,9 @@ static int hull_use (double p[][3], int n, float st[][2])
  * The 68k side only adds a few bytes to each triangle and quad in the
  * stream, when a style is on: the model's key, the face's own seed and the
  * light. The key is found as in hull_model_key. FE2_HULL_LOG=1 prints each
- * model number the first time it is seen, how long each texture took to make, and
- * the time the 3D view takes to draw, every 300 frames.
+ * model number the first time it is seen, how long each texture took to make,
+ * each face of a listed model drawn flat and why (a sign or marking, a lamp:
+ * hull_log_flat), and the time the 3D view takes to draw, every 300 frames.
  */
 struct HullCtx {
 	unsigned int key, seed;
@@ -3074,11 +3075,41 @@ static void hull_attr (const struct HullFrame *f, int i) { }
  * class's plating in fixed function (st filled in), 0 flat. A lamp, window
  * or lit sign (a bright face of nearly pure colour, one channel all but
  * off, or a near-white face in the hangar, its light strips) keeps its flat
- * colour, while bright paint (an orange or a pink) is plated; a face
+ * colour, while bright paint (an orange or a pink) is plated; a marking
+ * on the station, its bay or its hangar (hull_marking) is flat; a face
  * that hosts decals gets calm plating on a known ship, the full plating on
  * a station (its lettering is big, and the weathering keeps a face of
  * many tiles from looking like wallpaper), and is flat in the hangar (its
  * signs). Only a model listed in hull_models[] gets here (hull_paint). */
+/* FE2_HULL_LOG: why a face (or a complex shape) of a listed model is drawn
+ * flat by its colour or its decals, once per face, so the log explains
+ * the screen */
+static void hull_log_flat (unsigned int key, unsigned int face, const int rgb[3], const char *why)
+{
+	static unsigned int seen[1024][2];
+	static int nseen;
+	int i;
+
+	for (i = 0; i < nseen; i++)
+		if (seen[i][0] == key && seen[i][1] == face) return;
+	if (nseen == 1024) return;
+	seen[nseen][0] = key;
+	seen[nseen++][1] = face;
+	fprintf (stderr, "hull: model %u face %08x rgb %d,%d,%d %s, drawn flat\n",
+		 HULL_KEY_MODEL (key), face, rgb[0], rgb[1], rgb[2], why);
+}
+
+/* a marking: yellow paint (red and green up, blue all but off), the
+ * hazard stripes, the floor markings and the yellow signs of the
+ * station, its bay and its hangar. Paint, not hull: drawn flat. By the
+ * channels' ratios, so a stripe in shade is still one. */
+static int hull_marking (const int rgb[3])
+{
+	int lo = rgb[0] < rgb[1] ? rgb[0] : rgb[1], hi = rgb[0] > rgb[1] ? rgb[0] : rgb[1];
+
+	return hi >= 64 && rgb[2] < 0.3 * lo && lo >= 0.6 * hi;
+}
+
 static int hull_paint5 (double p[][3], int n, const struct HullCtx *cx, int host,
 			const int rgb[3], float st[][2], struct HullFrame *hf)
 {
@@ -3086,7 +3117,7 @@ static int hull_paint5 (double p[][3], int n, const struct HullCtx *cx, int host
 	int cls = hull_class_of_key (cx->key, &sc, off), i;
 	int mx = rgb[0] > rgb[1] ? rgb[0] : rgb[1], mn = rgb[0] < rgb[1] ? rgb[0] : rgb[1];
 	int calm = host && !HULL_BUILDING (cls);
-	int lamp, pure;
+	int lamp, pure, mark = HULL_BUILDING (cls) && hull_marking (rgb);
 	double light[3];
 
 	if (rgb[2] > mx) mx = rgb[2];
@@ -3099,19 +3130,22 @@ static int hull_paint5 (double p[][3], int n, const struct HullCtx *cx, int host
 	lamp = cls == HC_HANGAR && mn >= 208;
 	pure = mx > 191 && mn < 0.2 * mx;
 	/* but in the hangar a face of pure colour whose longest side is more
-	 * than about 0.4 of a tile (the band over the hall, the big hazard
-	 * stripes, the yellow sign, the doors, which keep that span as they
-	 * slide; the lamps and small plaques are under a quarter of one) is
-	 * paint, plated calm when it carries decals */
-	if (pure && cls == HC_HANGAR && cx->wok &&
+	 * than about 0.4 of a tile (the red doors, which keep that span as
+	 * they slide; the lamps and small plaques are under a quarter of one)
+	 * is paint, plated calm when it carries decals; not a marking */
+	if (pure && !mark && cls == HC_HANGAR && cx->wok &&
 	    hull_obj_span (cx->w, n) >= 0.4 * hull_classes[cls].panel * sc) {
 		pure = 0;
 		calm |= host;
 	}
 	/* the hangar's floor and ceiling are its deck plating */
 	if (cls == HC_HANGAR && cx->wok && hull_obj_axis (cx->w, n) == HULL_DECK_AXIS) cls = HC_DECK;
+	if (hull_log_on () && (mark || pure || lamp || (host && !calm && cls != HC_STATION)))
+		hull_log_flat (cx->key, cx->seed, rgb, mark ? "sign/marking (yellow paint)" :
+			       pure ? "lamp, window or lit sign (pure colour)" : lamp ? "lamp (near white)" :
+			       "sign/marking (hosts lettering or a decal)");
 	light[0] = cx->light[0]; light[1] = cx->light[1]; light[2] = cx->light[2];
-	if (pure || lamp || (host && !calm && cls != HC_STATION) ||
+	if (mark || pure || lamp || (host && !calm && cls != HC_STATION) ||
 	    (!(cx->wok && hull_frame_obj (p, cx->w, n, light, hull_classes[cls].panel * sc, off, hf)) &&
 	     !hull_frame (p, n, light, cx->seed, hf))) {
 		hull_end ();
@@ -3212,7 +3246,7 @@ static int hull_complex_begin (GLdouble c[][3], int n, void **data)
 	float sc, off[2], M[9];
 	double light[3];
 	int cls, calm, mx, mn, k, j;
-	const int *rgb = complex_col;
+	const int c8[3] = { complex_col[0] & 255, complex_col[1] & 255, complex_col[2] & 255 };	/* signed */
 
 	hull_cmode = 0;
 	if (hull_ctx != 2) return 0;	/* no model being read: no word after it */
@@ -3220,19 +3254,23 @@ static int hull_complex_begin (GLdouble c[][3], int n, void **data)
 	hull_chain = calm;
 	if (!hull_cc_on || hull_style < 5 || flat_hulls || n < 3) return 0;
 	cls = hull_class_of_key (hull_cc.key, &sc, off);
-	mx = rgb[0] & 255; mn = mx;
+	mx = mn = c8[0];
 	for (k = 1; k < 3; k++) {
-		if ((rgb[k] & 255) > mx) mx = rgb[k] & 255;
-		if ((rgb[k] & 255) < mn) mn = rgb[k] & 255;
+		if (c8[k] > mx) mx = c8[k];
+		if (c8[k] < mn) mn = c8[k];
 	}
-	if (mx > 191 && mn < 0.2 * mx) return 0;
-	/* the hangar's own shapes are its lamps and grey signs, kept flat; a
-	 * coloured one is the station's outside around the slot (the docking
-	 * bay's model carries the face it opens in): the station's plating */
-	if (cls == HC_HANGAR) {
-		if (mx - mn < 24 || mn >= 208) return 0;
-		cls = HC_STATION;
+	/* a lamp's colour, a marking (hull_marking) and the hangar's own
+	 * shapes, its lamps and grey signs, are kept flat; a coloured one is
+	 * the station's outside around the slot (the docking bay's model
+	 * carries the face it opens in): the station's plating */
+	if ((mx > 191 && mn < 0.2 * mx) || (HULL_BUILDING (cls) && hull_marking (c8)) ||
+	    (cls == HC_HANGAR && (mx - mn < 24 || mn >= 208))) {
+		if (hull_log_on ())
+			hull_log_flat (hull_cc.key, (unsigned) n << 24 | c8[0] << 16 | c8[1] << 8 | c8[2], c8,
+				       "complex shape: sign/marking or decal");	/* its points and colour: no face number */
+		return 0;
 	}
+	if (cls == HC_HANGAR) cls = HC_STATION;
 	for (k = 0; k < 9; k++) M[k] = hull_cc.M[k];
 	for (k = 0; k < 3; k++) light[k] = hull_cc.light[k];
 	if (!hull_plane_obj ((const double (*)[3]) c, n, M, hull_cc.o, light,
