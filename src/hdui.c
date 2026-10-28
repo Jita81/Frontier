@@ -1618,6 +1618,36 @@ static void draw_elems (int layer)
 	}
 }
 
+/* For hdtip: the glass panel at framebuffer pixel (x, y) from the
+ * picture's top left, w x h pixels, in the caller's 2D set-up (y down,
+ * premultiplied blending), at opacity a; frosted when a backdrop is up,
+ * as the pages' glass is. */
+void hdui_glass_px (float x, float y, int w, int h, float a)
+{
+#ifdef __APPLE__
+	struct paint p;
+	struct sprite *s;
+	int px, py, pw, ph;
+	float u;
+
+	gl_picture_rect (&px, &py, &pw, &ph);
+	u = ph >= 32 ? ph / 1200.0f : 1;
+	memset (&p, 0, sizeof (p));
+	p.kind = E_GLASS;
+	p.flags = F_ALL;
+	p.w = w;
+	p.h = h;
+	p.u = u;
+	p.see = hdback_active ();
+	p.pad = (int) ceilf (26 * u);
+	s = sprite (&p);
+	if (s && p.see) frost_shape (x, y, w, h, 8 * u, F_ALL);
+	if (s) draw_sprite (s, x, y, a);
+#else
+	(void) x; (void) y; (void) w; (void) h; (void) a;
+#endif
+}
+
 /* ---------------------------------------------------------------- */
 /* Laying the pages out */
 

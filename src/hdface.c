@@ -34,11 +34,12 @@
  * thumbnail becomes the very portrait that person gets on a big screen.
  * The person is the sender object's (its own seed), never the message's
  * text argument, so one sender keeps one face.  A station speaks with
- * the seed and flags its station services face is drawn with: every
- * message from a station, clearance, fee or fine, is the person behind
- * its counter.  The thumbnail is replaced only while the console shows
- * exactly the game's thumbnail, and a gutter of the game's black edge is
- * kept between the portrait and the text.  Under --classic-ui and
+ * the seed and flags its station services face is drawn with: a
+ * clearance or a fee is the person behind its counter; a fine is the
+ * officer on its police page, the one it is paid to.  The thumbnail is
+ * replaced only while the console shows exactly the game's thumbnail, in
+ * a frame like the console's glass, and a gutter of the game's black
+ * edge is kept between the portrait and the text.  Under --classic-ui and
  * --pixel-faces every face, box and thumbnail, stays the game's.
  *
  * Portraits keep their shape: the part of the picture shown is cut to the
@@ -52,6 +53,7 @@
 #else
 #include <GL/gl.h>
 #endif
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -87,7 +89,7 @@ extern int classic_ui;
  * x 116.  TX0..TX1 x TY0..TY1 is the face's part of both.  The portrait
  * covers x0..PX1 only: the game's black edge, PX1..TX1, stays as the
  * gutter between the picture and the text (the game's own face ends at
- * about x 110). */
+ * about x 110).  It is framed as the console's glass is (THUMB_R). */
 #define TX0		88
 #define TY0		169
 #define TX1		116
@@ -116,7 +118,7 @@ extern int classic_ui;
 #define MODEL_PORT_FIRST	0x54	/* orbital stations .. surface starports */
 #define MODEL_PORT_LAST		0x6c
 #define FLAGS_STAFF		0x1c	/* station services: grey, a cap */
-#define FLAGS_POLICE		0x3a	/* the same counter while the police deal with you */
+#define FLAGS_POLICE		0x3a	/* the police page's officer (and the counter at times) */
 
 enum { EYES_NONE, EYES_GLASSES, EYES_SHADES };
 
@@ -565,9 +567,12 @@ static int is_object (unsigned int p)
  * the sender, not the message: d3 is only what the text prints (the
  * station's seed for a clearance, the fee for a docking fee, the amount
  * of a fine), so the seed is read from the sender itself.
- *  - A starport: the person at its station services counter, for every
- *    message it sends (clearance, fees, fines): its seed and the flags
- *    that page draws its face with (as it last did here, else $1c).
+ *  - A starport: the person at its station services counter, for what
+ *    it sends (clearance, fees): its seed and the flags that page draws
+ *    its face with (as it last did here, else $1c).  When the message
+ *    gives the police's face flags ($3a: a fine), the officer on its
+ *    police page (L78494: the seed rotated right 4, $3a), the one the
+ *    fine is paid to.
  *  - Any other object (a ship, a pilot): its own seed, so the same sender
  *    is always the same face, and the face flags the message gives (the
  *    game passes face flags in d7: $3a the police uniform, 0 none).
@@ -588,7 +593,11 @@ static void thumb_person (void)
 		thumb.station = model >= MODEL_PORT_FIRST && model <= MODEL_PORT_LAST;
 	} else
 		seed = arg;
-	if (thumb.station) {
+	if (thumb.station && (d7 & 0x3e) == FLAGS_POLICE) {
+		seed = ror (seed, 4);
+		thumb.flags = FLAGS_POLICE;
+		who = "police";
+	} else if (thumb.station) {
 		ff = rw (A6 + A6_FACE_FLAGS);
 		thumb.flags = rl (A6 + A6_FACE_SEED) == seed && (ff == FLAGS_STAFF || ff == FLAGS_POLICE)
 			? ff : FLAGS_STAFF;
@@ -816,12 +825,39 @@ void hdface_frame (const unsigned char *raster, unsigned char *out,
 	shade = s > 1.0f ? 1.0f : s;
 }
 
+/* The thumbnail's frame, as the console's own glass (hdstill.c): corners
+ * rounded THUMB_R pixels of a 1600x1200 window, an edge that fades out
+ * over one window pixel, and a faint rim of the console's cyan. */
+#define THUMB_R		6.0f
+#define RR_SEGS		6
+#define RR_N		(4 * (RR_SEGS + 1))
+
+/* the rounded rectangle's outline pushed out d window pixels (in when
+ * d < 0), clockwise from the top right corner; ex, ey: a window pixel in
+ * ST pixels */
+static void rr_outline (float x0, float y0, float x1, float y1, float ex, float ey,
+			float d, float *pt)
+{
+	/* in ST pixels: 5 window pixels each at 1600 wide, 6 at 1200 high */
+	const float rx = THUMB_R / 5.0f, ry = THUMB_R / 6.0f;
+	int c, i, n = 0;
+
+	for (c = 0; c < 4; c++)
+		for (i = 0; i <= RR_SEGS; i++, n++) {
+			float t = (float) M_PI * (c - 1 + i / (float) RR_SEGS) / 2;
+			float cx = c < 2 ? x1 - rx : x0 + rx, cy = c == 0 || c == 3 ? y0 + ry : y1 - ry;
+			pt[2 * n] = cx + (rx + d * ex) * cosf (t);
+			pt[2 * n + 1] = cy + (ry + d * ey) * sinf (t);
+		}
+}
+
 /* Draw portrait i over ST x0..x1, y0..y1, showing the part of it from
  * (sx0, sy0) to (sx1, sy1) (shares of its width and height) cut down to
  * the shape the rectangle has on the screen: the sides lose the same, the
- * top a quarter of what goes and the bottom the rest (the head stays). */
+ * top a quarter of what goes and the bottom the rest (the head stays).
+ * framed: the thumbnail's frame round it, else square. */
 static void draw_portrait (int i, int x0, int y0, int x1, int y1,
-			   float sx0, float sy0, float sx1, float sy1, float bright)
+			   float sx0, float sy0, float sx1, float sy1, float bright, int framed)
 {
 	portrait_t *p = &pool[i];
 	GLint vp[4];
@@ -855,16 +891,61 @@ static void draw_portrait (int i, int x0, int y0, int x1, int y1,
 	glBindTexture (GL_TEXTURE_2D, p->tex);
 	glTexEnvf (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 	glColor4f (bright, bright, bright, 1.0f);
-	glBegin (GL_TRIANGLE_STRIP);
-		glTexCoord2f (u0, v1);
-		glVertex2i (x0, ST_H - y1);
-		glTexCoord2f (u1, v1);
-		glVertex2i (x1, ST_H - y1);
-		glTexCoord2f (u0, v0);
-		glVertex2i (x0, ST_H - y0);
-		glTexCoord2f (u1, v0);
-		glVertex2i (x1, ST_H - y0);
-	glEnd ();
+	if (!framed || vp[2] <= 0 || vp[3] <= 0) {
+		glBegin (GL_TRIANGLE_STRIP);
+			glTexCoord2f (u0, v1);
+			glVertex2i (x0, ST_H - y1);
+			glTexCoord2f (u1, v1);
+			glVertex2i (x1, ST_H - y1);
+			glTexCoord2f (u0, v0);
+			glVertex2i (x0, ST_H - y0);
+			glTexCoord2f (u1, v0);
+			glVertex2i (x1, ST_H - y0);
+		glEnd ();
+	} else {
+		float ex = 320.0f / vp[2], ey = 200.0f / vp[3], in[2 * RR_N], out[2 * RR_N], rim[2 * RR_N];
+		int k, n;
+#define RR_V(pt, k) \
+		glTexCoord2f (u0 + (pt[2 * (k)] - x0) / (x1 - x0) * (u1 - u0), \
+			      v0 + (pt[2 * (k) + 1] - y0) / (y1 - y0) * (v1 - v0)); \
+		glVertex2f (pt[2 * (k)], ST_H - pt[2 * (k) + 1])
+		rr_outline (x0, y0, x1, y1, ex, ey, -0.5f, in);
+		rr_outline (x0, y0, x1, y1, ex, ey, 0.5f, out);
+		rr_outline (x0, y0, x1, y1, ex, ey, -1.5f, rim);
+		glEnable (GL_BLEND);
+		glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		glBegin (GL_TRIANGLE_FAN);
+		glTexCoord2f ((u0 + u1) / 2, (v0 + v1) / 2);
+		glVertex2f ((x0 + x1) / 2.0f, ST_H - (y0 + y1) / 2.0f);
+		for (k = 0; k <= RR_N; k++) {
+			n = k % RR_N;
+			RR_V (in, n);
+		}
+		glEnd ();
+		/* the edge fades out over a window pixel */
+		glBegin (GL_TRIANGLE_STRIP);
+		for (k = 0; k <= RR_N; k++) {
+			n = k % RR_N;
+			glColor4f (bright, bright, bright, 1.0f);
+			RR_V (in, n);
+			glColor4f (bright, bright, bright, 0.0f);
+			RR_V (out, n);
+		}
+		glEnd ();
+#undef RR_V
+		/* the rim: the console's glass stroke */
+		glDisable (GL_TEXTURE_2D);
+		glBegin (GL_TRIANGLE_STRIP);
+		for (k = 0; k <= RR_N; k++) {
+			n = k % RR_N;
+			glColor4f (0x8f / 255.0f, 0xd8 / 255.0f, 1.0f, 0.18f);
+			glVertex2f (in[2 * n], ST_H - in[2 * n + 1]);
+			glVertex2f (rim[2 * n], ST_H - rim[2 * n + 1]);
+		}
+		glEnd ();
+		glDisable (GL_BLEND);
+		glEnable (GL_TEXTURE_2D);	/* as the square path leaves it */
+	}
 	glTexEnvf (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
 	glColor4ub (255, 255, 255, 255);
 }
@@ -876,11 +957,11 @@ void hdface_draw (const unsigned int *pal, const unsigned int *ctrl_pal)
 	if (pixel_faces || classic_ui) return;
 	/* the whole portrait, head and shoulders */
 	if (shown >= 0)
-		draw_portrait (shown, BX0, BY0, BX1, BY1, 0.0f, 0.0f, 1.0f, 1.0f, shade);
+		draw_portrait (shown, BX0, BY0, BX1, BY1, 0.0f, 0.0f, 1.0f, 1.0f, shade, 0);
 	/* the thumbnail is the size of a stamp: the head */
 	if (thumb_shown >= 0)
 		draw_portrait (thumb_shown, thumb.overlay ? OVER_X : THUMB_X, TY0, PX1, TY1,
-			       0.15f, 0.05f, 0.85f, 0.77f, 1.0f);
+			       0.15f, 0.05f, 0.85f, 0.77f, 1.0f, 1);
 }
 
 void hdface_forget (void)

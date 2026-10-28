@@ -22,6 +22,7 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <strings.h>
 #include <unistd.h>
 
 #include "main.h"
@@ -781,31 +782,59 @@ static void Call_Fdelete ()
 	SetReg (REG_D0, remove (filename));
 }
 
+/* A save is written to a hidden file beside the target and renamed over it
+ * only once every byte is on disk, so a failed save (disk full, the game
+ * killed mid-write) leaves the old commander whole.  Freaddir hides these. */
+#define SAVE_TMP	".fe2tmp-"
+
 static void Call_Fwrite ()
 {
 	int pBuf = GetReg (REG_A4);
 	int len = GetReg (REG_D7);
-	char filename[GUEST_PATH_MAX], *slash;
+	char filename[GUEST_PATH_MAX], tmp[GUEST_PATH_MAX + sizeof SAVE_TMP], *slash;
 	FILE *f;
+	int ok;
 
 	if (!read_guest_path (GetReg (REG_D1), filename) || !guest_range_ok (pBuf, len)) {
 		SetReg (REG_D0, 0);
 		return;
 	}
-	f = fopen (filename, "wb");
+	slash = strrchr (filename, '/');
+	snprintf (tmp, sizeof tmp, "%.*s" SAVE_TMP "%s", slash ? (int) (slash + 1 - filename) : 0,
+		  filename, slash ? slash + 1 : filename);
+	f = fopen (tmp, "wb");
 	/* the first save on a new install: make the folder (savs/) and retry */
-	if (!f && errno == ENOENT && (slash = strrchr (filename, '/')) && slash != filename) {
+	if (!f && errno == ENOENT && slash && slash != filename) {
 		*slash = '\0';
 		mkdir (filename, 0777);
 		*slash = '/';
-		f = fopen (filename, "wb");
+		f = fopen (tmp, "wb");
 	}
 	if (!f) {
 		SetReg (REG_D0, 0);
-	} else {
-		SetReg (REG_D0, fwrite (STRam+pBuf, 1, len, f));
-		fclose (f);
+		return;
 	}
+	ok = fwrite (STRam+pBuf, 1, len, f) == (size_t) len && !fflush (f) && !fsync (fileno (f));
+	if (fclose (f)) ok = 0;
+	if (ok && !rename (tmp, filename)) {
+		SetReg (REG_D0, len);	/* all of it: the game's success test */
+	} else {
+		remove (tmp);
+		SetReg (REG_D0, 0);	/* what a failed open always returned */
+	}
+}
+
+/* a save's temporary file: never listed; one left by a crash before its
+ * rename is removed once it is a minute old (a live save takes milliseconds) */
+static int save_tmp (const char *dir, const char *name)
+{
+	char path[1024];
+	struct stat st;
+
+	if (strncmp (name, SAVE_TMP, sizeof SAVE_TMP - 1)) return 0;
+	snprintf (path, sizeof path, "%s/%s", dir, name);
+	if (!stat (path, &st) && S_ISREG (st.st_mode) && time (NULL) - st.st_mtime > 60) remove (path);
+	return 1;
 }
 	
 static void Call_Fread ()
@@ -827,61 +856,74 @@ static void Call_Fread ()
 	}
 }
 
-#include <dirent.h>
-static DIR *poodir;
+/* make sure fe2.s is allocating enough space at a0... */
+#define MAX_FILENAME_LEN	14
+#define MAX_DIR_ENTRIES		256	/* the game shows at most 63 */
 
-static char cur_dir[GUEST_PATH_MAX];
+/* Fopendir reads the folder once into a list sorted by name (case-blind),
+ * which Freaddir hands out in that order.  Listed: regular files, and
+ * sub-folders (the game opens one and offers its parent dir back).  Hidden:
+ * dotfiles (.DS_Store, save temporaries), names too long for the game's
+ * 13-character buffer (a cut name is not the file on disk), anything else. */
+static struct dir_entry { char name[MAX_FILENAME_LEN]; int attribs, len; } dir_ent[MAX_DIR_ENTRIES];
+static int dir_n, dir_pos;
 
-/* A missing folder (no savs/ yet) lists as empty: the game then calls
- * Fclosedir, and Freaddir if it ever did, with no directory open. */
+static int dir_cmp (const void *a, const void *b)
+{
+	const char *x = ((const struct dir_entry *) a)->name, *y = ((const struct dir_entry *) b)->name;
+	int c = strcasecmp (x, y);
+	return c ? c : strcmp (x, y);
+}
+
+/* A missing folder (no savs/ yet) lists as empty. */
 static void Call_Fopendir ()
 {
-	if (poodir) closedir (poodir);
-	poodir = NULL;
-	if (read_guest_path (GetReg (REG_A2), cur_dir)) poodir = opendir (cur_dir);
-	SetReg (REG_D0, poodir ? 0 : -1);
+	char dir[GUEST_PATH_MAX], path[GUEST_PATH_MAX + 256];
+	static int warned;
+	struct dirent *dent;
+	struct stat st;
+	DIR *d = NULL;
+
+	dir_n = dir_pos = 0;
+	if (read_guest_path (GetReg (REG_A2), dir)) d = opendir (dir);
+	SetReg (REG_D0, d ? 0 : -1);
+	if (!d) return;
+	while ((dent = readdir (d))) {
+		if (save_tmp (dir, dent->d_name) || dent->d_name[0] == '.' ||
+		    strlen (dent->d_name) > MAX_FILENAME_LEN - 1) continue;
+		snprintf (path, sizeof path, "%s/%s", dir, dent->d_name);
+		if (stat (path, &st) || !(S_ISREG (st.st_mode) || S_ISDIR (st.st_mode))) continue;
+		if (dir_n == MAX_DIR_ENTRIES) {
+			if (!warned++) fprintf (stderr, "%s: over %d entries, the rest not listed\n", dir, MAX_DIR_ENTRIES);
+			break;
+		}
+		strncpy (dir_ent[dir_n].name, dent->d_name, MAX_FILENAME_LEN);	/* zero-padded */
+		dir_ent[dir_n].attribs = S_ISDIR (st.st_mode) ? 0x10 : 0;
+		dir_ent[dir_n++].len = st.st_size;
+	}
+	closedir (d);
+	qsort (dir_ent, dir_n, sizeof *dir_ent, dir_cmp);
 }
 
 static void Call_Fclosedir ()
 {
-	if (poodir) closedir (poodir);
-	poodir = NULL;
+	dir_n = dir_pos = 0;
 }
 
-/* make sure fe2.s is allocating enough space at a0... */
-#define MAX_FILENAME_LEN	14
-
+/* filename into buffer (a0), attributes d2, len d1; d0 -1 at the end */
 static void Call_Freaddir ()
 {
-	int p, i, attribs, len;
-	char name[MAX_FILENAME_LEN];
-	/* filename into buffer (a0), attributes d2, len d1 */
-	char full_path_shit[1024];
-	struct stat _stat;
-	struct dirent *dent = NULL;
-	/* skip '.' and '..' by name: they need not come first */
-	while (poodir && (dent = readdir (poodir)) &&
-	       (!strcmp (dent->d_name, ".") || !strcmp (dent->d_name, "..")))
-		;
-	if (dent == NULL) {
+	int p = GetReg (REG_A0), i;
+	struct dir_entry *e;
+
+	if (dir_pos >= dir_n) {
 		SetReg (REG_D0, -1);
 		return;
 	}
-	strncpy (name, dent->d_name, MAX_FILENAME_LEN);
-	name[MAX_FILENAME_LEN-1] = '\0';
-	
-	snprintf (full_path_shit, sizeof full_path_shit, "%s/%s", cur_dir, dent->d_name);
-	if (stat (full_path_shit, &_stat)) memset (&_stat, 0, sizeof _stat);
-	
-	len = _stat.st_size;
-	attribs = (S_ISDIR (_stat.st_mode) ? 0x10 : 0);
-	
-	p = GetReg (REG_A0);
-	for (i=0; i<MAX_FILENAME_LEN; i++) {
-		STMemory_WriteByte (p++, name[i]);
-	}
-	SetReg (REG_D2, attribs);
-	SetReg (REG_D1, len);
+	e = &dir_ent[dir_pos++];
+	for (i = 0; i < MAX_FILENAME_LEN; i++) STMemory_WriteByte (p + i, e->name[i]);
+	SetReg (REG_D2, e->attribs);
+	SetReg (REG_D1, e->len);
 	SetReg (REG_D0, 0);
 }
 
