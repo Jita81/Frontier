@@ -47,12 +47,18 @@
 
 #define A6		__DL5eb6_a6_base
 
+/* screen.h's renderers (it needs SDL): only what this file uses */
+enum RENDERERS { R_OLD, R_GLWIRE, R_GL, R_MAX };
+extern enum RENDERERS use_renderer;
+extern int classic_ui;
+
 #define ST_W		320
 #define ST_H		200
 #define CTRL_Y		168	/* the control panel's rows have their own palette */
 #define MAX_REC		256	/* bitmaps remembered at once */
 #define MISS_LIMIT	3000	/* frames a bitmap may be off the screen */
 #define MAX_TEX		96	/* art textures kept */
+#define MAX_BODY	32	/* bodies on a star's information page */
 #define DEFER_PCT	25	/* another layer took out more than this: leave it be
 				 * (text over a bitmap takes out a few pixels) */
 
@@ -82,8 +88,23 @@ static struct shown {
 				 * last line stops where the panel starts */
 	float k;
 	unsigned bg;		/* main screen: the colour behind the art (RGBA), or 0 */
-} shown[MAX_REC];
+	unsigned char body;	/* a body (struct body): nothing of the screen goes over it */
+} shown[MAX_REC + MAX_BODY];
 static int n_shown;
+
+/* A star or planet the game blitted on a star's information page, drawn
+ * again as a sphere in its place.  Framebuffer pixels from the screen's
+ * top left. */
+static struct body {
+	u64 key;		/* its bitmap and the colours it is shown in */
+	short x, y, w, h;	/* the new art's rectangle, ST pixels */
+	float cx, cy, r;	/* its disc */
+	unsigned lit, base;	/* its colours (0xRRGGBB) */
+	int star;
+	float ring, ring_a;	/* a ring's half length and its angle, or 0 */
+	unsigned ring_c;
+} bodies[MAX_BODY];
+static const struct body *body_now;	/* the one build () draws */
 
 static int debug = -1;
 
@@ -100,6 +121,7 @@ enum { K_PANEL, K_LOGO, K_MISSILE, K_SELECT, K_MORE, K_OPT_ON, K_OPT_OFF };
 #define ON_MAIN(k)	((k) >= K_SELECT)	/* in the main screen's rows, on its background */
 #define IS_OPT(k)	((k) >= K_OPT_ON)	/* an option's key, its own colours */
 /* F_MAPKEYS, F_SCANNER, F_BUTTONS: hdstill.h */
+#define F_INFO		8	/* a star's information page: its bodies drawn too */
 
 struct art {
 	u64 hash;
@@ -165,7 +187,7 @@ static const struct art arts[] = {
 	{ 0x9b5c4f4ac5879452ULL, 64, 11, K_PANEL, 0, 1, { G_TARGET, G_CROSS, GX (G_WRENCH), GX (G_DOC) }, "icons 7-10 system map info" },
 	{ 0xd81a763c56d5b42eULL, 64, 11, K_PANEL, 0, 1, { G_PERSON, G_EMPTY, G_LAUNCH, G_LIST }, "icons 7-10 docked" },
 	{ 0x9b7f1f4805f6d7e0ULL, 64, 11, K_PANEL, 0, 1, { G_LOAD, G_SAVE, G_DELETE, G_EXIT }, "icons 7-10 game menu" },
-	{ 0xa0feef8ca46dcdc7ULL, 80, 13, K_PANEL, 0, 1, { G_SECTOR, G_MARKET, G_PEOPLE, G_EMPTY, G_STARS }, "icons 6-10 system info" },
+	{ 0xa0feef8ca46dcdc7ULL, 80, 13, K_PANEL, F_INFO, 1, { G_SECTOR, G_MARKET, G_PEOPLE, G_EMPTY, G_STARS }, "icons 6-10 system info" },
 	/* keys in the bay */
 	{ 0xcc2e57fc156a3812ULL, 16, 13, K_PANEL, 0, 1, { G_ORRERY }, "bay key orrery" },
 	{ 0xf987ebdcb79f4c99ULL, 128, 13, K_PANEL, F_BUTTONS, 1, { 0 }, "bay key row" },
@@ -224,7 +246,8 @@ static const unsigned int pal_logo[16] = {
 /* each art's texture at a place, made for the current framebuffer size */
 static struct tex {
 	GLuint id;
-	short art, x, y;
+	short art, x, y;	/* art -1: a body */
+	u64 key;		/* a body's */
 	float s1, t1;		/* the art's far corner in it */
 	unsigned used;		/* the frame it was last shown in */
 } texs[MAX_TEX];
@@ -2238,6 +2261,73 @@ static void gauges_paint (void)
 	plate_row (MSL (PL_Y3) - 0.3f, RIM (174.2f) - 0.4f, PL_Y3 - 0.5f, 2.7f, "HEAT", gs.heat, gs.warn[2] ? 0xff4b3e : 0xe8f0f8);
 }
 
+/* ---- the bodies on a star's information page ---- */
+
+static unsigned mix (unsigned a, unsigned b, float t)
+{
+	unsigned c = 0;
+	int ch;
+	for (ch = 0; ch < 24; ch += 8)
+		c |= (unsigned) ((a >> ch & 255) * (1 - t) + (b >> ch & 255) * t + 0.5f) << ch;
+	return c;
+}
+
+/* the half of the ring behind the planet, or the half in front of it */
+static void ring_half (const struct body *b, float cx, float cy, int front)
+{
+	float l = b->ring;
+	CGContextSaveGState (C);
+	CGContextTranslateCTM (C, cx, cy);
+	CGContextRotateCTM (C, b->ring_a);
+	CGContextClipToRect (C, CGRectMake (-l, front ? 0 : -l, 2 * l, l));
+	CGContextAddEllipseInRect (C, CGRectMake (-l, -0.2f * l, 2 * l, 0.4f * l));
+	CGContextAddEllipseInRect (C, CGRectMake (-0.74f * l, -0.13f * l, 1.48f * l, 0.26f * l));
+	CGContextEOClip (C);
+	lgrad (-l, 0, l, 0, 3, CS3 (mix (b->ring_c, 0xffffff, 0.3f), b->ring_c, mix (b->ring_c, 0, 0.6f)),
+	       AS3 (0.95f, 0.85f, 0.6f), NULL);
+	CGContextRestoreGState (C);
+}
+
+static void draw_body (const struct body *b)
+{
+	float cx = b->cx - OX * SX, cy = b->cy - OY * SY, r = b->r;
+	static const float glow_at[3] = { 0.5f, 0.68f, 1 };
+
+	if (b->star) {
+		/* the corona, then the disc: a hot core, its limb darker */
+		rgrad (cx, cy, 2 * r, 3, CS3 (b->lit, b->base, b->base), AS3 (0.6f, 0.2f, 0), glow_at);
+		CGContextSaveGState (C);
+		shade (0, 0, 0.3f * r, b->lit, 0.9f);
+		gcirc (cx, cy, r);
+		gfill (b->base, 1);
+		CGContextRestoreGState (C);
+		CGContextSaveGState (C);
+		gcirc (cx, cy, r);
+		CGContextClip (C);
+		rgrad (cx - 0.15f * r, cy - 0.15f * r, 1.15f * r, 3,
+		       CS3 (mix (b->lit, 0xffffff, 0.6f), b->lit, mix (b->base, 0, 0.25f)), AS3 (1, 1, 1), NULL);
+		CGContextRestoreGState (C);
+		return;
+	}
+	if (b->ring) ring_half (b, cx, cy, 0);
+	/* lit from the star, at the page's left */
+	CGContextSaveGState (C);
+	gcirc (cx, cy, r);
+	CGContextClip (C);
+	rgrad (cx - 0.45f * r, cy - 0.3f * r, 1.5f * r, 3,
+	       CS3 (mix (b->lit, 0xffffff, 0.3f), b->lit, b->base), AS3 (1, 1, 1), AS3 (0, 0.4f, 1));
+	lgrad (cx - 0.1f * r, cy, cx + 0.8f * r, cy, 2, CS2 (0, 0), AS2 (0, 0.9f), NULL);
+	CGContextRestoreGState (C);
+	/* air on the day side's rim */
+	CGContextSaveGState (C);
+	gcirc (cx, cy, r);
+	gcirc (cx, cy, 0.9f * r);
+	CGContextEOClip (C);
+	lgrad (cx - r, cy, cx + 0.3f * r, cy, 2, CS2 (mix (b->lit, 0xffffff, 0.5f), b->lit), AS2 (0.6f, 0), NULL);
+	CGContextRestoreGState (C);
+	if (b->ring) ring_half (b, cx, cy, 1);
+}
+
 #endif /* __APPLE__ */
 
 /* ------------------------------------------------------------------ */
@@ -2461,8 +2551,8 @@ static int pow2 (int n)
 static int build (struct tex *t, int a, int x, int y, float sx, float sy)
 {
 #ifdef __APPLE__
-	const struct art *ar = a >= 0 ? &arts[a] : NULL;	/* -1: the gauges */
-	float aw = ar ? ar->w : GAUGE_W, ah = ar ? ar->h : GAUGE_H;
+	const struct art *ar = a >= 0 ? &arts[a] : NULL;	/* -1: body_now if set, else the gauges */
+	float aw = ar ? ar->w : body_now ? body_now->w : GAUGE_W, ah = ar ? ar->h : body_now ? body_now->h : GAUGE_H;
 	int w = (int) ceilf (aw * sx), h = (int) ceilf (ah * sy);
 	int tw = pow2 (w), th = pow2 (h);
 	unsigned char *buf;
@@ -2495,6 +2585,7 @@ static int build (struct tex *t, int a, int x, int y, float sx, float sy)
 	AH = ah * sy;
 	U = (sx / 5 + sy / 6) / 2;
 	if (ar) draw_art (ar, x, y);
+	else if (body_now) draw_body (body_now);
 	else gauges_paint ();
 	C = NULL;
 	CGContextRelease (c);
@@ -2527,14 +2618,15 @@ static int build (struct tex *t, int a, int x, int y, float sx, float sy)
 #endif
 }
 
-/* the texture of art a at (x, y), made if need be; -1 if there is none */
-static int get_tex (int a, int x, int y)
+/* the texture of art a at (x, y) (a -1: body_now, by its key), made if
+ * need be; -1 if there is none */
+static int get_tex (int a, int x, int y, u64 key)
 {
 	int i, slot = -1;
 
 	if (built_sx <= 0 || built_sy <= 0) return -1;
 	for (i = 0; i < MAX_TEX; i++)
-		if (texs[i].id && texs[i].art == a && texs[i].x == x && texs[i].y == y) {
+		if (texs[i].id && texs[i].art == a && texs[i].x == x && texs[i].y == y && texs[i].key == key) {
 			texs[i].used = frame_no;
 			return i;
 		}
@@ -2554,6 +2646,7 @@ static int get_tex (int a, int x, int y)
 		texs[slot].id = 0;
 		return -1;
 	}
+	texs[slot].key = key;
 	texs[slot].used = frame_no;
 	return slot;
 }
@@ -2649,6 +2742,174 @@ static void note_panel (const struct rec *r)
 	}
 }
 
+/* 0xAABBGGRR to 0xRRGGBB */
+static unsigned rgb_of (unsigned p)
+{
+	return (p & 255) << 16 | (p >> 8 & 255) << 8 | (p >> 16 & 255);
+}
+
+static int lum (unsigned c)
+{
+	return 2 * (c >> 16 & 255) + 5 * (c >> 8 & 255) + (c & 255);
+}
+
+/* which pixels of the main screen each body candidate has (its index + 1) */
+static unsigned char body_pix[ST_W * CTRL_Y];
+
+/* The bodies on a star's information page: the unknown bitmaps on its
+ * black (colour 0), cand[i] owning the pixels body_pix says are i + 1's.  Each is
+ * drawn again as a sphere where its disc was (a star with its corona, a
+ * planet lit from the left with its night side and any ring), and its
+ * pixels go, for what is under the page (its black, a card) to show. */
+static void add_bodies (struct rec **cand, int n, const unsigned char *raster,
+			unsigned char *out, const unsigned int *pal)
+{
+	float sx = built_sx, sy = built_sy;
+	int i;
+
+	for (i = 0; i < n && i < MAX_BODY; i++) {
+		struct rec *r = cand[i];
+		struct body *b = &bodies[i];
+		int cnt[16], ring, xx, yy, x0 = ST_W, y0 = ST_H, x1 = -1, y1 = -1, best = -1, n_px = 0, c, tex;
+		float e, rs = 0, gs = 0, bs = 0;
+		u64 key = r->hash;
+
+#define MINE(xx, yy) (body_pix[(r->y + (yy)) * ST_W + r->x + (xx)] == i + 1 && \
+		      r->pix[(yy) * r->w + (xx)] != 0 && \
+		      raster[(r->y + (yy)) * ST_W + r->x + (xx)] == r->pix[(yy) * r->w + (xx)])
+		memset (cnt, 0, sizeof (cnt));
+		for (yy = 0; yy < r->h; yy++)
+			for (xx = 0; xx < r->w; xx++) {
+				if (!MINE (xx, yy)) continue;
+				cnt[r->pix[yy * r->w + xx] & 15]++;
+				if (xx < x0) x0 = xx;
+				if (xx > x1) x1 = xx;
+				if (yy < y0) y0 = yy;
+				if (yy > y1) y1 = yy;
+			}
+		if (x1 < 0) continue;
+		/* a mark a few pixels across (a port's cross) is no body: left
+		 * as the game drew it */
+		if (x1 - x0 < 3 && y1 - y0 < 3) continue;
+		/* a body is solid about its middle, lit or night side (a
+		 * pair of arcs about two stars is not) */
+		if (x1 - x0 >= 12) {
+			int bw = (x1 - x0 + 1) / 3, bh = (y1 - y0 + 1) / 3;
+			for (yy = y0 + bh; yy < y0 + 2 * bh; yy++)
+				for (xx = x0 + bw; xx < x0 + 2 * bw; xx++)
+					n_px += body_pix[(r->y + yy) * ST_W + r->x + xx] == i + 1 && r->pix[yy * r->w + xx] == 0;
+			if (4 * n_px > 3 * bw * bh) continue;
+		}
+		n_px = 0;
+		/* a ring across it corner to corner (the ringed giant): its
+		 * colour the top left corner's, its disc a third of the box
+		 * about the middle */
+		ring = x1 - x0 >= 12 && y1 - y0 >= 12 &&
+		       MINE (x0, y0 + 1) + MINE (x0 + 1, y0) + MINE (x0 + 1, y0 + 1) &&
+		       !MINE (x1, y0) && !MINE (x0, y1);
+		for (yy = y0; ring && yy < y0 + 4; yy++)
+			for (xx = x0; xx < x0 + 4; xx++) {
+				unsigned q;
+				if (!MINE (xx, yy)) continue;
+				q = rgb_of (pal[r->pix[yy * r->w + xx] & 15]);
+				rs += q >> 16 & 255;
+				gs += q >> 8 & 255;
+				bs += q & 255;
+				n_px++;
+			}
+#undef MINE
+		memset (b, 0, sizeof (*b));
+		b->cx = (r->x + (x0 + x1 + 1) / 2.f) * sx;
+		b->cy = (r->y + (y0 + y1 + 1) / 2.f) * sy;
+		b->r = ((x1 - x0 + 1) * sx + (y1 - y0 + 1) * sy) / 4;
+		if (ring) b->r *= 0.66f;
+		/* the stars are the ones in the page's bright red */
+		b->star = cnt[4] > 0 && y1 - y0 >= 16;
+		if (b->star) b->r *= 0.92f;	/* inside its flares */
+		/* a giant cut off by the screen's left edge: its widest rows
+		 * are its middle, and it is as tall as it is wide about them */
+		if (r->x + x0 == 0 && (y1 - y0 + 1) * sy > 1.25f * (x1 - x0 + 1) * sx) {
+			int ys = 0, nr = 0;
+			for (yy = y0; yy <= y1; yy++)
+				if (r->pix[yy * r->w + x1] || r->pix[yy * r->w + x1 - 1]) {
+					ys += yy;
+					nr++;
+				}
+			b->cy = (r->y + ys / (float) nr + 0.5f) * sy;
+			b->r = fmaxf (b->cy - (r->y + y0) * sy, (r->y + y1 + 1) * sy - b->cy) * (b->star ? 0.92f : 1);
+			b->cx = (r->x + x1 + 1) * sx - b->r;
+		}
+		/* its colours: the commonest, and the brightest of the ones
+		 * it has much of */
+		for (c = 0; c < 16; c++) {
+			if (!cnt[c]) continue;
+			key = fnv (key, (const unsigned char *) &pal[c], 4);
+			if (best < 0 || cnt[c] > cnt[best]) best = c;
+		}
+		b->base = rgb_of (pal[best]);
+		b->lit = b->base;
+		for (c = 0; c < 16; c++) {
+			if (cnt[c] * 8 >= cnt[best] && lum (rgb_of (pal[c])) > lum (b->lit)) b->lit = rgb_of (pal[c]);
+		}
+		if (b->star) {
+			/* a star: all its fire's colours together, hot toward a
+			 * warm white in its core */
+			float w = 0, ch[3] = { 0, 0, 0 };
+			for (c = 0; c < 16; c++) {
+				unsigned q = rgb_of (pal[c]);
+				ch[0] += cnt[c] * (q >> 16 & 255);
+				ch[1] += cnt[c] * (q >> 8 & 255);
+				ch[2] += cnt[c] * (q & 255);
+				w += cnt[c];
+			}
+			b->base = (unsigned) (ch[0] / w) << 16 | (unsigned) (ch[1] / w) << 8 | (unsigned) (ch[2] / w);
+			b->lit = mix (b->base, 0xffe6a0, 0.6f);
+		}
+		if (ring && n_px) {
+			b->ring = 0.5f * hypotf ((x1 - x0 + 1) * sx, (y1 - y0 + 1) * sy);
+			b->ring_a = atan2f ((y1 - y0 + 1) * sy, (x1 - x0 + 1) * sx);
+			b->ring_c = (unsigned) (rs / n_px) << 16 | (unsigned) (gs / n_px) << 8 | (unsigned) (bs / n_px);
+		}
+		/* its rectangle: room for the corona or the ring, on the
+		 * main screen */
+		e = fmaxf (b->r * (b->star ? 2 : 1.08f), b->ring) + 2;
+		x0 = (int) floorf ((b->cx - e) / sx);
+		y0 = (int) floorf ((b->cy - e) / sy);
+		x1 = (int) ceilf ((b->cx + e) / sx);
+		y1 = (int) ceilf ((b->cy + e) / sy);
+		if (x0 < 0) x0 = 0;
+		if (y0 < 0) y0 = 0;
+		if (x1 > ST_W) x1 = ST_W;
+		if (y1 > CTRL_Y) y1 = CTRL_Y;
+		if (x1 <= x0 || y1 <= y0) continue;
+		b->x = x0;
+		b->y = y0;
+		b->w = x1 - x0;
+		b->h = y1 - y0;
+		b->key = key;
+		body_now = b;
+		tex = get_tex (-1, x0, y0, key);
+		body_now = NULL;
+		if (tex < 0) continue;
+		for (yy = 0; yy < r->h; yy++)
+			for (xx = 0; xx < r->w; xx++) {
+				int o = (r->y + yy) * ST_W + r->x + xx, p = r->pix[yy * r->w + xx];
+				if (body_pix[o] == i + 1 && p != 0 && raster[o] == p) out[o] = 255;
+			}
+		{
+			struct shown *s = &shown[n_shown++];
+			memset (s, 0, sizeof (*s));
+			s->x = x0;
+			s->y = y0;
+			s->w = x1 - x0;
+			s->h = s->vh = y1 - y0;
+			s->tex = tex;
+			s->k = 1;
+			s->body = 1;
+		}
+	}
+}
+
 int hdstill_panel (struct hdstill_panel *p)
 {
 	*p = panel_now;
@@ -2659,9 +2920,10 @@ void hdstill_frame (const unsigned char *raster, unsigned char *out,
 		    const unsigned int *pal, const unsigned int *ctrl_pal)
 {
 	static unsigned char cover[ST_W * ST_H];
-	struct rec *order[MAX_REC];
+	struct rec *order[MAX_REC], *cand[MAX_BODY];
 	GLint vp[4] = { 0, 0, 0, 0 };
-	int i, j, xx, yy;
+	int i, j, xx, yy, n_cand = 0, info = 0;
+	int bodies_on = !classic_ui && use_renderer == R_GL;
 
 	n_shown = 0;
 	gs_k = 0;
@@ -2696,10 +2958,11 @@ void hdstill_frame (const unsigned char *raster, unsigned char *out,
 	 * no newer one on the screen covers are its own, most of all the
 	 * ones that are not its background */
 	memset (cover, 0, sizeof (cover));
+	if (bodies_on) memset (body_pix, 0, sizeof (body_pix));
 	for (i = 0; i < n_recs; i++) {
 		struct rec *r = order[i];
 		const unsigned int *shown_pal = r->y >= CTRL_Y ? ctrl_pal : pal;
-		int vis = 0, match = 0, dvis = 0, dmatch = 0, taken = 0, on, defer, solid, onmain, tex = -1;
+		int vis = 0, match = 0, dvis = 0, dmatch = 0, taken = 0, on, defer, solid, onmain, tex = -1, ci = 0;
 		float k = -1;
 
 		for (yy = 0; yy < r->h; yy++) {
@@ -2734,7 +2997,7 @@ void hdstill_frame (const unsigned char *raster, unsigned char *out,
 		defer = taken * 100 > vis * DEFER_PCT;
 		if (r->art >= 0 && !defer) {
 			k = fade (r, pal, ctrl_pal);
-			if (k > 0 && (tex = get_tex (r->art, r->x, r->y)) < 0) k = -1;
+			if (k > 0 && (tex = get_tex (r->art, r->x, r->y, 0)) < 0) k = -1;
 		}
 		if (debug) {
 			int what = defer ? 4 : k > 0 ? 2 : 1;
@@ -2747,10 +3010,17 @@ void hdstill_frame (const unsigned char *raster, unsigned char *out,
 			note_seen (r, k > 0);
 		}
 		onmain = r->art >= 0 && ON_MAIN (arts[r->art].kind);
+		if (k > 0 && (arts[r->art].flags & F_INFO)) info = 1;
+		/* maybe a body on a star's information page */
+		if (bodies_on && r->art < 0 && !defer && (r->used & 1) && r->y + r->h <= CTRL_Y && n_cand < MAX_BODY) {
+			cand[n_cand++] = r;
+			ci = n_cand;
+		}
 		for (yy = 0; yy < r->h; yy++) {
 			for (xx = 0; xx < r->w; xx++) {
 				int o = (r->y + yy) * ST_W + r->x + xx, p = r->pix[yy * r->w + xx];
 				if (cover[o]) continue;
+				if (ci) body_pix[o] = ci;
 				/* a key replaced on the main screen leaves the row it
 				 * reaches into the panel to the panel: where it is the
 				 * panel's own pixel, the panel's art shows */
@@ -2771,8 +3041,10 @@ void hdstill_frame (const unsigned char *raster, unsigned char *out,
 			/* its background goes too: the art goes on it */
 			s->bg = onmain ? pal[r->bg] | 0xff000000u : 0;
 			s->vh = onmain && r->y + r->h > CTRL_Y ? CTRL_Y - r->y : r->h;
+			s->body = 0;
 		}
 	}
+	if (info) add_bodies (cand, n_cand, raster, out, pal);
 	/* oldest first, so newer art goes on top */
 	for (i = 0, j = n_shown - 1; i < j; i++, j--) {
 		struct shown t = shown[i];
@@ -2863,6 +3135,7 @@ void hdstill_draw (const unsigned int *pal, const unsigned int *ctrl_pal)
 		for (i = 0; i < n_shown; i++) {
 			const struct shown *d = &shown[i];
 			float x0 = d->x, x1 = d->x + d->w, y0 = d->y, y1 = d->y + d->vh;
+			if (d->body) continue;
 			glTexCoord2f (x0 / scr_w, y0 / scr_h);
 			glVertex2f (x0, ST_H - y0);
 			glTexCoord2f (x1 / scr_w, y0 / scr_h);

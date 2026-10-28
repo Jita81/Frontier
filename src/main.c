@@ -190,6 +190,7 @@ void Main_EventHandler()
 	  input.abs_y = new_abs_y;
 
   Input_Update ();
+  Screen_Stalled ();
 }
 
 
@@ -217,6 +218,7 @@ void Main_ReadParameters(int argc, char *argv[])
 			   "  --old-renderer        Start with the old renderer.\n"
                "  --flat-hulls          Flat ship faces, no hull plating.\n"
                "  --flat-sky            The game's flat Milky Way band (no star clouds).\n"
+               "  --flat-planets        Hard light zones and flat atmosphere rings.\n"
                "  --pixel-text          Keep the original bitmap font (no HD text;\n"
                "                        FE2_HD_FONT=<PostScript name> picks the font).\n"
                "  --pixel-art           Keep the game's own bitmaps (no HD stills).\n"
@@ -243,6 +245,8 @@ void Main_ReadParameters(int argc, char *argv[])
 		flat_hulls = 1;
 	  else if (!strcmp(argv[i], "--flat-sky"))
 		flat_sky = 1;
+	  else if (!strcmp(argv[i], "--flat-planets"))
+		flat_planets = 1;
 	  else if (!strcmp(argv[i], "--pixel-text"))
 		pixel_text = 1;
 	  else if (!strcmp(argv[i], "--pixel-art"))

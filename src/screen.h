@@ -28,6 +28,7 @@ enum RENDERERS {
 extern enum RENDERERS use_renderer;
 extern int flat_hulls;
 extern int flat_sky;
+extern int flat_planets;
 extern int pixel_text;
 extern int pixel_art;
 extern int pixel_faces;
@@ -55,6 +56,9 @@ extern void Screen_Init(void);
 extern void Screen_UnInit(void);
 extern void Screen_ToggleFullScreen (void);
 extern void Screen_ToggleRenderer ();
+/* Once a host update: show the screen again when the game has drawn no
+ * frame for a while on a page that waits for keys */
+extern void Screen_Stalled (void);
 
 extern void Nu_PutComplexStart ();
 extern void Nu_PutTriangle ();
