@@ -14,19 +14,26 @@
  * turns, they do not jump back and forth) is drawn on the HD scanner's
  * glass, each a thin stalk and a round blip in the game's colour.
  *
- * Gun sight.  The game draws it in one colour at a fixed place; where
- * nearly all of its 52 pixels are on the screen in one colour (and the
- * gaps between its ticks are not), they are taken out and the sight is
- * drawn again as thin lines with a faint glow.  hdtext is told which
- * pixels they are, so a label the sight was drawn over is still read; a
- * label over the sight is moved clear of it.
+ * Gun sight.  The game draws it in one colour at a fixed place: 52 pixels
+ * looking forward, the same less its four diagonal ticks (32) looking
+ * back.  Where nearly all of either is on the screen in one colour (and
+ * the gaps between its ticks are not), they are taken out and the sight
+ * is drawn again, the ticks it has, as thin lines with a faint glow.
+ * hdtext is told which pixels they are, so a label the sight was drawn
+ * over is still read; a label over the sight is moved clear of it.
  *
  * Lock boxes.  Over a 3D view (the GL renderer leaves the view clear in
- * the ST screen) the target's boxes are the only straight lines but the
- * sight's and the labels':
- * where a horizontal and a vertical line of one colour meet at their ends
- * there is a corner, and a corner bracket in the interface's accent colour
- * is drawn in place of the box.
+ * the ST screen; not a station page, which hdback has a picture behind)
+ * the target's boxes are the only straight lines but the sight's and the
+ * labels'.  A line runs on across a glyph's cell and across pixels another
+ * layer took out, as the game drew those over it, so a corner hidden under
+ * a label is still found.  Where a horizontal and a vertical line of one
+ * colour meet at their ends there is a corner, and a corner bracket in the
+ * interface's accent colour is drawn in place of the box.  Each line with
+ * a corner, and each of a box's colour the view's edge cuts off, is taken
+ * out end to end, all but the glyph ink hdtext redrew; one cut off with
+ * no corner in it is drawn again as a faint accent line, the brackets'
+ * weight.
  */
 #ifdef __APPLE__
 #include <OpenGL/gl.h>
@@ -37,6 +44,7 @@
 #include "screen.h"
 #include "hdtext.h"
 #include "hdinst.h"
+#include "hdback.h"
 
 #define ST_W		320
 #define ST_H		200
@@ -220,17 +228,24 @@ static int fresh;			/* hdinst_frame ran for the frame drawn */
 static struct contact shown[MAX_CON];
 static int n_shown;
 
-/* the gun sight: 52 pixels */
+/* the gun sight: 52 pixels, the first 32 its four straight ticks */
 static short sight[52][2];
-static int sight_col = -1;
+static int sight_col = -1, sight_n;	/* 52, or 32: no diagonal ticks */
 static unsigned char sight_mask[ST_W * ST_H];
 
 /* corner brackets: the corner pixel's centre and the arms (signed, ST) */
 #define MAX_LINE	256
 #define MAX_BRACKET	64
-struct line { short a, b, at; unsigned char col, used; };	/* a..b along, at across */
+struct line {
+	short a, b, at;		/* a..b along, at across */
+	short ea, eb;		/* a and b on under what the game drew over it */
+	unsigned char col, used;
+};
 static struct { float x, y, h, v; } brackets[MAX_BRACKET];
 static int n_brackets;
+#define MAX_EDGE	16
+static struct { float x0, y0, x1, y1; } edges[MAX_EDGE];	/* faint: a box's cut-off sides */
+static int n_edges;
 
 static void sight_init (void)
 {
@@ -258,7 +273,7 @@ static int on (void)
 
 void hdinst_mask (const unsigned char *raster)
 {
-	int count[256], i, c = 0;
+	int count[256], i, c = 0, d = 0;
 
 	/* the buffer being noted is done once it is shown */
 	if (armed == ((VideoBase & 0x100000) != 0)) commit ();
@@ -268,14 +283,20 @@ void hdinst_mask (const unsigned char *raster)
 	hdtext_skip (NULL);
 	if (!on ()) return;
 	memset (count, 0, sizeof (count));
-	for (i = 0; i < 52; i++) count[raster[sight[i][1] * ST_W + sight[i][0]]]++;
+	for (i = 0; i < 32; i++) count[raster[sight[i][1] * ST_W + sight[i][0]]]++;
 	for (i = 1; i < 256; i++)
 		if (count[i] > count[c]) c = i;
-	if (c == 255 || count[c] < 40 || raster[84 * ST_W + 160] == c ||
+	if (c == 255 || count[c] < 25 || raster[84 * ST_W + 160] == c ||
 	    raster[84 * ST_W + 156] == c || raster[80 * ST_W + 160] == c)
 		return;
+	for (i = 32; i < 52; i++) d += raster[sight[i][1] * ST_W + sight[i][0]] == c;
+	/* the forward sight (40 of 52 as before), or the rear one: its
+	 * straight ticks with no diagonal ones */
+	if (count[c] + d >= 40) sight_n = 52;
+	else if (d <= 2) sight_n = 32;
+	else return;
 	sight_col = c;
-	for (i = 0; i < 52; i++) {
+	for (i = 0; i < sight_n; i++) {
 		int o = sight[i][1] * ST_W + sight[i][0];
 		sight_mask[o] = raster[o] == c;
 	}
@@ -315,68 +336,69 @@ static void contacts (const unsigned char *raster, unsigned char *out)
 		if (newest->con[i].col < 16) shown[n_shown++] = newest->con[i];
 }
 
-/* lines of one colour in the 3D view, at least 5 pixels of them not the
- * sight's or a label's: rows when horiz, else columns */
-static int find_lines (const unsigned char *raster, const unsigned char *ex, int horiz,
-		       struct line *l)
+/* A line's own pixels: its colour, as the game drew them (hdtext has not
+ * redrawn them).  It runs on across a glyph's cell (a box's edge under a
+ * label) and across what another layer took out or redrew (the sight's
+ * pixels, a glyph's ink): the game drew those over it. */
+#define OWN(o, c)	(raster[o] == (c) && out[o] == (c))
+#define ACROSS(o)	(out[o] != raster[o] || cell[o])
+#define OVER(o)		(raster[o] != 255 && ACROSS (o))
+
+/* lines of one colour in the 3D view, ending at their own pixels and at
+ * least 5 of them: rows when horiz, else columns */
+static int find_lines (const unsigned char *raster, const unsigned char *out,
+		       const unsigned char *cell, int horiz, struct line *l)
 {
 	int n = 0, at, i, len = horiz ? ST_W : VIEW_H, across = horiz ? VIEW_H : ST_W;
-
-	for (at = 0; at < across; at++) {
-		for (i = 0; i < len; ) {
-			int o = horiz ? at * ST_W + i : i * ST_W + at, c = raster[o], j = i, k = !ex[o];
-			if (c == 255) {
-				i++;
-				continue;
-			}
-			/* a line runs on through a label beside it: its own
-			 * pixels there must not be left behind */
-			while (j + 1 < len) {
-				int q = horiz ? at * ST_W + j + 1 : (j + 1) * ST_W + at;
-				if (raster[q] != c) break;
-				k += !ex[q];
-				j++;
+#define AT(i) (horiz ? at * ST_W + (i) : (i) * ST_W + at)
+	for (at = 0; at < across; at++)
+		for (i = 0; i < len; i++) {
+			int c = raster[AT (i)], j = i, k = 1, q;
+			if (c == 255 || !OWN (AT (i), c)) continue;
+			for (q = i + 1; q < len; q++) {
+				if (OWN (AT (q), c)) {
+					j = q;
+					k++;
+				} else if (!ACROSS (AT (q)))
+					break;
 			}
 			if (k >= 5 && n < MAX_LINE) {
-				l[n].a = i;
-				l[n].b = j;
+				l[n].a = l[n].ea = i;
+				l[n].b = l[n].eb = j;
+				while (l[n].ea > 0 && OVER (AT (l[n].ea - 1))) l[n].ea--;
+				while (l[n].eb < len - 1 && OVER (AT (l[n].eb + 1))) l[n].eb++;
 				l[n].at = at;
 				l[n].col = c;
 				l[n++].used = 0;
 			}
-			i = j + 1;
+			i = j;
 		}
-	}
+#undef AT
 	return n;
 }
 
-static void take_out (const unsigned char *raster, unsigned char *out, const struct line *l, int horiz)
+/* A box's line goes: every pixel of it the game drew, end to end, but a
+ * glyph's ink hdtext redrew.  One cut off by the edge of the view with no
+ * corner in it is drawn again as a faint line out to the edge. */
+static void box_line (const unsigned char *raster, unsigned char *out, const struct line *l,
+		      int horiz, const unsigned char *boxcol)
 {
-	int i;
+	int i, len = horiz ? ST_W : VIEW_H;
+	float a, b, at;
+
+	if (!l->used && !(boxcol[l->col] && (l->ea <= 1 || l->eb >= len - 2))) return;
 	for (i = l->a; i <= l->b; i++) {
 		int o = horiz ? l->at * ST_W + i : i * ST_W + l->at;
-		if (raster[o] == l->col) out[o] = 255;
+		if (OWN (o, l->col)) out[o] = 255;
 	}
-}
-
-/* Where something the game drew cuts a line (the speed readout's strip
- * across the foot of the view), the rest of it, out to the view's edge
- * within 12 pixels, goes with it. */
-static void run_on (const unsigned char *raster, unsigned char *out, const unsigned char *ex,
-		    const struct line *l, int horiz)
-{
-	int len = horiz ? ST_W : VIEW_H, d, i, j, k, clean;
-#define AT(n) (horiz ? l->at * ST_W + (n) : (n) * ST_W + l->at)
-	for (d = -1; d <= 1; d += 2) {
-		for (i = d > 0 ? l->b + 1 : l->a - 1; i >= 0 && i < len && raster[AT (i)] != l->col; i += d)
-			if (abs (i - (d > 0 ? l->b : l->a)) > 12) break;
-		if (i < 0 || i >= len || raster[AT (i)] != l->col) continue;
-		for (j = i, clean = 1; j >= 0 && j < len && raster[AT (j)] == l->col; j += d)
-			clean &= !ex[AT (j)];
-		if (!clean || (d > 0 ? j < len : j >= 0)) continue;
-		for (k = i; k != j; k += d) out[AT (k)] = 255;
-	}
-#undef AT
+	if (l->used || n_edges >= MAX_EDGE) return;
+	a = l->ea <= 1 ? 0 : l->a;
+	b = l->eb >= len - 2 ? len : l->b + 1;
+	at = l->at + 0.5f;
+	edges[n_edges].x0 = horiz ? a : at;
+	edges[n_edges].y0 = horiz ? at : a;
+	edges[n_edges].x1 = horiz ? b : at;
+	edges[n_edges++].y1 = horiz ? at : b;
 }
 
 static float arm (int len)
@@ -387,36 +409,39 @@ static float arm (int len)
 
 static void boxes (const unsigned char *raster, unsigned char *out)
 {
-	static unsigned char ex[ST_W * VIEW_H];
+	static unsigned char cell[ST_W * VIEW_H];
 	static struct line h[MAX_LINE], v[MAX_LINE];
 	struct hdtext_run *runs;
-	unsigned char boxcol[256];
+	unsigned char boxcol[256], full[256][2];
 	int nh, nv, i, j, eh, ev, clear = 0, n_runs;
 
+	/* a page over a picture (a station's), not a 3D view */
+	if (hdback_active ()) return;
 	for (i = 0; i < ST_W * VIEW_H; i++) clear += raster[i] == 255;
 	if (clear * 10 < ST_W * VIEW_H * 7) return;
-	/* not the sight, not text */
-	memset (ex, 0, sizeof (ex));
-	if (sight_col >= 0)
-		for (i = 0; i < 52; i++) ex[sight[i][1] * ST_W + sight[i][0]] = 1;
+	/* the cells hdtext found glyphs in */
+	memset (cell, 0, sizeof (cell));
 	n_runs = hdtext_runs (&runs);
-	for (i = 0; i < n_runs; i++) {
-		int x, y;
-		for (y = runs[i].y; y < runs[i].y + 9 && y < VIEW_H; y++)
-			for (x = runs[i].ink0 - 1; x <= runs[i].ink1; x++)
-				if (x >= 0 && x < ST_W && y >= 0) ex[y * ST_W + x] = 1;
-	}
-	nh = find_lines (raster, ex, 1, h);
-	nv = find_lines (raster, ex, 0, v);
+	for (i = 0; i < n_runs; i++)
+		for (j = 0; j < runs[i].n; j++) {
+			int x0 = hdtext_glyph_x (&runs[i], j), x, y;
+			for (y = runs[i].y; y <= runs[i].y + 8 && y < VIEW_H; y++)
+				for (x = x0; x <= x0 + 8 && x < ST_W; x++)
+					if (x >= 0 && y >= 0) cell[y * ST_W + x] = 1;
+		}
+	nh = find_lines (raster, out, cell, 1, h);
+	nv = find_lines (raster, out, cell, 0, v);
 
 	/* the innermost box is a glyph (the font's 8x8 square), drawn as text:
 	 * hdtext has taken it out, and it gets brackets like the others */
+	memset (boxcol, 0, sizeof (boxcol));
 	for (i = 0; i < n_runs; i++) {
 		struct hdtext_run *r = &runs[i];
 		if (r->n != 1 || r->chr0 != 0x81 - 0x20 || r->y + 8 > VIEW_H || r->hide ||
 		    n_brackets + 4 > MAX_BRACKET)
 			continue;
 		r->hide = 1;
+		boxcol[r->col] = 1;
 		for (j = 0; j < 4; j++) {
 			brackets[n_brackets].x = r->x0 + (j & 1 ? 7.5f : 0.5f);
 			brackets[n_brackets].y = r->y + (j & 2 ? 7.5f : 0.5f);
@@ -425,16 +450,17 @@ static void boxes (const unsigned char *raster, unsigned char *out)
 		}
 	}
 
-	/* corners: an end of each meeting */
-	memset (boxcol, 0, sizeof (boxcol));
+	/* corners: an end of each meeting, within a pixel or under what the
+	 * game drew over the corner (the speed strip's text) */
 	for (i = 0; i < nh; i++)
 		for (j = 0; j < nv; j++) {
 			if (h[i].col != v[j].col) continue;
 			for (eh = 0; eh < 2; eh++)
 				for (ev = 0; ev < 2; ev++) {
-					int hx = eh ? h[i].b : h[i].a, vy = ev ? v[j].b : v[j].a;
-					if (abs (hx - v[j].at) > 1 || abs (vy - h[i].at) > 1 ||
-					    n_brackets >= MAX_BRACKET)
+					int h0 = eh ? h[i].b : h[i].ea, h1 = eh ? h[i].eb : h[i].a;
+					int v0 = ev ? v[j].b : v[j].ea, v1 = ev ? v[j].eb : v[j].a;
+					if (v[j].at < h0 - 1 || v[j].at > h1 + 1 ||
+					    h[i].at < v0 - 1 || h[i].at > v1 + 1 || n_brackets >= MAX_BRACKET)
 						continue;
 					brackets[n_brackets].x = v[j].at + 0.5f;
 					brackets[n_brackets].y = h[i].at + 0.5f;
@@ -444,19 +470,21 @@ static void boxes (const unsigned char *raster, unsigned char *out)
 					boxcol[h[i].col] = 1;
 				}
 		}
-	/* the boxes' lines go, and the ones of the boxes' colour cut off by
-	 * the edge of the view (no corner shows there) */
+	/* a box with no corner in the view: two of its sides edge to edge */
+	memset (full, 0, sizeof (full));
 	for (i = 0; i < nh; i++)
-		if (h[i].used || (boxcol[h[i].col] && (h[i].a <= 1 || h[i].b >= ST_W - 2))) {
-			take_out (raster, out, &h[i], 1);
-			run_on (raster, out, ex, &h[i], 1);
-		}
+		if (h[i].ea <= 1 && h[i].eb >= ST_W - 2 && ++full[h[i].col][0] >= 2) boxcol[h[i].col] = 1;
 	for (i = 0; i < nv; i++)
-		if (v[i].used || (boxcol[v[i].col] && (v[i].a <= 1 || v[i].b >= VIEW_H - 2))) {
-			take_out (raster, out, &v[i], 0);
-			run_on (raster, out, ex, &v[i], 0);
-		}
+		if (v[i].ea <= 1 && v[i].eb >= VIEW_H - 2 && ++full[v[i].col][1] >= 2) boxcol[v[i].col] = 1;
+
+	/* the boxes' lines go, and the ones of the boxes' colour cut off by
+	 * the edge of the view */
+	for (i = 0; i < nh; i++) box_line (raster, out, &h[i], 1, boxcol);
+	for (i = 0; i < nv; i++) box_line (raster, out, &v[i], 0, boxcol);
 }
+#undef OWN
+#undef ACROSS
+#undef OVER
 
 /* Each tick of the sight, ST pixel edges: x0, y0, x1, y1 */
 static const float ticks[8][4] = {
@@ -467,7 +495,7 @@ static const float ticks[8][4] = {
 static int hits_sight (float x0, float y0, float x1, float y1)
 {
 	int i;
-	for (i = 0; i < 8; i++)
+	for (i = 0; i < (sight_n == 52 ? 8 : 4); i++)
 		if (x0 < ticks[i][2] && x1 > ticks[i][0] && y0 < ticks[i][3] && y1 > ticks[i][1])
 			return 1;
 	return 0;
@@ -512,10 +540,11 @@ void hdinst_frame (const unsigned char *raster, unsigned char *out)
 	fresh = 1;
 	n_shown = 0;
 	n_brackets = 0;
+	n_edges = 0;
 	if (!on ()) return;
 	contacts (raster, out);
 	if (sight_col >= 0) {
-		for (i = 0; i < 52; i++) {
+		for (i = 0; i < sight_n; i++) {
 			int o = sight[i][1] * ST_W + sight[i][0];
 			if (raster[o] == sight_col) out[o] = 255;
 		}
@@ -616,7 +645,7 @@ void hdinst_draw (const unsigned int *pal, const unsigned int *ctrl_pal)
 
 	if (!fresh) return;
 	fresh = 0;
-	if (!n_shown && sight_col < 0 && !n_brackets) return;
+	if (!n_shown && sight_col < 0 && !n_brackets && !n_edges) return;
 	glGetIntegerv (GL_VIEWPORT, vp);
 	if (vp[2] > 0 && vp[3] > 0) {
 		SX = vp[2] / (float) ST_W;
@@ -660,15 +689,26 @@ void hdinst_draw (const unsigned int *pal, const unsigned int *ctrl_pal)
 		stroke (167, 84.5f, 175, 84.5f, 1);
 		stroke (160.5f, 69, 160.5f, 77, 1);
 		stroke (160.5f, 92, 160.5f, 100, 1);
-		stroke (146, 70, 151, 75, 1);
-		stroke (174, 70, 169, 75, 1);
-		stroke (174, 99, 169, 94, 1);
-		stroke (146, 99, 151, 94, 1);
+		if (sight_n == 52) {
+			stroke (146, 70, 151, 75, 1);
+			stroke (174, 70, 169, 75, 1);
+			stroke (174, 99, 169, 94, 1);
+			stroke (146, 99, 151, 94, 1);
+		}
+	}
+
+	/* a lock box's sides with no corner in the view: faint, the
+	 * brackets' weight, stopping short of the view's edge */
+	rgb (C_ACCENT, 0);
+	for (i = 0; i < n_edges; i++) {
+		float ex = 1.1f / SX, ey = 1.1f / SY;
+		seg (fmaxf (edges[i].x0, ex), fmaxf (edges[i].y0, ey),
+		     fminf (edges[i].x1, ST_W - ex), fminf (edges[i].y1, VIEW_H - ey),
+		     2.2f * K, 1.1f, 0.35f);
 	}
 
 	/* the lock boxes' corners: each arm starts half a line's width past
 	 * the corner, so the two meet square */
-	rgb (C_ACCENT, 0);
 	for (i = 0; i < n_brackets; i++) {
 		float x = brackets[i].x, y = brackets[i].y, hw = 1.1f * K;
 		float h = brackets[i].h, v = brackets[i].v;
