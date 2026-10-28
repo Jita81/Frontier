@@ -359,10 +359,30 @@ static void take_out (const unsigned char *raster, unsigned char *out, const str
 	}
 }
 
+/* Where something the game drew cuts a line (the speed readout's strip
+ * across the foot of the view), the rest of it, out to the view's edge
+ * within 12 pixels, goes with it. */
+static void run_on (const unsigned char *raster, unsigned char *out, const unsigned char *ex,
+		    const struct line *l, int horiz)
+{
+	int len = horiz ? ST_W : VIEW_H, d, i, j, k, clean;
+#define AT(n) (horiz ? l->at * ST_W + (n) : (n) * ST_W + l->at)
+	for (d = -1; d <= 1; d += 2) {
+		for (i = d > 0 ? l->b + 1 : l->a - 1; i >= 0 && i < len && raster[AT (i)] != l->col; i += d)
+			if (abs (i - (d > 0 ? l->b : l->a)) > 12) break;
+		if (i < 0 || i >= len || raster[AT (i)] != l->col) continue;
+		for (j = i, clean = 1; j >= 0 && j < len && raster[AT (j)] == l->col; j += d)
+			clean &= !ex[AT (j)];
+		if (!clean || (d > 0 ? j < len : j >= 0)) continue;
+		for (k = i; k != j; k += d) out[AT (k)] = 255;
+	}
+#undef AT
+}
+
 static float arm (int len)
 {
 	float a = 0.3f * len;
-	return a > 7 ? 7 : a < 3 ? 3 : a;
+	return a > 7 ? 7 : a < 2 ? 2 : a;
 }
 
 static void boxes (const unsigned char *raster, unsigned char *out)
@@ -389,6 +409,22 @@ static void boxes (const unsigned char *raster, unsigned char *out)
 	nh = find_lines (raster, ex, 1, h);
 	nv = find_lines (raster, ex, 0, v);
 
+	/* the innermost box is a glyph (the font's 8x8 square), drawn as text:
+	 * hdtext has taken it out, and it gets brackets like the others */
+	for (i = 0; i < n_runs; i++) {
+		struct hdtext_run *r = &runs[i];
+		if (r->n != 1 || r->chr0 != 0x81 - 0x20 || r->y + 8 > VIEW_H || r->hide ||
+		    n_brackets + 4 > MAX_BRACKET)
+			continue;
+		r->hide = 1;
+		for (j = 0; j < 4; j++) {
+			brackets[n_brackets].x = r->x0 + (j & 1 ? 7.5f : 0.5f);
+			brackets[n_brackets].y = r->y + (j & 2 ? 7.5f : 0.5f);
+			brackets[n_brackets].h = (j & 1 ? -1 : 1) * arm (8);
+			brackets[n_brackets++].v = (j & 2 ? -1 : 1) * arm (8);
+		}
+	}
+
 	/* corners: an end of each meeting */
 	memset (boxcol, 0, sizeof (boxcol));
 	for (i = 0; i < nh; i++)
@@ -411,11 +447,15 @@ static void boxes (const unsigned char *raster, unsigned char *out)
 	/* the boxes' lines go, and the ones of the boxes' colour cut off by
 	 * the edge of the view (no corner shows there) */
 	for (i = 0; i < nh; i++)
-		if (h[i].used || (boxcol[h[i].col] && (h[i].a <= 1 || h[i].b >= ST_W - 2)))
+		if (h[i].used || (boxcol[h[i].col] && (h[i].a <= 1 || h[i].b >= ST_W - 2))) {
 			take_out (raster, out, &h[i], 1);
+			run_on (raster, out, ex, &h[i], 1);
+		}
 	for (i = 0; i < nv; i++)
-		if (v[i].used || (boxcol[v[i].col] && (v[i].a <= 1 || v[i].b >= VIEW_H - 2)))
+		if (v[i].used || (boxcol[v[i].col] && (v[i].a <= 1 || v[i].b >= VIEW_H - 2))) {
 			take_out (raster, out, &v[i], 0);
+			run_on (raster, out, ex, &v[i], 0);
+		}
 }
 
 /* Each tick of the sight, ST pixel edges: x0, y0, x1, y1 */
@@ -481,7 +521,9 @@ void hdinst_frame (const unsigned char *raster, unsigned char *out)
 		}
 		labels ();
 	}
-	boxes (raster, out);
+	/* the boxes are told from text by where hdtext found it: under
+	 * --pixel-text it finds none, and the game's boxes stay */
+	if (!pixel_text) boxes (raster, out);
 }
 
 /* ---------------------------------------------------------------- */
