@@ -1865,6 +1865,7 @@ void Nu_DrawBezierLine (void **data)
 	znode_rdvertexf (data, ctrlpoints[3]);
 	znode_rdcolor (data, &r, &g, &b);
 	
+	{ extern int tmp_lg; if (tmp_lg) fprintf (stderr, "P bez %d,%d,%d cp=%.0f,%.0f,%.0f %.0f,%.0f,%.0f %.0f,%.0f,%.0f %.0f,%.0f,%.0f\n", r, g, b, ctrlpoints[0][0], ctrlpoints[0][1], ctrlpoints[0][2], ctrlpoints[1][0], ctrlpoints[1][1], ctrlpoints[1][2], ctrlpoints[2][0], ctrlpoints[2][1], ctrlpoints[2][2], ctrlpoints[3][0], ctrlpoints[3][1], ctrlpoints[3][2]); } /*TMPDBG*/
 	delta = 1.0f/20;
 	glLineWidth (px_scale ());	/* as Nu_DrawLine */
 	glColor3ub (r, g, b);
@@ -2213,6 +2214,7 @@ void Nu_DrawTwinklyCircle (void **data)
 	//printf ("%x (%x)\n", GetReg (2), isize);
 	
 	size = -0.002*((short)dreg2)*v1[2];
+	{ extern int tmp_lg; if (tmp_lg) fprintf (stderr, "P twk %d,%d,%d d2=%d v=%d,%d,%d\n", r, g, b, (short) dreg2, v1[0], v1[1], v1[2]); } /*TMPDBG*/
 	
 	/* billboard: always face the camera, otherwise this twinkle/star
 	 * dot degenerates to an invisible line when viewed edge-on. */
@@ -3411,6 +3413,7 @@ void Nu_DrawCircle (void **data)
 	//printf ("%x (%x)\n", GetReg (2), isize);
 	
 	size = -0.002*((short)dreg2)*v1[2];
+	{ extern int tmp_lg; if (tmp_lg) fprintf (stderr, "P cir %d,%d,%d d2=%d v=%d,%d,%d\n", r, g, b, (short) dreg2, v1[0], v1[1], v1[2]); } /*TMPDBG*/
 	
 	/* billboard: this is used for distant planets/stars rendered as a
 	 * flat shaded dot, which must always face the camera. */
@@ -3657,6 +3660,7 @@ void Nu_DrawBlob (void **data)
 	split_rgb444i (znode_rdlong (data), &r, &g, &b);
 	rad = znode_rdlong (data) & 0xffff;
 	edges = rad+4;
+	{ extern int tmp_lg; if (tmp_lg) fprintf (stderr, "P blob %u,%u,%u rad=%d v=%d,%d,%d\n", r>>24, g>>24, b>>24, rad, v1[0], v1[1], v1[2]); } /*TMPDBG*/
 	
 	glColor3ui (r, g, b);
 	if (rad < 3) {
@@ -3818,6 +3822,7 @@ NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
  * order - see draw_3dview for why there is no depth test to fight with.
  */
 static void draw_3dview (struct ZNode *node);
+unsigned tmp_kinds; int tmp_lg; /*TMPDBG*/
 
 static void Nu_DrawPrimitive (void *data)
 {
@@ -3827,6 +3832,7 @@ static void Nu_DrawPrimitive (void *data)
 		fnum = znode_rdlong (&data);
 		//fprintf (stderr, "%d ", fnum);
 		if (!fnum) return;
+		{ extern unsigned tmp_kinds; tmp_kinds |= 1u << fnum; } /*TMPDBG*/
 		if (fnum != NU_TRIANGLE && fnum != NU_QUAD) hull_end ();
 		if (fnum == NU_SUBTREE) {
 			draw_3dview (subtree_root[znode_rdlong (&data)]);
@@ -3915,10 +3921,14 @@ void Nu_DrawScreen ()
 			fprintf (stderr, "GL: 3D scene too big for the scene buffers, frame dropped (%u so far)\n",
 				 scene_overflows);
 	} else {
+		{ static int fr2; extern int tmp_lg; tmp_lg = getenv ("FE2_SYSLOG") && (++fr2 % 25) == 0 && fe2_bgcol == 14; } /*TMPDBG*/
 		draw_3dview (znode_start);
 	}
 	hull_end ();
 	//fprintf (stderr, "\n");
+	{ extern unsigned tmp_kinds; static int fr; /*TMPDBG*/
+	  if (getenv ("FE2_SYSLOG") && (++fr % 25) == 0) fprintf (stderr, "SYSLOG bg=%d view=%d tools=%d sm=%d kinds=%x\n", fe2_bgcol, STMemory_ReadByte (__DL5eb6_a6_base + 706) & 255, STMemory_ReadByte (__DL5eb6_a6_base + 42) & 255, STMemory_ReadByte (__DL5eb6_a6_base + 536) & 255, tmp_kinds);
+	  tmp_kinds = 0; }
 
 #if PRIM_DEBUG
 	prim_debug_frame_end ();

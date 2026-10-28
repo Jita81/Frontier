@@ -43,6 +43,7 @@
 #include "hdui.h"
 #include "hdtext.h"
 #include "hdback.h"
+#include "hdstill.h"
 
 /* screen.h's renderers (it needs SDL): only what this file uses */
 enum RENDERERS { R_OLD, R_GLWIRE, R_GL, R_MAX };
@@ -131,8 +132,8 @@ struct button {
 	unsigned char used;	/* the layout replaced it */
 };
 
-enum { P_NONE, P_STATION, P_F3, P_PREFS, P_START, P_OTHER };
-static const char *const page_name[] = { "none", "station", "f3", "prefs", "start", "other" };
+enum { P_NONE, P_STATION, P_F3, P_PREFS, P_START, P_INFO, P_OTHER };
+static const char *const page_name[] = { "none", "station", "f3", "prefs", "start", "info", "other" };
 
 /* layers */
 enum { L_BACK, L_UNDER, L_OVER };
@@ -1768,7 +1769,40 @@ static int classify (void)
 		    fr_ca[i][3] >= 120 && fr_ca[i][3] <= 140)
 			return P_F3;
 	if (heads >= 2 || (n_btn >= 10 && colons >= 2)) return P_PREFS;
+	/* a star's information page: its keys in the panel (the trade
+	 * graph's is on no other) */
+	{
+		struct hdstill_panel p;
+		if (hdstill_panel (&p) && p.slot[7] == G_TRADE) return P_INFO;
+	}
 	return P_NONE;
+}
+
+/* A star's information page: its text, under the picture of its bodies,
+ * on a card */
+static void layout_info (unsigned char *out)
+{
+	int i, x, y, x0 = ST_W, y0 = CTRL_Y, x1 = -1, y1 = -1;
+
+	for (i = 0; i < n_runs; i++) {
+		struct hdtext_run *r = &runs[i];
+		if (!ON_PAGE (r)) continue;
+		style (r, HDT_BODY, C_TEXT);
+		if (r->ink0 < x0) x0 = r->ink0;
+		if (r->ink1 > x1) x1 = r->ink1;
+		if (r->y < y0) y0 = r->y;
+		if (r->y + 8 > y1) y1 = r->y + 8;
+	}
+	if (x1 < 0) return;
+	x0 = x0 < 7 ? 0 : x0 - 7;
+	x1 = x1 + 7 > ST_W ? ST_W : x1 + 7;
+	y0 = y0 < 4 ? 0 : y0 - 4;
+	y1 = y1 + 4 > CTRL_Y ? CTRL_Y : y1 + 4;
+	add (E_CARD, L_UNDER, x0, y0, x1, y1);
+	/* the page's black there: the card */
+	for (y = y0; y < y1; y++)
+		for (x = x0; x < x1; x++)
+			if (out[y * ST_W + x] == 0) out[y * ST_W + x] = 255;
 }
 
 /* A box at the foot of a page with its label (go back): a pill */
@@ -2916,6 +2950,7 @@ void hdui_frame (const unsigned char *raster, unsigned char *out,
 	case P_F3: layout_f3 (out); break;
 	case P_PREFS: layout_prefs (pal); break;
 	case P_START: layout_start (); break;
+	case P_INFO: layout_info (out); break;
 	}
 	for (i = 0; i < n_btn; i++)
 		if (btn[i].used) take_out (raster, out, &btn[i]);
