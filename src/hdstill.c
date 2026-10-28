@@ -92,7 +92,7 @@ enum {
 	G_PERSON, G_LAUNCH, G_LIST, G_ENGINES_OFF, G_BEAM, G_RETICLE, G_ORRERY,
 	G_LOAD, G_SAVE, G_DELETE, G_EXIT, G_SECTOR, G_ROUTE, G_TAKEOFF,
 	G_DOC, G_ALPHA, G_AUTOPILOT, G_GEAR, G_JUMP, G_MARKET, G_PEOPLE,
-	G_STARS
+	G_STARS, G_ROSTER
 };
 #define G_OFF		0x80	/* with an icon: crossed out, not to be had now */
 #define GX(g)		((g) | G_OFF)
@@ -152,6 +152,7 @@ static const struct art arts[] = {
 	{ 0x23a4b63e9aa289e4ULL, 16, 11, K_PANEL, 0, 1, { G_RETICLE }, "icon pick (system map)" },
 	{ 0xc9ae8b98a3cdfdd7ULL, 16, 11, K_PANEL, 0, 1, { G_GEAR }, "icon gear down" },
 	{ 0xabe8d5e4025cc7acULL, 16, 11, K_PANEL, 0, 1, { G_JUMP }, "icon hyperspace (in flight)" },
+	{ 0xd809a46516fb8361ULL, 16, 11, K_PANEL, 0, 1, { G_ROSTER }, "icon passengers and contracts" },
 	{ 0x96349724541eb108ULL, 16, 11, K_PANEL, 0, 1, { G_ROUTE }, "icon route" },
 	{ 0x38afdfb87c76cf68ULL, 16, 11, K_PANEL, 0, 1, { G_TAKEOFF }, "icon take off (landed)" },
 	{ 0x3fa31e1416775b84ULL, 16, 11, K_PANEL, 0, 1, { GX (G_LIST) }, "icon list crossed (landed)" },
@@ -1075,6 +1076,7 @@ static void g_beam (void)
 static void g_reticle (void)
 {
 	int i;
+	CGContextSaveGState (C);
 	CGContextTranslateCTM (C, -0.1f, -0.1f);	/* clear of the key number */
 	CGContextSaveGState (C);
 	glow (0xffb347, 0.7f, 2);
@@ -1092,6 +1094,7 @@ static void g_reticle (void)
 	gstroke (0xff4d4d, 1, 1.1f);
 	CGContextRestoreGState (C);
 	glow_ball (0, 0, 0.15f, 0xff9a9a, 0xff4d4d, 0xff4d4d, 3);
+	CGContextRestoreGState (C);
 }
 
 static void g_orrery (void)
@@ -1398,6 +1401,20 @@ static void g_people (void)
 	bust (0.3f, 0.26f, 0.48f, 0.24f, 0x6b95ff, 0x2a4cb8, 0xf3a6ff, 0xc24ee0);
 }
 
+/* who is aboard, and on what terms: two passengers and their list */
+static void g_roster (void)
+{
+	int i;
+	bust (-0.56f, 0.1f, 0.34f, 0.19f, 0xf0e070, 0xa89a2a, 0xffd79a, 0xd08a3a);
+	bust (-0.08f, 0.28f, 0.38f, 0.21f, 0x6b95ff, 0x2a4cb8, 0xf3a6ff, 0xc24ee0);
+	for (i = -1; i <= 1; i++) {
+		gcirc (0.5f, 0.44f * i, 0.07f);
+		gfill (0x3fd0ff, 1);
+		gseg (0.64f, 0.44f * i, 0.9f, 0.44f * i);
+	}
+	gstroke (0xe8eef5, 0.9f, 1.2f);
+}
+
 /* the stars about the system */
 static void g_stars (void)
 {
@@ -1461,6 +1478,7 @@ static void glyph (int g, float cx, float cy, float s)
 	case G_MARKET: g_market (); break;
 	case G_PEOPLE: g_people (); break;
 	case G_STARS: g_stars (); break;
+	case G_ROSTER: g_roster (); break;
 	}
 	if (off) {
 		CGContextEndTransparencyLayer (C);
