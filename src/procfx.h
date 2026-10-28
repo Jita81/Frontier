@@ -15,6 +15,12 @@
  * object's own rotation, so the pattern turns with the band, and a thin
  * strip outside its outline fades the hard edge out.
  * Off: --flat-sky.
+ *
+ * Layer 2, planets: the textured planets of gl.c keep the game's light
+ * zones, colours and features; a fragment shader blends the zones across
+ * the terminator and adds the sun's fall-off, limb darkening, close-range
+ * detail and an atmosphere rim.  gl.c also trades the flat atmosphere
+ * discs for one soft halo.  Off: --flat-planets.
  */
 #ifndef _PROCFX_H
 #define _PROCFX_H
@@ -35,6 +41,22 @@ int procfx_sky_begin (const float m[9], const double proj[16], const int vp[4]);
  * in window coordinates */
 void procfx_sky_feather (const double (*v)[3], int n);
 void procfx_sky_end (void);
+/* --flat-planets: the planets' exact light zones and flat atmosphere discs */
+extern int flat_planets;
+
+/* Layer 3: around one textured planet.  lo, hi: each light zone's cos(sun) range
+ * (9, 9 for none); soft: half width of the blend at a boundary; rim: the
+ * innermost atmosphere colour, alpha 1 with an atmosphere; look: sun
+ * shading on (1 lit), limb darkening, detail amplitude; seed: the body's.
+ * 0, changing nothing, when off or when the shader is not available. */
+int procfx_planet_begin (const float lo[4], const float hi[4], float soft,
+			 const float rim[4], const float look[3], unsigned int seed);
+/* between the two: light zone unit's texture */
+void procfx_planet_bind (int unit, unsigned int tex);
+/* before each vertex: cos(sun), view cosine, model direction there */
+void procfx_planet_attr (double c, double mu, const double m[3]);
+void procfx_planet_end (void);
+
 /* Layer 2: the game-over backdrop, a dark nebula filling the current
  * viewport under the tombstone (see endcard_frame in hdcontrols.c), faded
  * up from black by fade 0..1.  Changes nothing if the shader fails. */

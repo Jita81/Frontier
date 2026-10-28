@@ -108,6 +108,7 @@ int pixel_faces = 0;
 int classic_ui = 0;
 /* fe2 UI blits are done to old screen memory and copied to this texture. */
 static unsigned int screen_tex;
+static GLuint galaxy_tex;	/* the galaxy picture, smoothed (see galaxy_draw) */
 
 static GLUquadricObj *qobj;
 static GLUtesselator *tobj;
@@ -159,10 +160,15 @@ void CALLBACK combineCallback(GLdouble coords[3],
                      GLdouble *vertex_data[4],
                      GLfloat weight[4], GLdouble **dataOut );
 
+/* The 3D view, framebuffer pixels: the picture's top 168 rows, or wider
+ * (wide_3d) while draw_wide_flight draws a flight view past the picture. */
+static int wide_3d, v3d_x, v3d_y, v3d_w, v3d_h;
+
 static void set_main_viewport ()
 {
 	int ctrl_h = 32*pic_h/200;
-	glViewport (pic_x, pic_y + ctrl_h, pic_w, pic_h - ctrl_h);
+	if (wide_3d) glViewport (v3d_x, v3d_y, v3d_w, v3d_h);
+	else glViewport (pic_x, pic_y + ctrl_h, pic_w, pic_h - ctrl_h);
 }
 
 static void set_ctrl_viewport ()
@@ -258,6 +264,10 @@ static void change_vidmode ()
 	hdui_forget ();
 	controls_page_forget ();
 	hdback_forget ();
+	if (galaxy_tex) {
+		glDeleteTextures (1, &galaxy_tex);
+		galaxy_tex = 0;
+	}
 	procfx_forget ();
 	hdtip_forget ();
 	if (screen_tex) {
@@ -559,6 +569,7 @@ int DrawStr (int xpos, int ypos, int col, unsigned char *str, bool shadowed)
 	y = ypos;
 	
 	if ((y > 192) || (y<0)) return x;
+	hdtext_string ();
 set_line:
 	screen = LOGSCREEN2;
 	screen += SCREENBYTES_LINE * y;
@@ -633,6 +644,153 @@ void Screen_ToggleRenderer ()
 		use_renderer = use_renderer == R_GL ? R_OLD : R_GL;
 }
 
+/* --- The galaxy map, redrawn in HD (GL, not under --classic-ui) ------
+ *
+ * The map's own mode word, read only: 0xff the map, 2 the picture of
+ * the whole galaxy, 1 a system's info page (left alone), 0 elsewhere. */
+#define A6_GALMAP_MODE	34
+static int galmap;	/* 1: the map, 2: the galaxy picture, 0: neither */
+
+static void galmap_update (void)
+{
+	int m = classic_ui ? 0 : STMemory_ReadByte (__DL5eb6_a6_base + A6_GALMAP_MODE) & 0xff;
+
+	/* the old renderer keeps its look: names found, no halo or declutter;
+	 * --pixel-art keeps the game's own galaxy picture */
+	hdtext_map = m == 0xff || m == 2 ? 1 + (use_renderer == R_GL) : 0;
+	hdtext_focus_x = -1;	/* until the selected star is drawn */
+	galmap = use_renderer != R_GL ? 0 : m == 0xff ? 1 : m == 2 && !pixel_art ? 2 : 0;
+}
+
+/* The galaxy picture is 320x168 of dithered greys.  Where hdtext took a
+ * name out, fill from the picture ten rows away (not with one flat
+ * colour, which left a dark box behind each name), then blur the greys
+ * into a smooth density, coloured from deep blue-violet where stars are
+ * few to warm white where they are thick, drawn filtered under the
+ * raster.  The raster keeps only what is not grey (the scale bar); the
+ * magenta marker pixels (where you are) become smooth rings. */
+#define GAL_H	168
+static unsigned char galaxy_rgba[GAL_H][320][4];
+static short galaxy_mark[8][2];
+static int galaxy_marks;
+static const float galaxy_ramp[6][4] = {	/* density, r, g, b */
+	{ 0.00f,   4,   3,  14 }, { 0.15f,  22,  14,  58 }, { 0.35f,  70,  40, 130 },
+	{ 0.60f, 170, 100, 150 }, { 0.80f, 240, 190, 160 }, { 1.00f, 255, 246, 228 } };
+
+static void galaxy_soften (const unsigned char *r, unsigned char *out)
+{
+	static unsigned char grey[256];
+	int x, y, i, j, dx, dy;
+
+	for (i = 0; i < 256; i++) {
+		unsigned int p = MainRGBPalette[i];
+		int a = p & 0xff, b = p >> 8 & 0xff, c = p >> 16 & 0xff;
+		int hi = a > b ? (a > c ? a : c) : (b > c ? b : c);
+		int lo = a < b ? (a < c ? a : c) : (b < c ? b : c);
+		grey[i] = i != 255 && hi - lo < 24;
+	}
+	galaxy_marks = 0;
+	for (i = 0; i < GAL_H * 320; i++) {
+		unsigned int p = MainRGBPalette[out[i]];
+		j = i < 10 * 320 ? i + 10 * 320 : i - 10 * 320;
+		if (out[i] != r[i] && out[j] == r[j]) out[i] = r[j];
+		else if ((p & 0xff) == (p >> 16 & 0xff) && (p & 0xff) >= (p >> 8 & 0xff) + 64 &&
+			 galaxy_marks < 8) {
+			galaxy_mark[galaxy_marks][0] = i % 320;
+			galaxy_mark[galaxy_marks++][1] = i / 320;
+			out[i] = 255;
+		}
+	}
+	for (y = 0; y < GAL_H; y++)
+		for (x = 0; x < 320; x++) {
+			float s = 0, w = 0, t;
+			for (dy = -2; dy <= 2; dy++)
+				for (dx = -2; dx <= 2; dx++) {
+					int yy = y + dy, xx = x + dx, k = (3 - abs (dx)) * (3 - abs (dy));
+					if (yy < 0 || yy >= GAL_H || xx < 0 || xx >= 320 ||
+					    !grey[out[yy * 320 + xx]]) continue;
+					s += (MainRGBPalette[out[yy * 320 + xx]] >> 8 & 0xff) * k;
+					w += k;
+				}
+			t = w ? s / w / 160 : 0;
+			for (i = 1; i < 5 && t > galaxy_ramp[i][0]; i++);
+			t = (t - galaxy_ramp[i - 1][0]) / (galaxy_ramp[i][0] - galaxy_ramp[i - 1][0]);
+			if (t > 1) t = 1;
+			for (j = 1; j < 4; j++)
+				galaxy_rgba[y][x][j - 1] = galaxy_ramp[i - 1][j] +
+					t * (galaxy_ramp[i][j] - galaxy_ramp[i - 1][j]);
+			galaxy_rgba[y][x][3] = 255;
+		}
+	for (i = 0; i < GAL_H * 320; i++)
+		if (grey[out[i]]) out[i] = 255;
+}
+
+static void disc_strips (float r0, float r1, float r2, float r3,
+			 float r, float g, float b, float a);
+
+static void galaxy_draw (void)
+{
+	int i;
+
+	if (!galaxy_tex) {
+		glGenTextures (1, &galaxy_tex);
+		glBindTexture (GL_TEXTURE_2D, galaxy_tex);
+		glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA, 512, 256, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+		glTexParameterf (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameterf (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glTexParameterf (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameterf (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	}
+	glEnable (GL_TEXTURE_2D);
+	glBindTexture (GL_TEXTURE_2D, galaxy_tex);
+	glTexSubImage2D (GL_TEXTURE_2D, 0, 0, 0, 320, GAL_H, GL_RGBA, GL_UNSIGNED_BYTE, galaxy_rgba);
+	glTexEnvf (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+	/* texel centres at the edges: nothing outside the picture blends in */
+	glBegin (GL_TRIANGLE_STRIP);
+		glTexCoord2f (0.5f / 512, (GAL_H - 0.5f) / 256);
+		glVertex2i (0, 200 - GAL_H);
+		glTexCoord2f (319.5f / 512, (GAL_H - 0.5f) / 256);
+		glVertex2i (320, 200 - GAL_H);
+		glTexCoord2f (0.5f / 512, 0.5f / 256);
+		glVertex2i (0, 200);
+		glTexCoord2f (319.5f / 512, 0.5f / 256);
+		glVertex2i (320, 200);
+	glEnd ();
+	glDisable (GL_TEXTURE_2D);
+	/* where you are: a smooth ring and glow, round on the screen */
+	glEnable (GL_BLEND);
+	glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	for (i = 0; i < galaxy_marks; i++) {
+		glPushMatrix ();
+		glTranslatef (galaxy_mark[i][0] + 0.5f, 200 - galaxy_mark[i][1] - 0.5f, 0);
+		glScalef (1, 200.0f * pic_w / (320.0f * pic_h), 1);
+		disc_strips (0, 0, 2.4f, 3.4f, 0.94f, 0.5f, 0.94f, 0.18f);
+		disc_strips (1.7f, 2.0f, 2.4f, 2.7f, 1, 0.62f, 1, 1);
+		disc_strips (0, 0, 0.5f, 1.0f, 1, 0.9f, 1, 1);
+		glPopMatrix ();
+	}
+	glDisable (GL_BLEND);
+}
+
+/* The map's sky: the game's colour lit in the middle and falling away to
+ * near black at the edges, instead of one flat fill. */
+static void galmap_backdrop (void)
+{
+	unsigned int p = MainRGBPalette[fe2_bgcol];
+	float r = (p & 0xff) / 255.0f, g = (p >> 8 & 0xff) / 255.0f, b = (p >> 16 & 0xff) / 255.0f;
+	int i;
+
+	push_ortho ();
+	glBegin (GL_TRIANGLE_FAN);
+	glColor3f (r * 1.25f + 0.03f, g * 1.25f + 0.02f, b * 1.25f + 0.06f);
+	glVertex2f (160, 100);
+	glColor3f (r * 0.2f, g * 0.2f, b * 0.25f);
+	for (i = 0; i <= 32; i++)
+		glVertex2f (160 + 232 * cosf (i * (float) M_PI / 16), 100 + 150 * sinf (i * (float) M_PI / 16));
+	glEnd ();
+	pop_ortho ();
+}
+
 static void draw_control_panel ()
 {
 	int x, y;
@@ -650,12 +808,14 @@ static void draw_control_panel ()
 	y = logscreen2;
 	logscreen2 = physcreen;
 	for (x=0; x<queued_string_pos; x++) {
+		hdtext_queue = x + 1;	/* which name, for hdtext */
 		DrawStr (	queued_strings[x].x,
 				queued_strings[x].y,
 				queued_strings[x].col,
 				queued_strings[x].str,
 				FALSE);
 	}
+	hdtext_queue = 0;
 	logscreen2 = y;
 	/****************************************************/
 	
@@ -670,6 +830,7 @@ static void draw_control_panel ()
 		hdstill_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
 		hdback_frame (VideoRaster, hd_screen);
 		scr = hd_screen;
+		if (galmap == 2) galaxy_soften (VideoRaster, hd_screen);
 	}
 	
 	/* intro likes black at the bottom */
@@ -684,6 +845,7 @@ static void draw_control_panel ()
 	glEnd ();
 	
 	hdui_draw_under (MainRGBPalette, CtrlRGBPalette);
+	if (galmap == 2 && scr == hd_screen) galaxy_draw ();
 	
 	glEnable (GL_TEXTURE_2D);
 	
@@ -3164,6 +3326,199 @@ static void hull_forget_shader (void) { }
 static void hull_attr (const struct HullFrame *f, int i) { }
 #endif
 
+
+/*
+ * The hangar's lights. Its lamps, the windows in its doors and its lit
+ * signs were flat colour on flat walls; each is now a light: after the
+ * face is drawn, a hot core is added over it (brighter toward its middle,
+ * under the lettering, which is drawn after it) and a glow round it in
+ * its own plane, bright at its edge and fading out over the wall, added
+ * to what is there in painter's order, so what stands in front of it
+ * (drawn later) still covers it. hangar_view says the camera is in the
+ * hangar (its faces all round the view), for hull_hangar_grade.
+ */
+static int hull_glow;		/* the face just painted: 1 a lamp, 2 a lit sign */
+static int hull_glow_rgb[3];
+static int hangar_faces;	/* the hangar's own faces drawn this frame */
+static double hangar_dir[2][2];	/* their extent across the view, x/z and y/z */
+static int hangar_behind;	/* one of them reaches behind the camera */
+
+static void hangar_note (double p[][3], int n)
+{
+	int i, k;
+
+	if (!hangar_faces++) {
+		hangar_dir[0][0] = hangar_dir[1][0] = 1e9;
+		hangar_dir[0][1] = hangar_dir[1][1] = -1e9;
+		hangar_behind = 0;
+	}
+	for (i = 0; i < n; i++) {
+		if (!(p[i][2] < -1)) {
+			hangar_behind = 1;
+			continue;
+		}
+		for (k = 0; k < 2; k++) {
+			double t = p[i][k] / -p[i][2];
+			if (t < hangar_dir[k][0]) hangar_dir[k][0] = t;
+			if (t > hangar_dir[k][1]) hangar_dir[k][1] = t;
+		}
+	}
+}
+
+/* the hangar fills the view: its faces are behind the camera or spread
+ * wider than the view across, not seen through the slot from outside */
+static int hangar_view (void)
+{
+	return hangar_faces >= 8 && (hangar_behind || hangar_dir[0][1] - hangar_dir[0][0] > 1.6);
+}
+
+static void glow_ring (double p[][3], const double m[][3], int n, double d0, double d1,
+		       const float rgb[3], float a0, float a1, int steps)
+{
+	int i, j;
+
+	for (j = 0; j < steps; j++) {
+		double t0 = (double) j / steps, t1 = (double) (j + 1) / steps;
+		/* a smooth falloff: (1 - t)^2 */
+		float b0 = a0 + (a1 - a0) * (1 - (1 - t0) * (1 - t0)), b1 = a0 + (a1 - a0) * (1 - (1 - t1) * (1 - t1));
+		double r0 = d0 + (d1 - d0) * t0, r1 = d0 + (d1 - d0) * t1;
+		glBegin (GL_TRIANGLE_STRIP);
+		for (i = 0; i <= n; i++) {
+			const double *v = p[i % n], *o = m[i % n];
+			glColor3f (rgb[0] * b0, rgb[1] * b0, rgb[2] * b0);
+			glVertex3d (v[0] + o[0] * r0, v[1] + o[1] * r0, v[2] + o[2] * r0);
+			glColor3f (rgb[0] * b1, rgb[1] * b1, rgb[2] * b1);
+			glVertex3d (v[0] + o[0] * r1, v[1] + o[1] * r1, v[2] + o[2] * r1);
+		}
+		glEnd ();
+	}
+}
+
+static void hull_glow_draw (double p[][3], int n)
+{
+	double c[3] = { 0, 0, 0 }, N[3] = { 0, 0, 0 }, m[4][3], en[4][3], area, len, s, lim = 1e30;
+	float col[3], core[3];
+	int kind = hull_glow, i, k;
+
+	hull_glow = 0;
+	if (n < 3 || n > 4) return;
+	for (i = 0; i < n; i++)
+		for (k = 0; k < 3; k++) c[k] += p[i][k] / n;
+	/* the plane's normal (Newell), its area */
+	for (i = 0; i < n; i++) {
+		const double *a = p[i], *b = p[(i + 1) % n];
+		N[0] += (a[1] - b[1]) * (a[2] + b[2]);
+		N[1] += (a[2] - b[2]) * (a[0] + b[0]);
+		N[2] += (a[0] - b[0]) * (a[1] + b[1]);
+	}
+	len = sqrt (N[0] * N[0] + N[1] * N[1] + N[2] * N[2]);
+	area = len / 2;
+	if (!(len > 0)) return;
+	for (k = 0; k < 3; k++) N[k] /= len;
+	/* each edge's outward normal in the plane */
+	for (i = 0; i < n; i++) {
+		const double *a = p[i], *b = p[(i + 1) % n];
+		double e[3] = { b[0] - a[0], b[1] - a[1], b[2] - a[2] }, o[3], mid[3], l;
+		o[0] = e[1] * N[2] - e[2] * N[1];
+		o[1] = e[2] * N[0] - e[0] * N[2];
+		o[2] = e[0] * N[1] - e[1] * N[0];
+		l = sqrt (o[0] * o[0] + o[1] * o[1] + o[2] * o[2]);
+		if (!(l > 0)) return;
+		for (k = 0; k < 3; k++) mid[k] = (a[k] + b[k]) / 2 - c[k];
+		if (o[0] * mid[0] + o[1] * mid[1] + o[2] * mid[2] < 0) l = -l;
+		for (k = 0; k < 3; k++) en[i][k] = o[k] / l;
+		l = sqrt (e[0] * e[0] + e[1] * e[1] + e[2] * e[2]);
+		if (l < lim) lim = l;
+	}
+	/* each corner's mitre: the two edges' normals' sum over 1 + their dot */
+	for (i = 0; i < n; i++) {
+		const double *a = en[(i + n - 1) % n], *b = en[i];
+		double dt = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+		if (dt < -0.3) dt = -0.3;
+		for (k = 0; k < 3; k++) m[i][k] = (a[k] + b[k]) / (1 + dt);
+	}
+	s = sqrt (area);
+	for (k = 0; k < 3; k++) {
+		col[k] = hull_glow_rgb[k] / 255.0f;
+		/* toward white, as a light's middle is */
+		core[k] = kind == 1 ? 0.10f * col[k] + 0.22f : 0.16f * col[k] + 0.07f;
+	}
+
+	glPushAttrib (GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_CURRENT_BIT | GL_LIGHTING_BIT);
+	glDisable (GL_TEXTURE_2D);
+	glDisable (GL_LIGHTING);
+	glDisable (GL_CULL_FACE);
+	glShadeModel (GL_SMOOTH);
+	glEnable (GL_BLEND);
+	glBlendFunc (GL_ONE, GL_ONE);
+	glBegin (GL_TRIANGLE_FAN);
+	glColor3fv (core);
+	glVertex3dv (c);
+	glColor3f (0, 0, 0);
+	for (i = 0; i <= n; i++) glVertex3dv (p[i % n]);
+	glEnd ();
+	if (kind == 1) {
+		/* a lamp: a tight bright rim and a wide soft spill */
+		double d = 0.55 * s;
+		if (d > 2.2 * lim) d = 2.2 * lim;
+		glow_ring (p, (const double (*)[3]) m, n, 0, 0.18 * d, col, 0.42f, 0.10f, 3);
+		glow_ring (p, (const double (*)[3]) m, n, 0.18 * d, d, col, 0.10f, 0, 5);
+	} else {
+		/* a lit sign: its light on the wall round it */
+		double d = 0.22 * s;
+		glow_ring (p, (const double (*)[3]) m, n, 0, 0.2 * d, col, 0.30f, 0.09f, 3);
+		glow_ring (p, (const double (*)[3]) m, n, 0.2 * d, d, col, 0.09f, 0, 5);
+	}
+	glPopAttrib ();
+}
+
+/* The camera in the hangar: the picture graded as a lit interior, darker
+ * toward its corners, so the eye goes to the lit middle and the lamps */
+static void hull_hangar_grade (void)
+{
+	int i, j;
+	const int G = 12;
+
+	if (!hangar_view ()) return;
+	glPushAttrib (GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_CURRENT_BIT | GL_LIGHTING_BIT | GL_TRANSFORM_BIT);
+	glMatrixMode (GL_PROJECTION);
+	glPushMatrix ();
+	glLoadIdentity ();
+	glOrtho (0, 1, 0, 1, -1, 1);
+	glMatrixMode (GL_MODELVIEW);
+	glPushMatrix ();
+	glLoadIdentity ();
+	glDisable (GL_TEXTURE_2D);
+	glDisable (GL_LIGHTING);
+	glDisable (GL_CULL_FACE);
+	glShadeModel (GL_SMOOTH);
+	glEnable (GL_BLEND);
+	glBlendFunc (GL_DST_COLOR, GL_ZERO);
+	for (j = 0; j < G; j++) {
+		glBegin (GL_TRIANGLE_STRIP);
+		for (i = 0; i <= G; i++) {
+			int jj;
+			for (jj = j + 1; jj >= j; jj--) {
+				/* the view's middle is above the console: 0.58 up */
+				double x = (double) i / G, y = (double) jj / G;
+				double dx = (x - 0.5) / 0.62, dy = (y - 0.58) / 0.55, r = sqrt (dx * dx + dy * dy), t;
+				float g;
+				t = (r - 0.45) / 0.75;
+				t = t < 0 ? 0 : t > 1 ? 1 : t;
+				g = 1.0f - 0.42f * (float) (t * t * (3 - 2 * t));
+				glColor3f (g, g, g * 1.02f > 1 ? 1 : g * 1.02f);
+				glVertex2d (x, y);
+			}
+		}
+		glEnd ();
+	}
+	glMatrixMode (GL_PROJECTION);
+	glPopMatrix ();
+	glMatrixMode (GL_MODELVIEW);
+	glPopMatrix ();
+	glPopAttrib ();
+}
+
 /* Style 5 for this polygon: 2 with the shader (hf filled in), 1 with the
  * class's plating in fixed function (st filled in), 0 flat. A lamp, window
  * or lit sign (a bright face of nearly pure colour, one channel all but
@@ -3204,6 +3559,20 @@ static int hull_paint5 (double p[][3], int n, const struct HullCtx *cx, int host
 	if (cls == HC_HANGAR && (cx->wok & 2)) cls = HC_STATION;
 	lamp = cls == HC_HANGAR && mn >= 208;
 	pure = mx > 191 && mn < 0.2 * mx;
+	/* the hangar's lights: a lamp, a small face of pure colour (a lamp,
+	 * a door's window) or a sign of strong colour that carries
+	 * lettering, drawn flat and then lit (hull_glow_draw) */
+	if (cls == HC_HANGAR && cx->wok) {
+		hangar_note (p, n);
+		if (hull_obj_axis (cx->w, n) != HULL_DECK_AXIS &&
+		    (lamp || (pure && hull_obj_span (cx->w, n) < 0.4 * hull_classes[cls].panel * sc) ||
+		     (host && mx >= 160 && mn < 0.6 * mx))) {
+			hull_glow = lamp || !host ? 1 : 2;
+			for (i = 0; i < 3; i++) hull_glow_rgb[i] = rgb[i];
+			hull_end ();
+			return 0;
+		}
+	}
 	/* but in the hangar a face of pure colour whose longest side is more
 	 * than about 0.4 of a tile (the red doors, which keep that span as
 	 * they slide; the lamps and small plaques are under a quarter of one)
@@ -3253,6 +3622,7 @@ static int hull_paint (double p[][3], int n, int have_ctx, const struct HullCtx 
 		       const int rgb[3], float st[][2], struct HullFrame *hf)
 {
 	hull_chain = host;
+	hull_glow = 0;
 	/* the plating belongs to the ships and stations listed in
 	 * hull_models[]: anything else (the intro's titles and banners,
 	 * text, planets, buildings, missiles, debris, cargo) is drawn flat,
@@ -3292,6 +3662,8 @@ static int hull_paint (double p[][3], int n, int have_ctx, const struct HullCtx 
  */
 static struct HullPlane hull_cplane;
 static int hull_cmode;		/* 2 shader, 1 fixed function */
+static GLdouble (*hull_cdoor)[3];	/* a door's contour, for its edge */
+static int hull_cdoor_n;
 static double hull_cw[4];	/* clip w from a view space point */
 
 static void CALLBACK hull_tess_vertex (GLvoid *vertex, GLvoid *poly_data)
@@ -3327,10 +3699,11 @@ static int hull_complex_begin (GLdouble c[][3], int n, void **data)
 {
 	float sc, off[2], M[9];
 	double light[3];
-	int cls, calm, mx, mn, k, j;
+	int cls, calm, mx, mn, k, j, door = 0;
 	const int c8[3] = { complex_col[0] & 255, complex_col[1] & 255, complex_col[2] & 255 };	/* signed */
 
 	hull_cmode = 0;
+	hull_cdoor = NULL;
 	if (hull_ctx != 2) return 0;	/* no model being read: no word after it */
 	calm = hull_chain || hull_decal_host (data);
 	hull_chain = calm;
@@ -3357,6 +3730,16 @@ static int hull_complex_begin (GLdouble c[][3], int n, void **data)
 		return 0;
 	}
 	if (cls == HC_HANGAR && mx - mn >= 24) cls = HC_STATION;
+	else if (cls == HC_HANGAR) {
+		/* an alcove door: solid (calm is for lettering), in finer
+		 * panels than the wall's, off its seams, and given an edge
+		 * (hull_complex_end), so it reads as a door, not a hole */
+		calm = 0;
+		door = 1;
+		sc *= 0.55f;
+		off[0] += 0.37f;
+		off[1] += 0.5f;
+	}
 	for (k = 0; k < 9; k++) M[k] = hull_cc.M[k];
 	for (k = 0; k < 3; k++) light[k] = hull_cc.light[k];
 	if (!hull_plane_obj ((const double (*)[3]) c, n, M, hull_cc.o, light,
@@ -3377,7 +3760,56 @@ static int hull_complex_begin (GLdouble c[][3], int n, void **data)
 		return 0;
 	}
 	gluTessCallback (tobj, GLU_TESS_VERTEX_DATA, (_GLUfuncptr) hull_tess_vertex);
+	if (door) {
+		hull_cdoor = c;
+		hull_cdoor_n = n;
+	}
 	return 1;
+}
+
+/* A door's edge, on the screen (the shape is drawn in window
+ * coordinates): a bevel lit from the top left, a dark line round it */
+static void hull_door_edge (GLdouble c[][3], int n)
+{
+	double cx = 0, cy = 0, w = tessViewport[3] / 400.0;
+	int i, k;
+
+	if (n < 3 || n > 64 || !(w > 0)) return;
+	for (i = 0; i < n; i++) {
+		cx += c[i][0] / n;
+		cy += c[i][1] / n;
+	}
+	glPushAttrib (GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_CURRENT_BIT);
+	glDisable (GL_TEXTURE_2D);
+	glDisable (GL_CULL_FACE);
+	glEnable (GL_BLEND);
+	glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	for (i = 0; i < n; i++) {
+		const double *a = c[i], *b = c[(i + 1) % n];
+		double ex = b[0] - a[0], ey = b[1] - a[1], l = sqrt (ex * ex + ey * ey), nx, ny, lit;
+		if (!(l > 0.5)) continue;
+		/* the inward normal */
+		nx = -ey / l;
+		ny = ex / l;
+		if (nx * (cx - (a[0] + b[0]) / 2) + ny * (cy - (a[1] + b[1]) / 2) < 0) {
+			nx = -nx;
+			ny = -ny;
+		}
+		/* outward toward the top left is lit */
+		lit = -(nx * -0.6 + ny * 0.8);
+		for (k = 0; k < 2; k++) {
+			double w0 = k ? 1.2 * w : 0, w1 = k ? 3.4 * w : 1.2 * w;
+			if (k) glColor4f (lit > 0 ? 1 : 0, lit > 0 ? 1 : 0, lit > 0 ? 1 : 0, (float) (fabs (lit) * (lit > 0 ? 0.16 : 0.32)));
+			else glColor4f (0, 0, 0, 0.55f);
+			glBegin (GL_QUADS);
+			glVertex3d (a[0] + nx * w0, a[1] + ny * w0, a[2]);
+			glVertex3d (b[0] + nx * w0, b[1] + ny * w0, b[2]);
+			glVertex3d (b[0] + nx * w1, b[1] + ny * w1, b[2]);
+			glVertex3d (a[0] + nx * w1, a[1] + ny * w1, a[2]);
+			glEnd ();
+		}
+	}
+	glPopAttrib ();
 }
 
 static void hull_complex_end (void)
@@ -3385,6 +3817,8 @@ static void hull_complex_end (void)
 	gluTessCallback (tobj, GLU_TESS_VERTEX_DATA, (_GLUfuncptr) vertexCallback);
 	hull_cmode = 0;
 	hull_end ();
+	if (hull_cdoor) hull_door_edge (hull_cdoor, hull_cdoor_n);
+	hull_cdoor = NULL;
 }
 
 void Nu_PutTriangle ()
@@ -3430,6 +3864,7 @@ void Nu_DrawTriangle (void **data)
 			if (tex == 1) glTexCoord2fv (st[2]); else if (tex == 2) hull_attr (&hf, 2);
 			glVertex3fv (v3);
 		glEnd ();
+		if (hull_glow) hull_glow_draw (p, 3);
 	}
 }
 
@@ -3483,6 +3918,7 @@ void Nu_DrawQuad (void **data)
 			if (tex == 1) glTexCoord2fv (st[2]); else if (tex == 2) hull_attr (&hf, 2);
 			glVertex3iv (v3);
 		glEnd ();
+		if (hull_glow) hull_glow_draw (p, 4);
 	}
 }
 void Nu_PutTwinklyCircle ()
@@ -3621,6 +4057,8 @@ struct PlanetPrim {
 	double atm_scale[8];
 	unsigned short atm_col[8];
 	double atm_th[8];
+	/* the innermost layer's colour, -1 if none: the smooth limb (procfx) */
+	int rim;
 };
 
 #define PLANET_FACE_RES		512
@@ -3964,9 +4402,10 @@ static void planet_update_patch (struct PlanetTex *t, const double down[3], doub
 }
 
 /* A vertex of the planet surface: position (68k viewing coordinates),
- * texture coordinates and cos(sun) of the surface there. */
+ * texture coordinates and cos(sun) of the surface there; for the smooth
+ * path also the view cosine and the model direction. */
 struct PVert {
-	double p[3], t[2], c;
+	double p[3], t[2], c, mu, m[3];
 };
 
 /* Keep the part of a polygon with lo <= c (sign 1) or c <= hi (sign -1).
@@ -4029,9 +4468,72 @@ static void emit_zone_quad (const struct LightZone *z, const struct PVert *a, co
 	glEnd ();
 }
 
+/*
+ * The smooth path (procfx layer 2, off with --flat-planets): no cuts. All
+ * the zones whose soft range meets cos(sun) range [lo, hi] are bound, one
+ * texture unit each, and the shader blends them.
+ */
+static void planet_bind_zones (struct PlanetTex *t, int f, const struct LightZone *zones, int nzones,
+			       double lo, double hi, double soft)
+{
+	GLuint tex[PLANET_MAX_ZONES] = { 0 }, any = 0;
+	int z;
+
+	for (z = 0; z < nzones; z++)
+		if (hi >= zones[z].lo - soft && lo <= zones[z].hi + soft)
+			any = tex[z] = planet_zone_texture (t, f, z, zones[z].code);
+	for (z = 0; z < PLANET_MAX_ZONES; z++)
+		procfx_planet_bind (z, tex[z] ? tex[z] : any);
+}
+
+static void planet_smooth_vertex (const struct PVert *v)
+{
+	glTexCoord2dv (v->t);
+	procfx_planet_attr (v->c, v->mu, v->m);
+	planet_vertex (v->p);
+}
+
+static double planet_ramp (double a, double b, double x)
+{
+	if (!(b > a)) return x >= b;
+	x = fmin (1.0, fmax (0.0, (x - a) / (b - a)));
+	return x * x * (3.0 - 2.0 * x);
+}
+
+/* 0 at the ground, 1 out in space: limb darkening and the halo's night
+ * side fade in with it, the same on the sphere and the cap, so nothing
+ * pops where one takes over from the other. */
+static double planet_space (const struct PlanetPrim *p, double d)
+{
+	return planet_ramp (1.02, 1.5, d / p->R);
+}
+
+static int planet_smooth_begin (const struct PlanetPrim *p, double d, const struct LightZone *z,
+				int n, double *soft)
+{
+	float lo[4] = { 9, 9, 9, 9 }, hi[4] = { 9, 9, 9, 9 }, rim[4] = { 0, 0, 0, 0 }, look[3];
+	int i, r, g, b;
+
+	/* half the narrowest inner zone, so every zone still shows */
+	*soft = 0.1;
+	for (i = 0; i < n; i++) {
+		lo[i] = z[i].lo;
+		hi[i] = z[i].hi;
+		if (i && i < n - 1) *soft = fmin (*soft, 0.5 * (z[i].hi - z[i].lo));
+	}
+	if (p->rim >= 0) {
+		split_rgb444b (p->rim, &r, &g, &b);
+		rim[0] = r / 255.0f; rim[1] = g / 255.0f; rim[2] = b / 255.0f; rim[3] = 1.0f;
+	}
+	look[0] = p->flags & 0x80 ? 1.0f : 0.0f;
+	look[1] = 0.25 * planet_space (p, d);
+	look[2] = 0.08f;
+	return procfx_planet_begin (lo, hi, *soft, rim, look, p->seed);
+}
+
 /* The whole planet, seen from a distance: a cube sphere. */
 static void draw_planet_sphere (struct PlanetTex *t, const struct PlanetPrim *p, const double sun[3],
-				const struct LightZone *zones, int nzones)
+				const struct LightZone *zones, int nzones, double soft)
 {
 	static struct PVert v[PLANET_FACE_GRID+1][PLANET_FACE_GRID+1];
 	static char front[PLANET_FACE_GRID][PLANET_FACE_GRID];
@@ -4055,6 +4557,8 @@ static void draw_planet_sphere (struct PlanetTex *t, const struct PlanetPrim *p,
 				v[j][i].t[0] = 0.5 * (x + 1.0);
 				v[j][i].t[1] = 0.5 * (y + 1.0);
 				v[j][i].c = pdot (dir[j][i], sun);
+				v[j][i].mu = -pdot (dir[j][i], v[j][i].p) / sqrt (pdot (v[j][i].p, v[j][i].p));
+				memcpy (v[j][i].m, m, sizeof (m));
 			}
 		}
 		/* no depth buffer: drop the far side by hand. A cell faces us
@@ -4070,6 +4574,28 @@ static void draw_planet_sphere (struct PlanetTex *t, const struct PlanetPrim *p,
 		}
 		if (!any) continue;
 
+		if (soft > 0.0) {
+			double lo = 2.0, hi = -2.0;
+			for (j = 0; j < PLANET_FACE_GRID; j++)
+				for (i = 0; i < PLANET_FACE_GRID; i++)
+					if (front[j][i])
+						for (k = 0; k < 4; k++) {
+							lo = fmin (lo, v[j + k/2][i + k%2].c);
+							hi = fmax (hi, v[j + k/2][i + k%2].c);
+						}
+			planet_bind_zones (t, f, zones, nzones, lo, hi, soft);
+			glBegin (GL_QUADS);
+			for (j = 0; j < PLANET_FACE_GRID; j++)
+				for (i = 0; i < PLANET_FACE_GRID; i++)
+					if (front[j][i]) {
+						planet_smooth_vertex (&v[j][i]);
+						planet_smooth_vertex (&v[j][i+1]);
+						planet_smooth_vertex (&v[j+1][i+1]);
+						planet_smooth_vertex (&v[j+1][i]);
+					}
+			glEnd ();
+			continue;
+		}
 		for (z = 0; z < nzones; z++) {
 			int bound = 0;
 			for (j = 0; j < PLANET_FACE_GRID; j++) {
@@ -4125,7 +4651,7 @@ static void draw_planet_sphere (struct PlanetTex *t, const struct PlanetPrim *p,
 #define GROUND_DOME_RADIUS	1.0e6
 
 static void draw_horizon_cap (struct PlanetTex *t, const struct PlanetPrim *p, double d,
-			      const double sun[3], const struct LightZone *zones, int nzones)
+			      const double sun[3], const struct LightZone *zones, int nzones, double soft)
 {
 	static struct PVert v[HORIZON_CAP_RINGS+1][HORIZON_CAP_SLICES+1];
 	double up[3], e1[3], e2[3];
@@ -4190,6 +4716,10 @@ static void draw_horizon_cap (struct PlanetTex *t, const struct PlanetPrim *p, d
 			/* from the emitted position, so the zone cuts stay affine */
 			v[i][j].c = (pdot (v[i][j].p, sun) - pdot (p->centre, sun)) / p->R;
 			to_model (p, n, m);
+			/* the smooth path: exact, not from the emitted position */
+			v[i][j].mu = -pdot (n, dir);
+			memcpy (v[i][j].m, m, sizeof (m));
+			if (soft > 0.0) v[i][j].c = pdot (n, sun);
 			cm = pdot (m, t->patch.c);
 			if (cm < 1e-6) cm = 1e-6;
 			v[i][j].t[0] = 0.5 + 0.5 * pdot (m, t->patch.u) / (cm * t->patch.half);
@@ -4201,6 +4731,25 @@ static void draw_horizon_cap (struct PlanetTex *t, const struct PlanetPrim *p, d
 	 * covered exactly once, so face culling is unnecessary here. */
 	glDisable (GL_CULL_FACE);
 
+	if (soft > 0.0) {
+		double lo = 2.0, hi = -2.0;
+		for (i = 0; i <= HORIZON_CAP_RINGS; i++)
+			for (j = 0; j <= HORIZON_CAP_SLICES; j++) {
+				lo = fmin (lo, v[i][j].c);
+				hi = fmax (hi, v[i][j].c);
+			}
+		planet_bind_zones (t, -1, zones, nzones, lo, hi, soft);
+		glBegin (GL_QUADS);
+		for (i = HORIZON_CAP_RINGS - 1; i >= 0; i--)
+			for (j = 0; j < HORIZON_CAP_SLICES; j++) {
+				planet_smooth_vertex (&v[i][j]);
+				planet_smooth_vertex (&v[i][j+1]);
+				planet_smooth_vertex (&v[i+1][j+1]);
+				planet_smooth_vertex (&v[i+1][j]);
+			}
+		glEnd ();
+		return;
+	}
 	for (z = 0; z < nzones; z++) {
 		glBindTexture (GL_TEXTURE_2D, planet_zone_texture (t, -1, z, zones[z].code));
 		/* Walk the rings from the horizon inwards, i.e. far to near:
@@ -4368,6 +4917,92 @@ static void planet_atmosphere_band (struct PlanetPrim *p)
 #define ATMOSPHERE_RINGS	24
 #define ATMOSPHERE_SLICES	64
 
+/* The smooth path (procfx layer 2): one soft halo for all the layers.
+ * Each visible layer's colour sits in the middle of its band and blends
+ * into the next; opaque out to the outermost band, which fades to
+ * nothing, unless it wraps the whole sky (the ST's clamp near pi, low
+ * down): then it stays opaque overhead like the flat discs, and the fade
+ * comes in smoothly as the edge sinks below the zenith.  Seen from space
+ * the night side of the halo is dimmer: the sun's cos at the point of the
+ * planet nearest each ray.  From inside the atmosphere that point is
+ * underfoot for the whole sky, and the ST's own tint already does that,
+ * so it fades out there. */
+struct Halo {
+	const struct PlanetPrim *p;
+	double down[3], e1[3], e2[3], sun[3], space, edge, th[9], mid[8];
+	float col[8][3];
+	int n;
+};
+
+static void halo_vertex (const struct Halo *h, double t, double a)
+{
+	double w[3], q[3], s, ql, f, al;
+	float c[3];
+	int k, l, m;
+
+	for (k = 0; k < 3; k++) w[k] = h->down[k]*cos (t) + (h->e1[k]*cos (a) + h->e2[k]*sin (a))*sin (t);
+	for (l = 0; l < h->n - 1 && t > h->mid[l+1]; l++) ;
+	m = l < h->n - 1 ? l + 1 : l;
+	f = planet_ramp (h->mid[l], h->mid[m] + 1e-9, t);
+	for (k = 0; k < 3; k++) c[k] = h->col[l][k] + f * (h->col[m][k] - h->col[l][k]);
+	al = 1.0 - h->edge * planet_ramp (h->th[h->n-1], h->th[h->n], t);
+	if (h->p->flags & 0x80) {
+		s = fmax (0.0, pdot (w, h->p->centre));
+		for (k = 0; k < 3; k++) q[k] = s * w[k] - h->p->centre[k];
+		ql = sqrt (pdot (q, q));
+		if (ql > 0.0)
+			al *= 1.0 - 0.6 * h->space * (1.0 - planet_ramp (-0.3, 0.3, pdot (q, h->sun) / ql));
+	}
+	glColor4f (c[0], c[1], c[2], (float) al);
+	glVertex3d (GROUND_DOME_RADIUS * w[0], GROUND_DOME_RADIUS * w[1], -GROUND_DOME_RADIUS * w[2]);
+}
+
+static void draw_planet_halo (const struct PlanetPrim *p, double d, double theta_p, const double down[3],
+			      const double e1[3], const double e2[3])
+{
+	struct Halo h;
+	int l, i, j, r, g, b;
+
+	h.p = p;
+	memcpy (h.down, down, sizeof (h.down));
+	memcpy (h.e1, e1, sizeof (h.e1));
+	memcpy (h.e2, e2, sizeof (h.e2));
+	planet_sun (p, h.sun);
+	h.space = planet_space (p, d);
+	h.th[0] = theta_p;
+	for (h.n = l = 0; l < p->natm; l++) {
+		double th = fmin (p->atm_th[l], M_PI - 0.01);
+		if (th <= h.th[h.n]) continue;
+		h.th[h.n+1] = th;
+		h.mid[h.n] = 0.5 * (h.th[h.n] + h.th[h.n+1]);
+		split_rgb444b (p->atm_col[l], &r, &g, &b);
+		h.col[h.n][0] = r / 255.0f; h.col[h.n][1] = g / 255.0f; h.col[h.n][2] = b / 255.0f;
+		h.n++;
+	}
+	if (!h.n) return;
+	h.edge = 1.0 - planet_ramp (M_PI - 0.5, M_PI - 0.01, h.th[h.n]);
+	glPushAttrib (GL_COLOR_BUFFER_BIT);
+	glEnable (GL_BLEND);
+	glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	/* the disc behind the planet fills any gap at its outline */
+	glBegin (GL_TRIANGLE_FAN);
+	halo_vertex (&h, 0.0, 0.0);
+	for (j = 0; j <= ATMOSPHERE_SLICES; j++)
+		halo_vertex (&h, theta_p, 2.0*M_PI*j / ATMOSPHERE_SLICES);
+	glEnd ();
+	for (i = 0; i < ATMOSPHERE_RINGS; i++) {
+		double t0 = theta_p + (h.th[h.n] - theta_p) * i / ATMOSPHERE_RINGS;
+		double t1 = theta_p + (h.th[h.n] - theta_p) * (i + 1) / ATMOSPHERE_RINGS;
+		glBegin (GL_QUAD_STRIP);
+		for (j = 0; j <= ATMOSPHERE_SLICES; j++) {
+			halo_vertex (&h, t0, 2.0*M_PI*j / ATMOSPHERE_SLICES);
+			halo_vertex (&h, t1, 2.0*M_PI*j / ATMOSPHERE_SLICES);
+		}
+		glEnd ();
+	}
+	glPopAttrib ();
+}
+
 static void draw_planet_atmosphere (const struct PlanetPrim *p, double d)
 {
 	double down[3], e1[3], e2[3], dot, len, theta_p;
@@ -4388,6 +5023,10 @@ static void draw_planet_atmosphere (const struct PlanetPrim *p, double d)
 
 	glDisable (GL_TEXTURE_2D);
 	glDisable (GL_CULL_FACE);
+	if (!flat_planets) {
+		draw_planet_halo (p, d, theta_p, down, e1, e2);
+		return;
+	}
 	/* outermost first, so that the inner layers stay visible (the ST
 	 * inserts them all at the same depth, and they come out the other way
 	 * round) */
@@ -4460,8 +5099,8 @@ void Nu_DrawPlanet (void **data)
 	struct PlanetPrim p;
 	struct PlanetTex *t;
 	struct LightZone zones[PLANET_MAX_ZONES];
-	double d, sun[3];
-	int nzones;
+	double d, sun[3], soft = 0.0;
+	int nzones, smooth;
 
 	memcpy (&p, *data, sizeof (p));
 	*data += sizeof (p);
@@ -4488,17 +5127,20 @@ void Nu_DrawPlanet (void **data)
 	glEnable (GL_TEXTURE_2D);
 	glTexEnvi (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
 	glColor3f (1.0f, 1.0f, 1.0f);
+	smooth = planet_smooth_begin (&p, d, zones, nzones, &soft);
+	if (!smooth) soft = 0.0;
 
 	if (d < p.R * PLANET_CAP_RATIO) {
 		double up[3] = { -p.centre[0]/d, -p.centre[1]/d, -p.centre[2]/d };
 		double down[3];
 		to_model (&p, up, down);
 		planet_update_patch (t, down, acos (p.R/d > 1.0 ? 1.0 : p.R/d));
-		draw_horizon_cap (t, &p, d, sun, zones, nzones);
+		draw_horizon_cap (t, &p, d, sun, zones, nzones, soft);
 	} else {
-		draw_planet_sphere (t, &p, sun, zones, nzones);
+		draw_planet_sphere (t, &p, sun, zones, nzones, soft);
 	}
 
+	if (smooth) procfx_planet_end ();
 	glDisable (GL_TEXTURE_2D);
 }
 /* ==== PLANET END ==== */
@@ -4642,6 +5284,7 @@ void Nu_PutPlanet ()
 		p.flags = 0;
 		p.natm = 0;
 	}
+	p.rim = p.natm ? p.atm_col[0] : -1;
 	/* V-1: only where the ST draws it */
 	planet_atmosphere_band (&p);
 
@@ -4677,7 +5320,7 @@ static int circle_slices (double size, double z)
 
 	if (z >= 0.0 || size <= 0.0) return 32;
 	glGetDoublev (GL_PROJECTION_MATRIX, pm);
-	rpx = size / -z * pm[0] * pic_w * 0.5;
+	rpx = size / -z * pm[0] * (wide_3d ? v3d_w : pic_w) * 0.5;
 	if (rpx * 2.0 * M_PI / 16.0 <= 32.0) return 32;
 	if (rpx * 2.0 * M_PI / 16.0 >= 256.0) return 256;
 	return (int) (rpx * 2.0 * M_PI / 16.0);
@@ -4691,6 +5334,59 @@ void Nu_PutCircle ()
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrcolor (GetReg (REG_D6));
 }
+/* The galaxy map's stars and markers: a camera-facing disc whose alpha
+ * rises from 0 at r0 to a at r1, holds to r2 and falls to 0 at r3 (a
+ * soft glow, or with r0 > 0 a smooth ring).  Blending is already on. */
+static void disc_strips (float r0, float r1, float r2, float r3,
+			 float r, float g, float b, float a)
+{
+	const float rad[4] = { r0, r1, r2, r3 }, al[4] = { 0, a, a, 0 };
+	int i, k;
+
+	for (k = 0; k < 3; k++) {
+		glBegin (GL_TRIANGLE_STRIP);
+		for (i = 0; i <= 32; i++) {
+			float c = cosf (i * (float) M_PI / 16), s = sinf (i * (float) M_PI / 16);
+			glColor4f (r, g, b, al[k]);
+			glVertex2f (rad[k] * c, rad[k] * s);
+			glColor4f (r, g, b, al[k + 1]);
+			glVertex2f (rad[k + 1] * c, rad[k + 1] * s);
+		}
+		glEnd ();
+	}
+}
+
+static void soft_disc (const int *v, float r0, float r1, float r2, float r3,
+		       float r, float g, float b, float a)
+{
+	billboard_begin (v[0], v[1], v[2]);
+	disc_strips (r0, r1, r2, r3, r, g, b, a);
+	billboard_end ();
+}
+
+/* a ring with a faint fill: the selected star, and where you are */
+static void soft_ring (const int *v, float s, float r, float g, float b)
+{
+	soft_disc (v, 0, 0, 0.7f * s, 0.8f * s, r, g, b, 0.12f);
+	soft_disc (v, 0.68f * s, 0.76f * s, 0.86f * s, 0.94f * s, r, g, b, 1);
+}
+
+/* where v falls in the window, GL pixels (0: behind the eye) */
+static int project (const int *v, double *xy)
+{
+	GLdouble mv[16], pm[16], z;
+	GLint vp[4];
+
+	glGetDoublev (GL_MODELVIEW_MATRIX, mv);
+	glGetDoublev (GL_PROJECTION_MATRIX, pm);
+	glGetIntegerv (GL_VIEWPORT, vp);
+	return gluProject (v[0], v[1], v[2], mv, pm, vp, xy, xy + 1, &z);
+}
+
+/* where you are on the map: its label's strokes and its marker, projected */
+static double here_seg[64][4], here_mark[2];
+static int here_n;
+
 void Nu_DrawCircle (void **data)
 {
 	int v1[3];
@@ -4708,6 +5404,25 @@ void Nu_DrawCircle (void **data)
 	//printf ("%x (%x)\n", GetReg (2), isize);
 	
 	size = -0.002*((short)dreg2)*v1[2];
+	if (galmap == 1) {
+		/* a star as a glow in its class's colour, white hot at the
+		 * middle; the selected one (the game's big disc) as a ring */
+		float R = (unsigned char) r / 255.0f, G = (unsigned char) g / 255.0f,
+		      B = (unsigned char) b / 255.0f;
+		if ((short) dreg2 >= 8) {
+			double w[2];	/* where its name is, for hdtext (ST pixels) */
+			if (project (v1, w)) {
+				hdtext_focus_x = (w[0] - pic_x) * 320 / pic_w;
+				hdtext_focus_y = (pic_y + pic_h - w[1]) * 200 / pic_h;
+			}
+			soft_ring (v1, size, R, G, B);
+		} else {
+			soft_disc (v1, 0, 0, 0.3f * size, 2.4f * size, R, G, B, 0.35f);
+			soft_disc (v1, 0, 0, 0.55f * size, 0.85f * size,
+				   (R + 1) / 2, (G + 1) / 2, (B + 1) / 2, 1);
+		}
+		return;
+	}
 	
 	/* billboard: this is used for distant planets/stars rendered as a
 	 * flat shaded dot, which must always face the camera. */
@@ -4849,7 +5564,7 @@ static int oval_steps (const GLdouble c[3], double r)
 	if (-c[2] <= r) return OVAL_STEPS_MAX;	/* at or around the eye */
 	if (use_renderer == R_GL) pm[0] = tessProjMatrix[0];
 	else glGetDoublev (GL_PROJECTION_MATRIX, pm);
-	rpx = r / -c[2] * pm[0] * pic_w * 0.5;
+	rpx = r / -c[2] * pm[0] * (wide_3d ? v3d_w : pic_w) * 0.5;
 	n = rpx * 2.0 * M_PI / 16.0;
 	if (n <= OVAL_STEPS_MIN) return OVAL_STEPS_MIN;
 	if (n >= OVAL_STEPS_MAX) return OVAL_STEPS_MAX;
@@ -4946,15 +5661,28 @@ void Nu_PutBlob ()
 void Nu_DrawBlob (void **data)
 {
 	int v1[3];
-	unsigned int r, g, b;
+	unsigned int r, g, b, c;
 	int rad;
 	int edges;
 	
 	znode_rdvertex (data, v1);
-	split_rgb444i (znode_rdlong (data), &r, &g, &b);
+	c = znode_rdlong (data);
+	split_rgb444i (c, &r, &g, &b);
 	rad = znode_rdlong (data) & 0xffff;
 	edges = rad+4;
 	
+	if (galmap == 1 && rad >= 3) {
+		/* the map: where you are (magenta) as a ring, a nebula as a
+		 * soft cloud */
+		float s = -0.002f * rad * v1[2];
+		float R = (c >> 8 & 15) / 15.0f, G = (c >> 4 & 15) / 15.0f, B = (c & 15) / 15.0f;
+		if ((c & 0xfff) == 0xa0a) {
+			project (v1, here_mark);
+			soft_ring (v1, s, R, G, B);
+		} else
+			soft_disc (v1, 0, 0, 0.35f * s, 1.2f * s, R, G, B, 0.6f);
+		return;
+	}
 	glColor3ui (r, g, b);
 	if (rad < 3) {
 		glPointSize (((rad/2)+1) * px_scale ());
@@ -5010,6 +5738,64 @@ void Nu_PutLine ()
 	znode_wrvertex (GetReg (REG_A1)+4);
 	znode_wrcolor (GetReg (REG_D6));
 }
+/* The 'you are here' label (the game's own stroke text) set like the HD
+ * map names: scaled about its end by the marker to their cap height,
+ * narrowed to their condensed face, light grey in their weight over a
+ * dark halo, round ends.  A lone stroke (the far map's pointer) stays. */
+static void here_draw (void)
+{
+	double x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9, k = 1, kx = 1, ax;
+	float cap = 0.016f * pic_h, wid[2] = { 0.4f * cap, 0.18f * cap };
+	GLint vp[4];
+	int i, j, pass;
+
+	for (i = 0; i < here_n; i++)
+		for (j = 0; j < 4; j += 2) {
+			x0 = fmin (x0, here_seg[i][j]);
+			x1 = fmax (x1, here_seg[i][j]);
+			y0 = fmin (y0, here_seg[i][j + 1]);
+			y1 = fmax (y1, here_seg[i][j + 1]);
+		}
+	if (here_n == 1) wid[1] = 0.4f * px_scale ();
+	else if (y1 > y0) kx = 0.8 * (k = cap / (y1 - y0));
+	ax = fabs (here_mark[0] - x1) < fabs (here_mark[0] - x0) ? x1 : x0;
+	glGetIntegerv (GL_VIEWPORT, vp);
+	glMatrixMode (GL_PROJECTION);
+	glPushMatrix ();
+	glLoadIdentity ();
+	glOrtho (vp[0], vp[0] + vp[2], vp[1], vp[1] + vp[3], -1, 1);
+	glMatrixMode (GL_MODELVIEW);
+	glPushMatrix ();
+	glLoadIdentity ();
+	glTranslated (ax, (y0 + y1) / 2, 0);
+	glScaled (kx, k, 1);
+	glTranslated (-ax, -(y0 + y1) / 2, 0);
+	glPushAttrib (GL_ENABLE_BIT | GL_LINE_BIT | GL_POINT_BIT);
+	glDisable (GL_DEPTH_TEST);
+	glEnable (GL_POINT_SMOOTH);
+	/* the halo pass over every stroke first, so none dims another's core */
+	for (pass = here_n == 1; pass < 2; pass++) {
+		if (pass) glColor4ub (222, 222, 222, 255);
+		else glColor4f (0, 0, 0, 0.6f);
+		glLineWidth (wid[pass]);
+		glPointSize (wid[pass]);
+		for (j = 0; j < 2; j++) {
+			glBegin (j ? GL_LINES : GL_POINTS);
+			for (i = 0; i < here_n; i++) {
+				glVertex2dv (here_seg[i]);
+				glVertex2dv (here_seg[i] + 2);
+			}
+			glEnd ();
+		}
+	}
+	glPopAttrib ();
+	glPopMatrix ();
+	glMatrixMode (GL_PROJECTION);
+	glPopMatrix ();
+	glMatrixMode (GL_MODELVIEW);
+	here_n = 0;
+}
+
 void Nu_DrawLine (void **data)
 {
 	int v1[3], v2[3];
@@ -5019,10 +5805,16 @@ void Nu_DrawLine (void **data)
 	znode_rdvertex (data, v2);
 	znode_rdcolor (data, &r, &g, &b);
 	
+	if (galmap == 1 && r == b && (unsigned char) r > 3 * (unsigned char) g + 40) {
+		/* the map's magenta, where you are: kept for here_draw */
+		if (here_n < 64 && project (v1, here_seg[here_n]) && project (v2, here_seg[here_n] + 2))
+			here_n++;
+		return;
+	}
 	/* the engine's lines (lasers, aerials, wires) are one ST pixel wide;
 	 * keep them the same share of the view at any picture size, as the
 	 * points are, instead of a hairline at 1600x1200 */
-	glLineWidth (px_scale ());
+	glLineWidth ((galmap == 1 ? 0.6f : 1.0f) * px_scale ());
 	glColor3ub (r, g, b);
 	glBegin (GL_LINES);
 		glVertex3iv (v1);
@@ -5050,19 +5842,20 @@ void Nu_GLClearArea ()
 	y1 = GetReg (1)&0xffff;
 	x2 = GetReg (2)&0xffff;
 	y2 = GetReg (3)&0xffff;
-	hdui_clear_area (x1, y1, x2, y2);
-	
-	push_ortho ();
-	set_ctrl_viewport ();
-	glColor3f (0.0f, 0.0f, 0.0f);
-	glBegin (GL_TRIANGLE_STRIP);
-		glVertex3f (x1, 200-y1, 0);
-		glVertex3f (x2, 200-y1, 0);
-		glVertex3f (x1, 200-y2, 0);
-		glVertex3f (x2, 200-y2, 0);
-	glEnd ();
-	set_main_viewport ();
-	pop_ortho ();
+	/* black behind the view, unless the HD layer has given it a card */
+	if (!hdui_clear_area (x1, y1, x2, y2)) {
+		push_ortho ();
+		set_ctrl_viewport ();
+		glColor3f (0.0f, 0.0f, 0.0f);
+		glBegin (GL_TRIANGLE_STRIP);
+			glVertex3f (x1, 200-y1, 0);
+			glVertex3f (x2, 200-y1, 0);
+			glVertex3f (x1, 200-y2, 0);
+			glVertex3f (x2, 200-y2, 0);
+		glEnd ();
+		set_main_viewport ();
+		pop_ortho ();
+	}
 
 	/* and then we wipe the bit of the ST framebuffer (on both buffers)
 	 * to transparent/unset */
@@ -5082,6 +5875,53 @@ void Nu_GLClearArea ()
 }
 
 typedef void (*NU_DRAWFUNC) (void **);
+
+/*
+ * Widescreen flight (wide_3d): the core sends a planet only while its disc
+ * overlaps its own 4:3 picture (L3cd9c_ProjectPlanet), so a planet whose
+ * disc runs on into a side strip would vanish there as a whole disc the
+ * moment its rim leaves the picture. Instead it fades out over the last
+ * PLANET_FADE_PX of overlap (and in again the same way), with the surface
+ * and its atmosphere layers alike. A planet well inside, and any 4:3 window,
+ * is drawn exactly as before.
+ */
+#define PLANET_FADE_PX	(24.0 * pic_h / 720.0)
+
+static void planet_faded (NU_DRAWFUNC draw, void **data)
+{
+	const struct PlanetPrim *p = *data;
+	double t = tan (36.5 * M_PI / 360.0), lim[2] = { 1.9*t, t };
+	double z = p->centre[2], R2 = p->R * p->R, a = 1.0;
+	/* pixels per unit of x/z and y/z, as in draw_wide_flight */
+	double px[2] = { pic_w/2.0/lim[0], (pic_h - 32*pic_h/200)/2.0/lim[1] };
+	int i;
+
+	if (!wide_3d || z <= 0.0 || z*z <= R2) {
+		draw (data);
+		return;
+	}
+	for (i = 0; i < 2; i++) {
+		/* the disc's extent in x/z (y/z): the tangent planes */
+		double c = p->centre[i], q = p->R * sqrt (c*c + z*z - R2);
+		double s0 = (c*z - q) / (z*z - R2), s1 = (c*z + q) / (z*z - R2);
+		a = MIN (a, MIN (lim[i] - s0, s1 + lim[i]) * px[i] / PLANET_FADE_PX);
+	}
+	if (a >= 1.0) {
+		draw (data);
+	} else if (a <= 0.0) {
+		*data += sizeof (struct PlanetPrim);
+	} else {
+		glPushAttrib (GL_COLOR_BUFFER_BIT);
+		glEnable (GL_BLEND);
+		glBlendColor (0.0f, 0.0f, 0.0f, (GLfloat) a);
+		glBlendFunc (GL_CONSTANT_ALPHA, GL_ONE_MINUS_CONSTANT_ALPHA);
+		draw (data);
+		glPopAttrib ();
+	}
+}
+static void Nu_DrawPlanetFaded (void **data) { planet_faded (Nu_DrawPlanet, data); }
+static void Nu_DrawAtmosphereFaded (void **data) { planet_faded (Nu_DrawAtmosphere, data); }
+
 NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	NULL,
 	&Nu_DrawTriangle,
@@ -5095,7 +5935,7 @@ NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	&Nu_DrawComplexStartInner, // 9
 	&Nu_DrawComplexBezier,
 	&Nu_DrawTwinklyCircle,
-	&Nu_DrawPlanet,
+	&Nu_DrawPlanetFaded,
 	&Nu_DrawCircle,
 	&Nu_DrawCylinder,
 	&Nu_DrawBlob,
@@ -5103,7 +5943,7 @@ NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	&Nu_DrawPoint,
 	&Nu_Draw2DLine,
 	NULL,	/* NU_SUBTREE, see Nu_DrawPrimitive */
-	&Nu_DrawAtmosphere,
+	&Nu_DrawAtmosphereFaded,
 	&Nu_DrawSkyBand,
 	&Nu_DrawComplexOval
 };
@@ -5185,6 +6025,105 @@ static void set_gl_clear_col (int rgb)
 }
 
 /*
+ * A flight view in a window wider (or taller) than 4:3: the 3D view goes
+ * on past the picture where the black bars were, and the console's glass
+ * past the panel.
+ *
+ * One pass through a wider frustum with the same centre and scale, so the
+ * picture keeps its place and size and there is no seam to see. The core
+ * hands over every object inside its cull cone (L39646_3DObjClipOffscreen:
+ * |x| <= z, 2|y| <= z, less the object's size), which is wider than the
+ * picture, and the star blobs too (Nu_PutBlob comes before the core's
+ * 320x168 test, which only feeds its own 2D list): ships, stations,
+ * planets and stars all carry on into the strips. The view stops at that
+ * cone, so nothing pops in at the window's edge; a window wider than about
+ * 2.1:1 keeps the rest of its bars. Only what the core drops one primitive
+ * at a time off its 320x168 screen never reaches us: a circle whose centre
+ * is off it (L3a93c_project_real_circle: the small lights) and a line
+ * wholly off it (L3ace2_project_line).
+ *
+ * The console: beside the panel and under the picture, dark glass in
+ * hdui's base colours (C_BG1 at the top to C_BG0), the panel's top line
+ * run on.
+ */
+static int draw_wide_flight (void)
+{
+	int ctrl_h = 32*pic_h/200, i;
+	int ox = pic_x, oy = pic_y + ctrl_h, ow = pic_w, oh = pic_h - ctrl_h;
+	double t = tan (36.5 * M_PI / 360.0);		/* gluPerspective's */
+	double cx = ox + ow/2.0, cy = oy + oh/2.0, hx = ow/2.0, hy = oh/2.0;
+	int x0 = MAX (0, (int) ceil (cx - hx/(1.9*t)));
+	int x1 = MIN (fb_w, (int) floor (cx + hx/(1.9*t)));
+	int y1 = MIN (fb_h, (int) floor (cy + hy*0.5/t));
+	int e = MAX (1, pic_h/400);
+	/* the sky left, right and above the picture; the glass left and
+	 * right of the panel and below the picture */
+	int r[6][4] = {
+		{ x0, oy, ox - x0, y1 - oy }, { ox + ow, oy, x1 - ox - ow, y1 - oy },
+		{ ox, oy + oh, ow, y1 - oy - oh },
+		{ 0, 0, ox, oy }, { ox + ow, 0, fb_w - ox - ow, oy }, { ox, 0, ow, pic_y } };
+	double sx = 320.0/fb_w, sy = 200.0/fb_h;
+	GLdouble proj[16];
+
+	if (pic_w >= fb_w && pic_h >= fb_h) return 0;
+	glEnable (GL_SCISSOR_TEST);
+	/* the sky colour (still the clear colour) past the picture only */
+	for (i = 0; i < 3; i++) {
+		if (r[i][2] <= 0 || r[i][3] <= 0) continue;
+		glScissor (r[i][0], r[i][1], r[i][2], r[i][3]);
+		glClear (GL_COLOR_BUFFER_BIT);
+	}
+	glScissor (x0, oy, x1 - x0, y1 - oy);
+	glGetDoublev (GL_PROJECTION_MATRIX, proj);
+	glMatrixMode (GL_PROJECTION);
+	glLoadIdentity ();
+	glFrustum (1.9*t*GL_NEAR_PLANE*(x0 - cx)/hx, 1.9*t*GL_NEAR_PLANE*(x1 - cx)/hx,
+		   -t*GL_NEAR_PLANE, t*GL_NEAR_PLANE*(y1 - cy)/hy,
+		   GL_NEAR_PLANE, GL_FAR_PLANE);
+	glMatrixMode (GL_MODELVIEW);
+	wide_3d = 1;
+	v3d_x = x0; v3d_y = oy; v3d_w = x1 - x0; v3d_h = y1 - oy;
+	set_main_viewport ();
+	draw_3dview (znode_start);
+	hull_end ();
+	glDisable (GL_SCISSOR_TEST);
+	wide_3d = 0;
+	glMatrixMode (GL_PROJECTION);
+	glLoadMatrixd (proj);
+	glMatrixMode (GL_MODELVIEW);
+
+	glViewport (0, 0, fb_w, fb_h);
+	push_ortho ();
+	glPushAttrib (GL_ENABLE_BIT | GL_LIGHTING_BIT);
+	glDisable (GL_LIGHTING);
+	glDisable (GL_TEXTURE_2D);
+	glDisable (GL_BLEND);
+	glShadeModel (GL_SMOOTH);
+	glBegin (GL_QUADS);
+	for (i = 3; i < 6; i++) {
+		int *q = r[i];
+		if (q[2] <= 0 || q[3] <= 0) continue;
+		glColor3ub (0x0b, 0x10, 0x16);
+		glVertex2d (q[0]*sx, 0);
+		glVertex2d ((q[0] + q[2])*sx, 0);
+		glColor3ub (0x14, 0x1c, 0x26);
+		glVertex2d ((q[0] + q[2])*sx, q[3]*sy);
+		glVertex2d (q[0]*sx, q[3]*sy);
+		if (i == 5) continue;
+		glColor3ub (0x36, 0x3f, 0x49);
+		glVertex2d (q[0]*sx, (oy - e)*sy);
+		glVertex2d ((q[0] + q[2])*sx, (oy - e)*sy);
+		glVertex2d ((q[0] + q[2])*sx, oy*sy);
+		glVertex2d (q[0]*sx, oy*sy);
+	}
+	glEnd ();
+	glPopAttrib ();
+	pop_ortho ();
+	set_main_viewport ();
+	return 1;
+}
+
+/*
  * There is deliberately no backdrop drawing here.
  *
  * Nothing paints the backdrop under GL: Fn_Draw3DView, the engine's 2D
@@ -5195,45 +6134,9 @@ static void set_gl_clear_col (int rgb)
  * come from the planet primitive itself - see draw_ground_dome.
  */
 
-void Nu_DrawScreen ()
+/* the next frame: its clear, the backdrops under it */
+static void begin_frame (void)
 {
-	/* build RGB palettes */
-	_BuildRGBPalette (MainRGBPalette, MainPalette, len_main_palette);
-	_BuildRGBPalette (CtrlRGBPalette, CtrlPalette, 16);
-	
-	//fprintf (stderr, "Render: ");
-	if (znode_cur) end_node ();
-	//printf ("Frame: %d znodes.\n", znode_buf_pos);
-	planet_ground_seen = 0;
-	if (scene_overflow) {
-		/* S-6: the display lists are cut short somewhere: drop this
-		 * frame's 3D view rather than walk them */
-		if ((scene_overflows++ & 255) == 0)
-			fprintf (stderr, "GL: 3D scene too big for the scene buffers, frame dropped (%u so far)\n",
-				 scene_overflows);
-	} else {
-		Uint32 t = hull_log_on () ? SDL_GetTicks () : 0;
-		draw_3dview (znode_start);
-		if (t) hull_log_frame (t);
-	}
-	hull_end ();
-	//fprintf (stderr, "\n");
-
-#if PRIM_DEBUG
-	prim_debug_frame_end ();
-#endif
-
-	if (mouse_shown) {
-		SDL_ShowCursor (SDL_ENABLE);
-		mouse_shown = 0;
-	} else {
-		SDL_ShowCursor (SDL_DISABLE);
-	}
-	draw_control_panel ();
-	glFlush ();
-	
-	SDL_GL_SwapBuffers ();
-
 	/* frontier background color... */
 	if (use_renderer == R_GLWIRE) {
 		glClearColor (0,0,0,0);
@@ -5262,6 +6165,82 @@ void Nu_DrawScreen ()
 	set_main_viewport ();
 	/* a 2D page's backdrop, under everything the next frame draws */
 	hdui_backdrop (MainRGBPalette, fe2_bgcol);
+	if (galmap == 1) galmap_backdrop ();
 	/* the game-over backdrop, under the tombstone */
 	endcard_frame ();
+}
+
+static int stalled;	/* host updates since the last frame */
+
+void Nu_DrawScreen ()
+{
+	stalled = 0;
+	/* build RGB palettes */
+	_BuildRGBPalette (MainRGBPalette, MainPalette, len_main_palette);
+	_BuildRGBPalette (CtrlRGBPalette, CtrlPalette, 16);
+	
+	//fprintf (stderr, "Render: ");
+	if (znode_cur) end_node ();
+	//printf ("Frame: %d znodes.\n", znode_buf_pos);
+	planet_ground_seen = 0;
+	galmap_update ();
+	if (scene_overflow) {
+		/* S-6: the display lists are cut short somewhere: drop this
+		 * frame's 3D view rather than walk them */
+		if ((scene_overflows++ & 255) == 0)
+			fprintf (stderr, "GL: 3D scene too big for the scene buffers, frame dropped (%u so far)\n",
+				 scene_overflows);
+	} else if (galmap == 1) {
+		/* the map's grid and stalks: thin smooth lines, not pixel wide */
+		glEnable (GL_LINE_SMOOTH);
+		glEnable (GL_BLEND);
+		draw_3dview (znode_start);
+		here_draw ();
+		glDisable (GL_BLEND);
+		glDisable (GL_LINE_SMOOTH);
+	} else {
+		Uint32 t = hull_log_on () ? SDL_GetTicks () : 0;
+		hangar_faces = 0;
+		/* a flight view with the panel up and no HD backdrop */
+		if (use_renderer != R_GL || classic_ui || !znode_start
+		    || !STMemory_ReadByte (__DL60cf_hblank_do_pal) || hdback_active ()
+		    || !bindings_in_flight_view (0, 0) || !draw_wide_flight ())
+			draw_3dview (znode_start);
+		if (t) hull_log_frame (t);
+	}
+	hull_end ();
+	if (hangar_faces) hull_hangar_grade ();
+	//fprintf (stderr, "\n");
+
+#if PRIM_DEBUG
+	prim_debug_frame_end ();
+#endif
+
+	if (mouse_shown) {
+		SDL_ShowCursor (SDL_ENABLE);
+		mouse_shown = 0;
+	} else {
+		SDL_ShowCursor (SDL_DISABLE);
+	}
+	draw_control_panel ();
+	glFlush ();
+	
+	SDL_GL_SwapBuffers ();
+
+	begin_frame ();
+}
+
+/* The game draws no frames while it waits for a name typed on the save
+ * page (it draws each letter straight to the screen) or a file chosen:
+ * there, from the third host update with no frame, show the screen as it
+ * is each update.  Only the HD layers' picture of it is redrawn: nothing
+ * writes ST memory (the queued strings, which would, hold it back). */
+void Screen_Stalled (void)
+{
+	if (stalled < 3) stalled++;	/* no further: it would wrap */
+	if (stalled < 3 || queued_string_pos || !hdui_still_page ()) return;
+	draw_control_panel ();
+	glFlush ();
+	SDL_GL_SwapBuffers ();
+	begin_frame ();
 }

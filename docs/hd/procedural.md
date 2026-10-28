@@ -3,8 +3,8 @@
 The question: where can procedural generation make the port look better
 without building something big?  The answer: a few small shader layers.
 Each sits on a primitive the game already draws, and they all share one
-noise library.  The first is built: the Milky Way, switched off with
-`--flat-sky`.
+noise library.  Two are built: the Milky Way, switched off with
+`--flat-sky`, and the planets, switched off with `--flat-planets`.
 
 ## What is already procedural
 
@@ -58,23 +58,23 @@ noise library.  The first is built: the Milky Way, switched off with
 
 | # | Layer | Quality gain | Lines | Shared helpers | Risk |
 |---|---|---|---|---|---|
-| 1 | Planet limb glow | Every planet seen from space gets a lit, coloured rim instead of a flat disc. | ~80 | noise, program, glow quad, body class | Low |
+| 1 | **Planets (built, with 6)** | Every textured planet gets a soft terminator, a darker limb, a lit rim and a soft halo from its own atmosphere layers. | 85 + 210 in gl.c | noise, program | Low |
 | 2 | Star corona by class | The star becomes a glowing sun with soft streamers, not a flat disc. | ~60 | noise, program, glow quad, object reader, star class | Low |
 | 3 | **Sky band (built)** | The flat blue cut-outs become soft star clouds with dust lanes, on every space screen. | 150 + 33 hooks | noise, program, object reader | Low |
 | 4 | Planet rings | Probably also a fix: rings look to be black discs today. They would become banded and see-through. | ~90 | noise, program, object reader | Medium |
 | 5 | Backdrop variation | Ports of the same class stop looking identical. | ~30 | identity tables | Low |
-| 6 | Close planet detail | The ground keeps its grain when flying low. | ~60 + seams | noise, program | Medium |
+| 6 | **Close planet detail (built, in 1)** | The ground keeps its grain when flying low. | in 1 | noise, program | Medium |
 
 All six only read memory and draw GL, so the risk to the core and the
 oracle is nil.  The risk column is about visuals and code.
 
-- **Limb glow.**
+- **Limb glow.**  Built as part of the planets layer: see "Prototype notes: the planets" below.
   - Hook: `Nu_DrawPlanet`, after `draw_planet_sphere`, drawn additive.
   - State: the outer `atm_col`, taken before `planet_atmosphere_band` zeroes `natm`; the sun vector; the body class.
   - Airless bodies get none.
   - Fade out while the near-atmosphere cones are drawn.
   - Verify: Lave from orbit.
-  - Switch: `--flat-limb`.
+  - Switch: `--flat-planets`, which covers the whole planets layer.
 - **Corona.**
   - Hook: `Nu_DrawTwinklyCircle`, with a model check in `Nu_PutTwinklyCircle`.
   - Streamers: `pf_fbm` over angle, seeded by the star.
@@ -91,11 +91,11 @@ oracle is nil.  The risk column is about visuals and code.
   - Hook: `pick` in hdback.c.
   - Flip, hue and crop from a seed of the port.
   - Switch: `--same-backdrops`.
-- **Close detail.**
+- **Close detail.**  Built as part of the planets layer: see "Prototype notes: the planets" below.
   - Hook: `draw_planet_sphere`.
   - 3D `pf_fbm` on the sphere position, so there are no cube seams.
   - Overlaps the parked planet-fidelity work, so do it last.
-  - Switch: `--flat-detail`.
+  - Switch: `--flat-planets`, as for the limb.
 
 **Recommendation.**  Ship the sky band, then limb glow, then corona.  With
 the shared blocks that is about 450 lines.  Do rings once a ringed save
