@@ -234,10 +234,73 @@ void procfx_sky_end (void)
 	glPopAttrib ();
 }
 
+/* ---- layer 2: the game-over backdrop --------------------------------- */
+
+/* A dark nebula behind the tombstone, in screen space: two layers of the
+ * shared noise in the HD pages' night blues, a faint warm wisp, and a
+ * vignette.  uFade brings it up from the black the game clears to. */
+static const char end_glsl[] =
+	"uniform vec4 uVp;\n"
+	"uniform float uFade;\n"
+	"void main () {\n"
+	"	vec2 p = (gl_FragCoord.xy - uVp.xy) / uVp.w;\n"
+	"	vec2 c = p - vec2 (0.5 * uVp.z / uVp.w, 0.5);\n"
+	"	float neb = pf_fbm (vec3 (p * 2.2, 4.0), 5);\n"
+	"	float wisp = pf_fbm (vec3 (p * 4.5 + neb, 9.0), 4);\n"
+	"	vec3 col = vec3 (0.043, 0.063, 0.086);\n"
+	"	col += vec3 (0.05, 0.11, 0.17) * smoothstep (0.42, 0.80, neb);\n"
+	"	col += vec3 (0.07, 0.04, 0.09) * smoothstep (0.55, 0.85, wisp);\n"
+	"	col *= 1.0 - 0.8 * smoothstep (0.30, 0.95, length (c));\n"
+	"	gl_FragColor = vec4 (col * uFade, 1.0);\n"
+	"}\n";
+
+static GLuint end_prog;
+static int end_failed;
+static GLint u_end_vp, u_end_fade;
+
+void procfx_endgame_backdrop (float fade)
+{
+	GLint vp[4];
+
+	if (end_failed) return;
+	if (!end_prog) {
+		end_prog = procfx_program ("game-over backdrop", end_glsl);
+		if (!end_prog) { end_failed = 1; return; }
+		u_end_vp = glGetUniformLocation (end_prog, "uVp");
+		u_end_fade = glGetUniformLocation (end_prog, "uFade");
+	}
+	glGetIntegerv (GL_VIEWPORT, vp);
+	glPushAttrib (GL_ENABLE_BIT | GL_CURRENT_BIT | GL_POLYGON_BIT | GL_TRANSFORM_BIT);
+	glDisable (GL_BLEND);
+	glDisable (GL_DEPTH_TEST);
+	glDisable (GL_TEXTURE_2D);
+	glDisable (GL_CULL_FACE);
+	glDisable (GL_LIGHTING);
+	glDisable (GL_FOG);
+	glDisable (GL_ALPHA_TEST);
+	glPolygonMode (GL_FRONT_AND_BACK, GL_FILL);
+	glMatrixMode (GL_PROJECTION);
+	glPushMatrix ();
+	glLoadIdentity ();
+	glMatrixMode (GL_MODELVIEW);
+	glPushMatrix ();
+	glLoadIdentity ();
+	glUseProgram (end_prog);
+	glUniform4f (u_end_vp, (float) vp[0], (float) vp[1], (float) vp[2], (float) vp[3]);
+	glUniform1f (u_end_fade, fade);
+	glRectf (-1, -1, 1, 1);
+	glUseProgram (0);
+	glPopMatrix ();
+	glMatrixMode (GL_PROJECTION);
+	glPopMatrix ();
+	glPopAttrib ();
+}
+
 /* the GL context is about to go: compile again in the next one */
 void procfx_forget (void)
 {
 	if (sky_prog) glDeleteProgram (sky_prog);
-	sky_prog = 0;
-	sky_failed = 0;
+	if (end_prog) glDeleteProgram (end_prog);
+	sky_prog = end_prog = 0;
+	sky_failed = end_failed = 0;
 }
