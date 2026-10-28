@@ -108,6 +108,7 @@ int pixel_faces = 0;
 int classic_ui = 0;
 /* fe2 UI blits are done to old screen memory and copied to this texture. */
 static unsigned int screen_tex;
+static GLuint galaxy_tex;	/* the galaxy picture, smoothed (see galaxy_draw) */
 
 static GLUquadricObj *qobj;
 static GLUtesselator *tobj;
@@ -258,6 +259,10 @@ static void change_vidmode ()
 	hdui_forget ();
 	controls_page_forget ();
 	hdback_forget ();
+	if (galaxy_tex) {
+		glDeleteTextures (1, &galaxy_tex);
+		galaxy_tex = 0;
+	}
 	procfx_forget ();
 	hdtip_forget ();
 	if (screen_tex) {
@@ -633,6 +638,153 @@ void Screen_ToggleRenderer ()
 		use_renderer = use_renderer == R_GL ? R_OLD : R_GL;
 }
 
+/* --- The galaxy map, redrawn in HD (GL, not under --classic-ui) ------
+ *
+ * The map's own mode word, read only: 0xff the map, 2 the picture of
+ * the whole galaxy, 1 a system's info page (left alone), 0 elsewhere. */
+#define A6_GALMAP_MODE	34
+static int galmap;	/* 1: the map, 2: the galaxy picture, 0: neither */
+
+static void galmap_update (void)
+{
+	int m = classic_ui ? 0 : STMemory_ReadByte (__DL5eb6_a6_base + A6_GALMAP_MODE) & 0xff;
+
+	/* the old renderer keeps its look: names found, no halo or declutter;
+	 * --pixel-art keeps the game's own galaxy picture */
+	hdtext_map = m == 0xff || m == 2 ? 1 + (use_renderer == R_GL) : 0;
+	hdtext_focus_x = -1;	/* until the selected star is drawn */
+	galmap = use_renderer != R_GL ? 0 : m == 0xff ? 1 : m == 2 && !pixel_art ? 2 : 0;
+}
+
+/* The galaxy picture is 320x168 of dithered greys.  Where hdtext took a
+ * name out, fill from the picture ten rows away (not with one flat
+ * colour, which left a dark box behind each name), then blur the greys
+ * into a smooth density, coloured from deep blue-violet where stars are
+ * few to warm white where they are thick, drawn filtered under the
+ * raster.  The raster keeps only what is not grey (the scale bar); the
+ * magenta marker pixels (where you are) become smooth rings. */
+#define GAL_H	168
+static unsigned char galaxy_rgba[GAL_H][320][4];
+static short galaxy_mark[8][2];
+static int galaxy_marks;
+static const float galaxy_ramp[6][4] = {	/* density, r, g, b */
+	{ 0.00f,   4,   3,  14 }, { 0.15f,  22,  14,  58 }, { 0.35f,  70,  40, 130 },
+	{ 0.60f, 170, 100, 150 }, { 0.80f, 240, 190, 160 }, { 1.00f, 255, 246, 228 } };
+
+static void galaxy_soften (const unsigned char *r, unsigned char *out)
+{
+	static unsigned char grey[256];
+	int x, y, i, j, dx, dy;
+
+	for (i = 0; i < 256; i++) {
+		unsigned int p = MainRGBPalette[i];
+		int a = p & 0xff, b = p >> 8 & 0xff, c = p >> 16 & 0xff;
+		int hi = a > b ? (a > c ? a : c) : (b > c ? b : c);
+		int lo = a < b ? (a < c ? a : c) : (b < c ? b : c);
+		grey[i] = i != 255 && hi - lo < 24;
+	}
+	galaxy_marks = 0;
+	for (i = 0; i < GAL_H * 320; i++) {
+		unsigned int p = MainRGBPalette[out[i]];
+		j = i < 10 * 320 ? i + 10 * 320 : i - 10 * 320;
+		if (out[i] != r[i] && out[j] == r[j]) out[i] = r[j];
+		else if ((p & 0xff) == (p >> 16 & 0xff) && (p & 0xff) >= (p >> 8 & 0xff) + 64 &&
+			 galaxy_marks < 8) {
+			galaxy_mark[galaxy_marks][0] = i % 320;
+			galaxy_mark[galaxy_marks++][1] = i / 320;
+			out[i] = 255;
+		}
+	}
+	for (y = 0; y < GAL_H; y++)
+		for (x = 0; x < 320; x++) {
+			float s = 0, w = 0, t;
+			for (dy = -2; dy <= 2; dy++)
+				for (dx = -2; dx <= 2; dx++) {
+					int yy = y + dy, xx = x + dx, k = (3 - abs (dx)) * (3 - abs (dy));
+					if (yy < 0 || yy >= GAL_H || xx < 0 || xx >= 320 ||
+					    !grey[out[yy * 320 + xx]]) continue;
+					s += (MainRGBPalette[out[yy * 320 + xx]] >> 8 & 0xff) * k;
+					w += k;
+				}
+			t = w ? s / w / 160 : 0;
+			for (i = 1; i < 5 && t > galaxy_ramp[i][0]; i++);
+			t = (t - galaxy_ramp[i - 1][0]) / (galaxy_ramp[i][0] - galaxy_ramp[i - 1][0]);
+			if (t > 1) t = 1;
+			for (j = 1; j < 4; j++)
+				galaxy_rgba[y][x][j - 1] = galaxy_ramp[i - 1][j] +
+					t * (galaxy_ramp[i][j] - galaxy_ramp[i - 1][j]);
+			galaxy_rgba[y][x][3] = 255;
+		}
+	for (i = 0; i < GAL_H * 320; i++)
+		if (grey[out[i]]) out[i] = 255;
+}
+
+static void disc_strips (float r0, float r1, float r2, float r3,
+			 float r, float g, float b, float a);
+
+static void galaxy_draw (void)
+{
+	int i;
+
+	if (!galaxy_tex) {
+		glGenTextures (1, &galaxy_tex);
+		glBindTexture (GL_TEXTURE_2D, galaxy_tex);
+		glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA, 512, 256, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+		glTexParameterf (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameterf (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glTexParameterf (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameterf (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	}
+	glEnable (GL_TEXTURE_2D);
+	glBindTexture (GL_TEXTURE_2D, galaxy_tex);
+	glTexSubImage2D (GL_TEXTURE_2D, 0, 0, 0, 320, GAL_H, GL_RGBA, GL_UNSIGNED_BYTE, galaxy_rgba);
+	glTexEnvf (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+	/* texel centres at the edges: nothing outside the picture blends in */
+	glBegin (GL_TRIANGLE_STRIP);
+		glTexCoord2f (0.5f / 512, (GAL_H - 0.5f) / 256);
+		glVertex2i (0, 200 - GAL_H);
+		glTexCoord2f (319.5f / 512, (GAL_H - 0.5f) / 256);
+		glVertex2i (320, 200 - GAL_H);
+		glTexCoord2f (0.5f / 512, 0.5f / 256);
+		glVertex2i (0, 200);
+		glTexCoord2f (319.5f / 512, 0.5f / 256);
+		glVertex2i (320, 200);
+	glEnd ();
+	glDisable (GL_TEXTURE_2D);
+	/* where you are: a smooth ring and glow, round on the screen */
+	glEnable (GL_BLEND);
+	glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	for (i = 0; i < galaxy_marks; i++) {
+		glPushMatrix ();
+		glTranslatef (galaxy_mark[i][0] + 0.5f, 200 - galaxy_mark[i][1] - 0.5f, 0);
+		glScalef (1, 200.0f * pic_w / (320.0f * pic_h), 1);
+		disc_strips (0, 0, 2.4f, 3.4f, 0.94f, 0.5f, 0.94f, 0.18f);
+		disc_strips (1.7f, 2.0f, 2.4f, 2.7f, 1, 0.62f, 1, 1);
+		disc_strips (0, 0, 0.5f, 1.0f, 1, 0.9f, 1, 1);
+		glPopMatrix ();
+	}
+	glDisable (GL_BLEND);
+}
+
+/* The map's sky: the game's colour lit in the middle and falling away to
+ * near black at the edges, instead of one flat fill. */
+static void galmap_backdrop (void)
+{
+	unsigned int p = MainRGBPalette[fe2_bgcol];
+	float r = (p & 0xff) / 255.0f, g = (p >> 8 & 0xff) / 255.0f, b = (p >> 16 & 0xff) / 255.0f;
+	int i;
+
+	push_ortho ();
+	glBegin (GL_TRIANGLE_FAN);
+	glColor3f (r * 1.25f + 0.03f, g * 1.25f + 0.02f, b * 1.25f + 0.06f);
+	glVertex2f (160, 100);
+	glColor3f (r * 0.2f, g * 0.2f, b * 0.25f);
+	for (i = 0; i <= 32; i++)
+		glVertex2f (160 + 232 * cosf (i * (float) M_PI / 16), 100 + 150 * sinf (i * (float) M_PI / 16));
+	glEnd ();
+	pop_ortho ();
+}
+
 static void draw_control_panel ()
 {
 	int x, y;
@@ -650,12 +802,14 @@ static void draw_control_panel ()
 	y = logscreen2;
 	logscreen2 = physcreen;
 	for (x=0; x<queued_string_pos; x++) {
+		hdtext_queue = x + 1;	/* which name, for hdtext */
 		DrawStr (	queued_strings[x].x,
 				queued_strings[x].y,
 				queued_strings[x].col,
 				queued_strings[x].str,
 				FALSE);
 	}
+	hdtext_queue = 0;
 	logscreen2 = y;
 	/****************************************************/
 	
@@ -670,6 +824,7 @@ static void draw_control_panel ()
 		hdstill_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
 		hdback_frame (VideoRaster, hd_screen);
 		scr = hd_screen;
+		if (galmap == 2) galaxy_soften (VideoRaster, hd_screen);
 	}
 	
 	/* intro likes black at the bottom */
@@ -684,6 +839,7 @@ static void draw_control_panel ()
 	glEnd ();
 	
 	hdui_draw_under (MainRGBPalette, CtrlRGBPalette);
+	if (galmap == 2 && scr == hd_screen) galaxy_draw ();
 	
 	glEnable (GL_TEXTURE_2D);
 	
@@ -4898,6 +5054,59 @@ void Nu_PutCircle ()
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrcolor (GetReg (REG_D6));
 }
+/* The galaxy map's stars and markers: a camera-facing disc whose alpha
+ * rises from 0 at r0 to a at r1, holds to r2 and falls to 0 at r3 (a
+ * soft glow, or with r0 > 0 a smooth ring).  Blending is already on. */
+static void disc_strips (float r0, float r1, float r2, float r3,
+			 float r, float g, float b, float a)
+{
+	const float rad[4] = { r0, r1, r2, r3 }, al[4] = { 0, a, a, 0 };
+	int i, k;
+
+	for (k = 0; k < 3; k++) {
+		glBegin (GL_TRIANGLE_STRIP);
+		for (i = 0; i <= 32; i++) {
+			float c = cosf (i * (float) M_PI / 16), s = sinf (i * (float) M_PI / 16);
+			glColor4f (r, g, b, al[k]);
+			glVertex2f (rad[k] * c, rad[k] * s);
+			glColor4f (r, g, b, al[k + 1]);
+			glVertex2f (rad[k + 1] * c, rad[k + 1] * s);
+		}
+		glEnd ();
+	}
+}
+
+static void soft_disc (const int *v, float r0, float r1, float r2, float r3,
+		       float r, float g, float b, float a)
+{
+	billboard_begin (v[0], v[1], v[2]);
+	disc_strips (r0, r1, r2, r3, r, g, b, a);
+	billboard_end ();
+}
+
+/* a ring with a faint fill: the selected star, and where you are */
+static void soft_ring (const int *v, float s, float r, float g, float b)
+{
+	soft_disc (v, 0, 0, 0.7f * s, 0.8f * s, r, g, b, 0.12f);
+	soft_disc (v, 0.68f * s, 0.76f * s, 0.86f * s, 0.94f * s, r, g, b, 1);
+}
+
+/* where v falls in the window, GL pixels (0: behind the eye) */
+static int project (const int *v, double *xy)
+{
+	GLdouble mv[16], pm[16], z;
+	GLint vp[4];
+
+	glGetDoublev (GL_MODELVIEW_MATRIX, mv);
+	glGetDoublev (GL_PROJECTION_MATRIX, pm);
+	glGetIntegerv (GL_VIEWPORT, vp);
+	return gluProject (v[0], v[1], v[2], mv, pm, vp, xy, xy + 1, &z);
+}
+
+/* where you are on the map: its label's strokes and its marker, projected */
+static double here_seg[64][4], here_mark[2];
+static int here_n;
+
 void Nu_DrawCircle (void **data)
 {
 	int v1[3];
@@ -4915,6 +5124,25 @@ void Nu_DrawCircle (void **data)
 	//printf ("%x (%x)\n", GetReg (2), isize);
 	
 	size = -0.002*((short)dreg2)*v1[2];
+	if (galmap == 1) {
+		/* a star as a glow in its class's colour, white hot at the
+		 * middle; the selected one (the game's big disc) as a ring */
+		float R = (unsigned char) r / 255.0f, G = (unsigned char) g / 255.0f,
+		      B = (unsigned char) b / 255.0f;
+		if ((short) dreg2 >= 8) {
+			double w[2];	/* where its name is, for hdtext (ST pixels) */
+			if (project (v1, w)) {
+				hdtext_focus_x = (w[0] - pic_x) * 320 / pic_w;
+				hdtext_focus_y = (pic_y + pic_h - w[1]) * 200 / pic_h;
+			}
+			soft_ring (v1, size, R, G, B);
+		} else {
+			soft_disc (v1, 0, 0, 0.3f * size, 2.4f * size, R, G, B, 0.35f);
+			soft_disc (v1, 0, 0, 0.55f * size, 0.85f * size,
+				   (R + 1) / 2, (G + 1) / 2, (B + 1) / 2, 1);
+		}
+		return;
+	}
 	
 	/* billboard: this is used for distant planets/stars rendered as a
 	 * flat shaded dot, which must always face the camera. */
@@ -5153,15 +5381,28 @@ void Nu_PutBlob ()
 void Nu_DrawBlob (void **data)
 {
 	int v1[3];
-	unsigned int r, g, b;
+	unsigned int r, g, b, c;
 	int rad;
 	int edges;
 	
 	znode_rdvertex (data, v1);
-	split_rgb444i (znode_rdlong (data), &r, &g, &b);
+	c = znode_rdlong (data);
+	split_rgb444i (c, &r, &g, &b);
 	rad = znode_rdlong (data) & 0xffff;
 	edges = rad+4;
 	
+	if (galmap == 1 && rad >= 3) {
+		/* the map: where you are (magenta) as a ring, a nebula as a
+		 * soft cloud */
+		float s = -0.002f * rad * v1[2];
+		float R = (c >> 8 & 15) / 15.0f, G = (c >> 4 & 15) / 15.0f, B = (c & 15) / 15.0f;
+		if ((c & 0xfff) == 0xa0a) {
+			project (v1, here_mark);
+			soft_ring (v1, s, R, G, B);
+		} else
+			soft_disc (v1, 0, 0, 0.35f * s, 1.2f * s, R, G, B, 0.6f);
+		return;
+	}
 	glColor3ui (r, g, b);
 	if (rad < 3) {
 		glPointSize (((rad/2)+1) * px_scale ());
@@ -5217,6 +5458,64 @@ void Nu_PutLine ()
 	znode_wrvertex (GetReg (REG_A1)+4);
 	znode_wrcolor (GetReg (REG_D6));
 }
+/* The 'you are here' label (the game's own stroke text) set like the HD
+ * map names: scaled about its end by the marker to their cap height,
+ * narrowed to their condensed face, light grey in their weight over a
+ * dark halo, round ends.  A lone stroke (the far map's pointer) stays. */
+static void here_draw (void)
+{
+	double x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9, k = 1, kx = 1, ax;
+	float cap = 0.016f * pic_h, wid[2] = { 0.4f * cap, 0.18f * cap };
+	GLint vp[4];
+	int i, j, pass;
+
+	for (i = 0; i < here_n; i++)
+		for (j = 0; j < 4; j += 2) {
+			x0 = fmin (x0, here_seg[i][j]);
+			x1 = fmax (x1, here_seg[i][j]);
+			y0 = fmin (y0, here_seg[i][j + 1]);
+			y1 = fmax (y1, here_seg[i][j + 1]);
+		}
+	if (here_n == 1) wid[1] = 0.4f * px_scale ();
+	else if (y1 > y0) kx = 0.8 * (k = cap / (y1 - y0));
+	ax = fabs (here_mark[0] - x1) < fabs (here_mark[0] - x0) ? x1 : x0;
+	glGetIntegerv (GL_VIEWPORT, vp);
+	glMatrixMode (GL_PROJECTION);
+	glPushMatrix ();
+	glLoadIdentity ();
+	glOrtho (vp[0], vp[0] + vp[2], vp[1], vp[1] + vp[3], -1, 1);
+	glMatrixMode (GL_MODELVIEW);
+	glPushMatrix ();
+	glLoadIdentity ();
+	glTranslated (ax, (y0 + y1) / 2, 0);
+	glScaled (kx, k, 1);
+	glTranslated (-ax, -(y0 + y1) / 2, 0);
+	glPushAttrib (GL_ENABLE_BIT | GL_LINE_BIT | GL_POINT_BIT);
+	glDisable (GL_DEPTH_TEST);
+	glEnable (GL_POINT_SMOOTH);
+	/* the halo pass over every stroke first, so none dims another's core */
+	for (pass = here_n == 1; pass < 2; pass++) {
+		if (pass) glColor4ub (222, 222, 222, 255);
+		else glColor4f (0, 0, 0, 0.6f);
+		glLineWidth (wid[pass]);
+		glPointSize (wid[pass]);
+		for (j = 0; j < 2; j++) {
+			glBegin (j ? GL_LINES : GL_POINTS);
+			for (i = 0; i < here_n; i++) {
+				glVertex2dv (here_seg[i]);
+				glVertex2dv (here_seg[i] + 2);
+			}
+			glEnd ();
+		}
+	}
+	glPopAttrib ();
+	glPopMatrix ();
+	glMatrixMode (GL_PROJECTION);
+	glPopMatrix ();
+	glMatrixMode (GL_MODELVIEW);
+	here_n = 0;
+}
+
 void Nu_DrawLine (void **data)
 {
 	int v1[3], v2[3];
@@ -5226,10 +5525,16 @@ void Nu_DrawLine (void **data)
 	znode_rdvertex (data, v2);
 	znode_rdcolor (data, &r, &g, &b);
 	
+	if (galmap == 1 && r == b && (unsigned char) r > 3 * (unsigned char) g + 40) {
+		/* the map's magenta, where you are: kept for here_draw */
+		if (here_n < 64 && project (v1, here_seg[here_n]) && project (v2, here_seg[here_n] + 2))
+			here_n++;
+		return;
+	}
 	/* the engine's lines (lasers, aerials, wires) are one ST pixel wide;
 	 * keep them the same share of the view at any picture size, as the
 	 * points are, instead of a hairline at 1600x1200 */
-	glLineWidth (px_scale ());
+	glLineWidth ((galmap == 1 ? 0.6f : 1.0f) * px_scale ());
 	glColor3ub (r, g, b);
 	glBegin (GL_LINES);
 		glVertex3iv (v1);
@@ -5412,12 +5717,21 @@ void Nu_DrawScreen ()
 	if (znode_cur) end_node ();
 	//printf ("Frame: %d znodes.\n", znode_buf_pos);
 	planet_ground_seen = 0;
+	galmap_update ();
 	if (scene_overflow) {
 		/* S-6: the display lists are cut short somewhere: drop this
 		 * frame's 3D view rather than walk them */
 		if ((scene_overflows++ & 255) == 0)
 			fprintf (stderr, "GL: 3D scene too big for the scene buffers, frame dropped (%u so far)\n",
 				 scene_overflows);
+	} else if (galmap == 1) {
+		/* the map's grid and stalks: thin smooth lines, not pixel wide */
+		glEnable (GL_LINE_SMOOTH);
+		glEnable (GL_BLEND);
+		draw_3dview (znode_start);
+		here_draw ();
+		glDisable (GL_BLEND);
+		glDisable (GL_LINE_SMOOTH);
 	} else {
 		Uint32 t = hull_log_on () ? SDL_GetTicks () : 0;
 		draw_3dview (znode_start);
@@ -5469,6 +5783,7 @@ void Nu_DrawScreen ()
 	set_main_viewport ();
 	/* a 2D page's backdrop, under everything the next frame draws */
 	hdui_backdrop (MainRGBPalette, fe2_bgcol);
+	if (galmap == 1) galmap_backdrop ();
 	/* the game-over backdrop, under the tombstone */
 	endcard_frame ();
 }
