@@ -115,9 +115,16 @@ and the reading of the model's frame). The art is in `art/hull/`.
      model's geometry, not the face's colour, so it does not change with the
      light. Before it, those faces took the hangar's tile and no graze, and
      a slanting chamfer smeared the hangar's tile into wooden boards.
+   - **A ship's parts from another model** (the missiles on its pylons,
+     which the engine draws from the missile's own model under the
+     ship's key) are not its hull: they are drawn flat, like a missile in
+     flight. A building's parts (the hangar's doors and walls) keep its
+     plating.
    - **Complex shapes** take the plane of the face they lie on:
      - The hangar's own shapes (grey signs and lamps) and markings stay
-       flat.
+       flat. Its dark grey ones (64, the alcove doors; its grey lettering
+       is 96) are plated with the hangar's tile, calm, as they carry the
+       yellow window markings.
      - A coloured one, which is the station's outside around the slot,
        takes the station plating. (These still go by colour, not by the
        bay box: a grey complex shape out of the box stays flat.)
@@ -167,15 +174,23 @@ and the reading of the model's frame). The art is in `art/hull/`.
     the game's, and its class or a note that it is not listed and is
     drawn flat
   - the 3D view's draw time averaged over 300 frames
-  - `hull: model M face S (a6 A) moves, tile bound to it` the first time a
-    face moved by its vertices is bound, and `... changes shape, drawn
-    flat` the first time one is drawn flat
-  - `hull: model M face S rgb R,G,B <why>, drawn flat` once for each face
-    of a listed model kept flat by its colour or its decals: a marking
-    (`sign/marking (yellow paint)`), a sign (`sign/marking (hosts
-    lettering or a decal)`), a lamp, window or lit sign, and each complex
-    shape (`complex shape: sign/marking or decal`; its S is the shape's
-    point count and colour, as it has no face number)
+  - one line per model, face and reason, the first time only (M is the
+    model's word, with `(intro's table)` when it is the intro's):
+    - `hull: model M face S: moves against its model, the tile bound to
+      it` and `... changes shape against its model, drawn flat while it
+      does` for a face moved by its vertices
+    - `hull: model M face S rgb R,G,B: <why>, drawn flat` for a face of a
+      listed model kept flat: `sign/marking (yellow paint)`,
+      `sign/marking (hosts lettering)`, `lamp, window or lit sign (pure
+      colour)`, `lamp or light strip (near white)`, or `no frame for the
+      tile (a sliver or a face edge-on)`
+    - for a complex shape (S is its point count and colour, as it has no
+      face number): `complex shape: lamp or lit sign (pure colour)`,
+      `complex shape: sign/marking (yellow paint)`, `complex shape:
+      hangar sign/marking or lamp (white)` or `complex shape: hangar
+      sign/marking (grey)`
+    - `hull: model M face ff0000PP: a part from another model (a missile
+      on a pylon), not hull, drawn flat` (PP the part's word)
 
 ## Classes
 
@@ -214,21 +229,28 @@ Models (`hull_models[]`, by the whole type word and its table;
 | word | model | class |
 |---|---|---|
 | 20 | Shuttle | civilian |
-| 40 | Krait | fighter |
-| 42 | Gecko | fighter |
-| 44 | Adder | civilian |
-| 46 | Viper | police |
-| 50 | Moray | civilian |
-| 52 | Cobra Mk III | civilian |
-| 56 | Asp | armour, panels x3 (a big hull) |
-| 58 | Eagle | fighter |
-| 66 | Python | freighter |
-| 70 | Transporter | freighter |
+| 40 | Krait | armour, panels x2 |
+| 42 | Gecko | armour, panels x2 |
+| 44 | Adder | civilian, panels x1.75 |
+| 46 | Viper | police, panels x3 |
+| 50 | Moray | civilian, panels x2 |
+| 52 | Cobra Mk III | civilian, panels x3 (not measured) |
+| 56 | Asp | armour, panels x5 |
+| 58 | Eagle | armour, panels x1.5 (not measured) |
+| 66 | Python | freighter, panels x6 |
+| 70 | Transporter | freighter, panels x6 (not measured) |
 | intro's 72 | the orbital station behind the menu | station |
 | 80 | orbital station outside, close up | station |
 | 82 | launch structure | station |
 | 84 | docking bay seen through the slot | hangar; its faces out of the bay's box (the station's outside) station |
 | 288, 290, 294 | hangar interior and its parts | hangar |
+
+A ship's panel scale puts one to one and a half tiles across its biggest
+face, measured in the shipyard's view (the Viper's biggest face is some
+44000 units, the Python's 110000). At x1 a tile repeated four to nine
+times across a face and read as crazy paving. The fighters use the armour
+tile: the fighter tile's fine diagonal weave, once big enough to see,
+read as wood grain on an orange Krait.
 
 - **Adding a model:** add one line.
 - **Adding a class:**

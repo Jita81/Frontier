@@ -88,6 +88,9 @@ int hull_profile_of_key (unsigned int key)
  * buildings on the ground, missiles and debris keep the game's own look.
  * Parts a model draws (a hangar door, a landing leg) carry its type word
  * and so its class; the tile is bound to the part (gl.c, hull_model_frame).
+ * A ship's scale puts one to one and a half tiles across its biggest face
+ * (measured in the shipyard's view), so its plates read as plates and not
+ * as crazy paving; the station's and the hangar's are 1.
  */
 static const struct {
 	unsigned int type;	/* HULL_KEY_MODEL: the word, and the table when not the game's */
@@ -95,16 +98,16 @@ static const struct {
 	float scale;
 } hull_models[] = {
 	{ 20,  HC_CIVIL,	1.0f },	/* Shuttle */
-	{ 40,  HC_FIGHTER,	1.0f },	/* Krait */
-	{ 42,  HC_FIGHTER,	1.0f },	/* Gecko */
-	{ 44,  HC_CIVIL,	1.0f },	/* Adder */
-	{ 46,  HC_POLICE,	1.0f },	/* Viper */
-	{ 50,  HC_CIVIL,	1.0f },	/* Moray */
-	{ 52,  HC_CIVIL,	1.0f },	/* Cobra Mk III */
-	{ 56,  HC_ARMOUR,	3.0f },	/* Asp: a big hull, so bigger plates */
-	{ 58,  HC_FIGHTER,	1.0f },	/* Eagle */
-	{ 66,  HC_FREIGHT,	1.0f },	/* Python */
-	{ 70,  HC_FREIGHT,	1.0f },	/* Transporter */
+	{ 40,  HC_ARMOUR,	2.0f },	/* Krait */
+	{ 42,  HC_ARMOUR,	2.0f },	/* Gecko */
+	{ 44,  HC_CIVIL,	1.75f },	/* Adder */
+	{ 46,  HC_POLICE,	3.0f },	/* Viper */
+	{ 50,  HC_CIVIL,	2.0f },	/* Moray */
+	{ 52,  HC_CIVIL,	3.0f },	/* Cobra Mk III */
+	{ 56,  HC_ARMOUR,	5.0f },	/* Asp */
+	{ 58,  HC_ARMOUR,	1.5f },	/* Eagle */
+	{ 66,  HC_FREIGHT,	6.0f },	/* Python */
+	{ 70,  HC_FREIGHT,	6.0f },	/* Transporter */
 	{ HULL_TAB_INTRO | 72, HC_STATION, 1.0f },	/* the orbital station behind the menu */
 	{ 80,  HC_STATION,	1.0f },	/* orbital station, outside, close up */
 	{ 82,  HC_STATION,	1.0f },	/* launch structure */
