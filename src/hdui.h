@@ -64,6 +64,11 @@ void hdui_mouse (short *ax, short *ay, int buttons);
 /* The GL context is going away: drop this layer's textures. */
 void hdui_forget (void);
 
+/* For hdtip: the restyled screens' glass panel at framebuffer pixel
+ * (x, y) from the picture's top left, w x h pixels, drawn in the caller's
+ * 2D set-up (y down, premultiplied blending). */
+void hdui_glass_px (float x, float y, int w, int h, float a);
+
 /* From gl.c: the game's 4:3 picture in the framebuffer, in pixels from
  * the bottom left; the whole window unless it is letterboxed. */
 void gl_picture_rect (int *x, int *y, int *w, int *h);

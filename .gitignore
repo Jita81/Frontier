@@ -25,3 +25,6 @@ __pycache__/
 # the player's own key and mouse bindings (src/bindings.c)
 controls.ini
 controls.ini.tmp
+# the renderer Ctrl-E last chose (src/main.c)
+frontier.ini
+frontier.ini.tmp
