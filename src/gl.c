@@ -3164,6 +3164,199 @@ static void hull_forget_shader (void) { }
 static void hull_attr (const struct HullFrame *f, int i) { }
 #endif
 
+
+/*
+ * The hangar's lights. Its lamps, the windows in its doors and its lit
+ * signs were flat colour on flat walls; each is now a light: after the
+ * face is drawn, a hot core is added over it (brighter toward its middle,
+ * under the lettering, which is drawn after it) and a glow round it in
+ * its own plane, bright at its edge and fading out over the wall, added
+ * to what is there in painter's order, so what stands in front of it
+ * (drawn later) still covers it. hangar_view says the camera is in the
+ * hangar (its faces all round the view), for hull_hangar_grade.
+ */
+static int hull_glow;		/* the face just painted: 1 a lamp, 2 a lit sign */
+static int hull_glow_rgb[3];
+static int hangar_faces;	/* the hangar's own faces drawn this frame */
+static double hangar_dir[2][2];	/* their extent across the view, x/z and y/z */
+static int hangar_behind;	/* one of them reaches behind the camera */
+
+static void hangar_note (double p[][3], int n)
+{
+	int i, k;
+
+	if (!hangar_faces++) {
+		hangar_dir[0][0] = hangar_dir[1][0] = 1e9;
+		hangar_dir[0][1] = hangar_dir[1][1] = -1e9;
+		hangar_behind = 0;
+	}
+	for (i = 0; i < n; i++) {
+		if (!(p[i][2] < -1)) {
+			hangar_behind = 1;
+			continue;
+		}
+		for (k = 0; k < 2; k++) {
+			double t = p[i][k] / -p[i][2];
+			if (t < hangar_dir[k][0]) hangar_dir[k][0] = t;
+			if (t > hangar_dir[k][1]) hangar_dir[k][1] = t;
+		}
+	}
+}
+
+/* the hangar fills the view: its faces are behind the camera or spread
+ * wider than the view across, not seen through the slot from outside */
+static int hangar_view (void)
+{
+	return hangar_faces >= 8 && (hangar_behind || hangar_dir[0][1] - hangar_dir[0][0] > 1.6);
+}
+
+static void glow_ring (double p[][3], const double m[][3], int n, double d0, double d1,
+		       const float rgb[3], float a0, float a1, int steps)
+{
+	int i, j;
+
+	for (j = 0; j < steps; j++) {
+		double t0 = (double) j / steps, t1 = (double) (j + 1) / steps;
+		/* a smooth falloff: (1 - t)^2 */
+		float b0 = a0 + (a1 - a0) * (1 - (1 - t0) * (1 - t0)), b1 = a0 + (a1 - a0) * (1 - (1 - t1) * (1 - t1));
+		double r0 = d0 + (d1 - d0) * t0, r1 = d0 + (d1 - d0) * t1;
+		glBegin (GL_TRIANGLE_STRIP);
+		for (i = 0; i <= n; i++) {
+			const double *v = p[i % n], *o = m[i % n];
+			glColor3f (rgb[0] * b0, rgb[1] * b0, rgb[2] * b0);
+			glVertex3d (v[0] + o[0] * r0, v[1] + o[1] * r0, v[2] + o[2] * r0);
+			glColor3f (rgb[0] * b1, rgb[1] * b1, rgb[2] * b1);
+			glVertex3d (v[0] + o[0] * r1, v[1] + o[1] * r1, v[2] + o[2] * r1);
+		}
+		glEnd ();
+	}
+}
+
+static void hull_glow_draw (double p[][3], int n)
+{
+	double c[3] = { 0, 0, 0 }, N[3] = { 0, 0, 0 }, m[4][3], en[4][3], area, len, s, lim = 1e30;
+	float col[3], core[3];
+	int kind = hull_glow, i, k;
+
+	hull_glow = 0;
+	if (n < 3 || n > 4) return;
+	for (i = 0; i < n; i++)
+		for (k = 0; k < 3; k++) c[k] += p[i][k] / n;
+	/* the plane's normal (Newell), its area */
+	for (i = 0; i < n; i++) {
+		const double *a = p[i], *b = p[(i + 1) % n];
+		N[0] += (a[1] - b[1]) * (a[2] + b[2]);
+		N[1] += (a[2] - b[2]) * (a[0] + b[0]);
+		N[2] += (a[0] - b[0]) * (a[1] + b[1]);
+	}
+	len = sqrt (N[0] * N[0] + N[1] * N[1] + N[2] * N[2]);
+	area = len / 2;
+	if (!(len > 0)) return;
+	for (k = 0; k < 3; k++) N[k] /= len;
+	/* each edge's outward normal in the plane */
+	for (i = 0; i < n; i++) {
+		const double *a = p[i], *b = p[(i + 1) % n];
+		double e[3] = { b[0] - a[0], b[1] - a[1], b[2] - a[2] }, o[3], mid[3], l;
+		o[0] = e[1] * N[2] - e[2] * N[1];
+		o[1] = e[2] * N[0] - e[0] * N[2];
+		o[2] = e[0] * N[1] - e[1] * N[0];
+		l = sqrt (o[0] * o[0] + o[1] * o[1] + o[2] * o[2]);
+		if (!(l > 0)) return;
+		for (k = 0; k < 3; k++) mid[k] = (a[k] + b[k]) / 2 - c[k];
+		if (o[0] * mid[0] + o[1] * mid[1] + o[2] * mid[2] < 0) l = -l;
+		for (k = 0; k < 3; k++) en[i][k] = o[k] / l;
+		l = sqrt (e[0] * e[0] + e[1] * e[1] + e[2] * e[2]);
+		if (l < lim) lim = l;
+	}
+	/* each corner's mitre: the two edges' normals' sum over 1 + their dot */
+	for (i = 0; i < n; i++) {
+		const double *a = en[(i + n - 1) % n], *b = en[i];
+		double dt = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+		if (dt < -0.3) dt = -0.3;
+		for (k = 0; k < 3; k++) m[i][k] = (a[k] + b[k]) / (1 + dt);
+	}
+	s = sqrt (area);
+	for (k = 0; k < 3; k++) {
+		col[k] = hull_glow_rgb[k] / 255.0f;
+		/* toward white, as a light's middle is */
+		core[k] = kind == 1 ? 0.10f * col[k] + 0.22f : 0.16f * col[k] + 0.07f;
+	}
+
+	glPushAttrib (GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_CURRENT_BIT | GL_LIGHTING_BIT);
+	glDisable (GL_TEXTURE_2D);
+	glDisable (GL_LIGHTING);
+	glDisable (GL_CULL_FACE);
+	glShadeModel (GL_SMOOTH);
+	glEnable (GL_BLEND);
+	glBlendFunc (GL_ONE, GL_ONE);
+	glBegin (GL_TRIANGLE_FAN);
+	glColor3fv (core);
+	glVertex3dv (c);
+	glColor3f (0, 0, 0);
+	for (i = 0; i <= n; i++) glVertex3dv (p[i % n]);
+	glEnd ();
+	if (kind == 1) {
+		/* a lamp: a tight bright rim and a wide soft spill */
+		double d = 0.55 * s;
+		if (d > 2.2 * lim) d = 2.2 * lim;
+		glow_ring (p, (const double (*)[3]) m, n, 0, 0.18 * d, col, 0.42f, 0.10f, 3);
+		glow_ring (p, (const double (*)[3]) m, n, 0.18 * d, d, col, 0.10f, 0, 5);
+	} else {
+		/* a lit sign: its light on the wall round it */
+		double d = 0.22 * s;
+		glow_ring (p, (const double (*)[3]) m, n, 0, 0.2 * d, col, 0.30f, 0.09f, 3);
+		glow_ring (p, (const double (*)[3]) m, n, 0.2 * d, d, col, 0.09f, 0, 5);
+	}
+	glPopAttrib ();
+}
+
+/* The camera in the hangar: the picture graded as a lit interior, darker
+ * toward its corners, so the eye goes to the lit middle and the lamps */
+static void hull_hangar_grade (void)
+{
+	int i, j;
+	const int G = 12;
+
+	if (!hangar_view ()) return;
+	glPushAttrib (GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_CURRENT_BIT | GL_LIGHTING_BIT | GL_TRANSFORM_BIT);
+	glMatrixMode (GL_PROJECTION);
+	glPushMatrix ();
+	glLoadIdentity ();
+	glOrtho (0, 1, 0, 1, -1, 1);
+	glMatrixMode (GL_MODELVIEW);
+	glPushMatrix ();
+	glLoadIdentity ();
+	glDisable (GL_TEXTURE_2D);
+	glDisable (GL_LIGHTING);
+	glDisable (GL_CULL_FACE);
+	glShadeModel (GL_SMOOTH);
+	glEnable (GL_BLEND);
+	glBlendFunc (GL_DST_COLOR, GL_ZERO);
+	for (j = 0; j < G; j++) {
+		glBegin (GL_TRIANGLE_STRIP);
+		for (i = 0; i <= G; i++) {
+			int jj;
+			for (jj = j + 1; jj >= j; jj--) {
+				/* the view's middle is above the console: 0.58 up */
+				double x = (double) i / G, y = (double) jj / G;
+				double dx = (x - 0.5) / 0.62, dy = (y - 0.58) / 0.55, r = sqrt (dx * dx + dy * dy), t;
+				float g;
+				t = (r - 0.45) / 0.75;
+				t = t < 0 ? 0 : t > 1 ? 1 : t;
+				g = 1.0f - 0.42f * (float) (t * t * (3 - 2 * t));
+				glColor3f (g, g, g * 1.02f > 1 ? 1 : g * 1.02f);
+				glVertex2d (x, y);
+			}
+		}
+		glEnd ();
+	}
+	glMatrixMode (GL_PROJECTION);
+	glPopMatrix ();
+	glMatrixMode (GL_MODELVIEW);
+	glPopMatrix ();
+	glPopAttrib ();
+}
+
 /* Style 5 for this polygon: 2 with the shader (hf filled in), 1 with the
  * class's plating in fixed function (st filled in), 0 flat. A lamp, window
  * or lit sign (a bright face of nearly pure colour, one channel all but
@@ -3204,6 +3397,20 @@ static int hull_paint5 (double p[][3], int n, const struct HullCtx *cx, int host
 	if (cls == HC_HANGAR && (cx->wok & 2)) cls = HC_STATION;
 	lamp = cls == HC_HANGAR && mn >= 208;
 	pure = mx > 191 && mn < 0.2 * mx;
+	/* the hangar's lights: a lamp, a small face of pure colour (a lamp,
+	 * a door's window) or a sign of strong colour that carries
+	 * lettering, drawn flat and then lit (hull_glow_draw) */
+	if (cls == HC_HANGAR && cx->wok) {
+		hangar_note (p, n);
+		if (hull_obj_axis (cx->w, n) != HULL_DECK_AXIS &&
+		    (lamp || (pure && hull_obj_span (cx->w, n) < 0.4 * hull_classes[cls].panel * sc) ||
+		     (host && mx >= 160 && mn < 0.6 * mx))) {
+			hull_glow = lamp || !host ? 1 : 2;
+			for (i = 0; i < 3; i++) hull_glow_rgb[i] = rgb[i];
+			hull_end ();
+			return 0;
+		}
+	}
 	/* but in the hangar a face of pure colour whose longest side is more
 	 * than about 0.4 of a tile (the red doors, which keep that span as
 	 * they slide; the lamps and small plaques are under a quarter of one)
@@ -3253,6 +3460,7 @@ static int hull_paint (double p[][3], int n, int have_ctx, const struct HullCtx 
 		       const int rgb[3], float st[][2], struct HullFrame *hf)
 {
 	hull_chain = host;
+	hull_glow = 0;
 	/* the plating belongs to the ships and stations listed in
 	 * hull_models[]: anything else (the intro's titles and banners,
 	 * text, planets, buildings, missiles, debris, cargo) is drawn flat,
@@ -3292,6 +3500,8 @@ static int hull_paint (double p[][3], int n, int have_ctx, const struct HullCtx 
  */
 static struct HullPlane hull_cplane;
 static int hull_cmode;		/* 2 shader, 1 fixed function */
+static GLdouble (*hull_cdoor)[3];	/* a door's contour, for its edge */
+static int hull_cdoor_n;
 static double hull_cw[4];	/* clip w from a view space point */
 
 static void CALLBACK hull_tess_vertex (GLvoid *vertex, GLvoid *poly_data)
@@ -3327,10 +3537,11 @@ static int hull_complex_begin (GLdouble c[][3], int n, void **data)
 {
 	float sc, off[2], M[9];
 	double light[3];
-	int cls, calm, mx, mn, k, j;
+	int cls, calm, mx, mn, k, j, door = 0;
 	const int c8[3] = { complex_col[0] & 255, complex_col[1] & 255, complex_col[2] & 255 };	/* signed */
 
 	hull_cmode = 0;
+	hull_cdoor = NULL;
 	if (hull_ctx != 2) return 0;	/* no model being read: no word after it */
 	calm = hull_chain || hull_decal_host (data);
 	hull_chain = calm;
@@ -3357,6 +3568,16 @@ static int hull_complex_begin (GLdouble c[][3], int n, void **data)
 		return 0;
 	}
 	if (cls == HC_HANGAR && mx - mn >= 24) cls = HC_STATION;
+	else if (cls == HC_HANGAR) {
+		/* an alcove door: solid (calm is for lettering), in finer
+		 * panels than the wall's, off its seams, and given an edge
+		 * (hull_complex_end), so it reads as a door, not a hole */
+		calm = 0;
+		door = 1;
+		sc *= 0.55f;
+		off[0] += 0.37f;
+		off[1] += 0.5f;
+	}
 	for (k = 0; k < 9; k++) M[k] = hull_cc.M[k];
 	for (k = 0; k < 3; k++) light[k] = hull_cc.light[k];
 	if (!hull_plane_obj ((const double (*)[3]) c, n, M, hull_cc.o, light,
@@ -3377,7 +3598,56 @@ static int hull_complex_begin (GLdouble c[][3], int n, void **data)
 		return 0;
 	}
 	gluTessCallback (tobj, GLU_TESS_VERTEX_DATA, (_GLUfuncptr) hull_tess_vertex);
+	if (door) {
+		hull_cdoor = c;
+		hull_cdoor_n = n;
+	}
 	return 1;
+}
+
+/* A door's edge, on the screen (the shape is drawn in window
+ * coordinates): a bevel lit from the top left, a dark line round it */
+static void hull_door_edge (GLdouble c[][3], int n)
+{
+	double cx = 0, cy = 0, w = tessViewport[3] / 400.0;
+	int i, k;
+
+	if (n < 3 || n > 64 || !(w > 0)) return;
+	for (i = 0; i < n; i++) {
+		cx += c[i][0] / n;
+		cy += c[i][1] / n;
+	}
+	glPushAttrib (GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_CURRENT_BIT);
+	glDisable (GL_TEXTURE_2D);
+	glDisable (GL_CULL_FACE);
+	glEnable (GL_BLEND);
+	glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	for (i = 0; i < n; i++) {
+		const double *a = c[i], *b = c[(i + 1) % n];
+		double ex = b[0] - a[0], ey = b[1] - a[1], l = sqrt (ex * ex + ey * ey), nx, ny, lit;
+		if (!(l > 0.5)) continue;
+		/* the inward normal */
+		nx = -ey / l;
+		ny = ex / l;
+		if (nx * (cx - (a[0] + b[0]) / 2) + ny * (cy - (a[1] + b[1]) / 2) < 0) {
+			nx = -nx;
+			ny = -ny;
+		}
+		/* outward toward the top left is lit */
+		lit = -(nx * -0.6 + ny * 0.8);
+		for (k = 0; k < 2; k++) {
+			double w0 = k ? 1.2 * w : 0, w1 = k ? 3.4 * w : 1.2 * w;
+			if (k) glColor4f (lit > 0 ? 1 : 0, lit > 0 ? 1 : 0, lit > 0 ? 1 : 0, (float) (fabs (lit) * (lit > 0 ? 0.16 : 0.32)));
+			else glColor4f (0, 0, 0, 0.55f);
+			glBegin (GL_QUADS);
+			glVertex3d (a[0] + nx * w0, a[1] + ny * w0, a[2]);
+			glVertex3d (b[0] + nx * w0, b[1] + ny * w0, b[2]);
+			glVertex3d (b[0] + nx * w1, b[1] + ny * w1, b[2]);
+			glVertex3d (a[0] + nx * w1, a[1] + ny * w1, a[2]);
+			glEnd ();
+		}
+	}
+	glPopAttrib ();
 }
 
 static void hull_complex_end (void)
@@ -3385,6 +3655,8 @@ static void hull_complex_end (void)
 	gluTessCallback (tobj, GLU_TESS_VERTEX_DATA, (_GLUfuncptr) vertexCallback);
 	hull_cmode = 0;
 	hull_end ();
+	if (hull_cdoor) hull_door_edge (hull_cdoor, hull_cdoor_n);
+	hull_cdoor = NULL;
 }
 
 void Nu_PutTriangle ()
@@ -3430,6 +3702,7 @@ void Nu_DrawTriangle (void **data)
 			if (tex == 1) glTexCoord2fv (st[2]); else if (tex == 2) hull_attr (&hf, 2);
 			glVertex3fv (v3);
 		glEnd ();
+		if (hull_glow) hull_glow_draw (p, 3);
 	}
 }
 
@@ -3483,6 +3756,7 @@ void Nu_DrawQuad (void **data)
 			if (tex == 1) glTexCoord2fv (st[2]); else if (tex == 2) hull_attr (&hf, 2);
 			glVertex3iv (v3);
 		glEnd ();
+		if (hull_glow) hull_glow_draw (p, 4);
 	}
 }
 void Nu_PutTwinklyCircle ()
@@ -5213,10 +5487,12 @@ void Nu_DrawScreen ()
 				 scene_overflows);
 	} else {
 		Uint32 t = hull_log_on () ? SDL_GetTicks () : 0;
+		hangar_faces = 0;
 		draw_3dview (znode_start);
 		if (t) hull_log_frame (t);
 	}
 	hull_end ();
+	if (hangar_faces) hull_hangar_grade ();
 	//fprintf (stderr, "\n");
 
 #if PRIM_DEBUG
