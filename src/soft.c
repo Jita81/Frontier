@@ -371,6 +371,10 @@ set_line:
 	return x;
 }
 
+void Screen_Stalled (void)
+{
+}
+
 void Screen_ToggleRenderer ()
 {
 	use_renderer++;

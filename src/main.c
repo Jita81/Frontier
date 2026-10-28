@@ -190,6 +190,7 @@ void Main_EventHandler()
 	  input.abs_y = new_abs_y;
 
   Input_Update ();
+  Screen_Stalled ();
 }
 
 
