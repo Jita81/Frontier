@@ -557,6 +557,7 @@ static int find_blob (const unsigned char *out, int x0, int y0, int x1, int y1, 
 
 static int fbx, fby;	/* the picture's bottom-left corner in the framebuffer */
 static int fbw = 1600, fbh = 1200;	/* the picture: the game's 4:3 screen, no letterbox bars */
+float hdui_face_top;	/* hdface.c: where the card's portrait starts, 0 for none */
 static float sx = 5, sy = 6, uu = 1;	/* pixels per ST pixel; the design unit (a pixel at 1200 high) */
 static unsigned int frame_no;
 
@@ -2556,7 +2557,11 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 		cash->ax = 314;
 		cash->maxw = 70;
 		centre_y (cash, 7);
+		/* measured as it is set (its thousands marked), and no
+		 * wider than it may be drawn, so the label's gap holds */
+		cash->money = 1;
 		vw = hdtext_measure (cash);
+		if (vw > cash->maxw) vw = cash->maxw;
 		style (cash_lab, HDT_SECTION, C_TEXT2);
 		cash_lab->align = HDT_RIGHT;
 		cash_lab->ax = 314 - vw - 3.5f;
@@ -2575,6 +2580,8 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 		if (!inplace && bb[1] - BODY_Y0 - bb[0] >= 1 && bb[1] - BODY_Y0 < 12) {
 			quad (L_BACK, bb[0], BODY_Y0 + bb[0], bb[2], bb[1], 0x000000, 0.6f);
 			bb[1] = BODY_Y0 + bb[0];
+			/* a portrait starts there too, over the matte */
+			hdui_face_top = bb[1];
 		}
 		e = add (E_FRAME, L_OVER, bb[0], bb[1], bb[2], bb[3]);
 		e->a = 0;
@@ -2631,11 +2638,27 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 		}
 	} else {
 		float colx[16], colmax[16], money = NAN, room = NAN;
-		int ncol = 0, row = 0, lasty = -1000, list = 0, lfirst = 0, lcount = 0, no_plus = 0, no_minus = 0, fitted = -1;
+		int one_ship = 0, ncol = 0, row = 0, lasty = -1000, list = 0, lfirst = 0, lcount = 0, no_plus = 0, no_minus = 0, fitted = -1;
 
 		e = add (E_GLASS, L_BACK, COL_X0, inplace ? 0.5f : BODY_Y0, COL_X1, 166.5f);
 		e->flags = F_ALL;
 		e->a = heads ? 11.5f : 0;
+		for (i = 0; i < n_btn && ships; i++)
+			one_ship += btn[i].x >= 118 && btn[i].x <= 126 && btn[i].y < FOOT_Y;
+		one_ship = one_ship == 1;
+
+		/* the one ship viewed: its row's figures, right of its name,
+		 * columns first (under the heads the list's are under), on
+		 * the list's grid in its face */
+		for (i = 0; i < n_runs && one_ship && mode == TABLE; i++) {
+			const struct hdtext_run *r = &runs[i];
+			if (!ON_PAGE (r) || r->x0 < 200 || r->y >= FOOT_Y || !(r->kind & HDT_K_DIGIT) || ncol >= 16) continue;
+			for (j = 0; j < n_btn && abs (btn[j].y + 1 - r->y) > 2; j++);
+			for (k = 0; k < ncol && colx[k] != r->x0; k++);
+			if (j == n_btn || k < ncol) continue;
+			colx[ncol] = r->x0;
+			colmax[ncol++] = r->ink1;
+		}
 
 		/* a table's numeric columns: right aligned on their widest, if
 		 * nothing on their right comes nearer */
@@ -3259,6 +3282,7 @@ void hdui_frame (const unsigned char *raster, unsigned char *out,
 
 	memcpy (fr_ca, ca, sizeof (ca));
 	fr_ca_n = ca_n;
+	hdui_face_top = 0;
 	ca_n = 0;
 	n_el = n_hot = 0;
 	page = P_NONE;
