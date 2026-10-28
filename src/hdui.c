@@ -2811,6 +2811,9 @@ static void layout_file (const unsigned char *raster, unsigned char *out, const 
 	int i, x, y, ok = 0, counter = 0, box = raster[14 * ST_W + NAME_X1 - 4];
 	float title_x = 10;
 
+	/* the title's letters under the game's frame counter (its F key):
+	 * before anything is styled, as the runs are made again */
+	if (hdtext_uncover (raster, out, NAME_X0, 9)) n_runs = hdtext_runs (&runs);
 	e = add (E_GLASS, L_BACK, 1.5f, 1.5f, 318.5f, 166.5f);
 	e->flags = F_ALL;
 	for (i = 0; i < n_btn; i++)
@@ -2829,7 +2832,7 @@ static void layout_file (const unsigned char *raster, unsigned char *out, const 
 			r->hide = 1;
 			counter = 1;
 		} else if (r->y <= 8) {
-			/* the title, from the left (in parts where the counter cut it) */
+			/* the title, from the left */
 			style (r, HDT_TITLE, C_TEXT);
 			r->align = HDT_LEFT;
 			r->ax = title_x;
@@ -2847,7 +2850,7 @@ static void layout_file (const unsigned char *raster, unsigned char *out, const 
 			r->maxw = 56;
 		}
 	}
-	/* what the counter left of the title's letters under it */
+	/* what is left of the counter */
 	if (counter)
 		for (y = 2; y <= 13; y++)
 			for (x = 0; x < NAME_X0; x++)

@@ -93,6 +93,14 @@ struct hdtext_run {
  * on each line, for hdui to style.  Valid until the next hdtext_frame. */
 int hdtext_runs (struct hdtext_run **runs);
 
+/* After hdtext_frame, for a page whose title the game may draw its frame
+ * counter over: bring back the glyphs left of x1 and above y1 (ST) that a
+ * glyph in another colour was drawn over and that are still on raster
+ * wherever that glyph does not hide them, paint them out of out and drop
+ * the glyphs over them.  Returns how many came back; then call
+ * hdtext_runs again. */
+int hdtext_uncover (const unsigned char *raster, unsigned char *out, int x1, int y1);
+
 /* Run r's glyphs as ASCII ('?' for anything else), and whether a word
  * space comes before each; returns how many (at most max). */
 int hdtext_chars (const struct hdtext_run *r, char *c, unsigned char *sp, int max);
