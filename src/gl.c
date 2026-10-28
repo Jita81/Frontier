@@ -3777,6 +3777,8 @@ struct PlanetPrim {
 	double atm_scale[8];
 	unsigned short atm_col[8];
 	double atm_th[8];
+	/* the innermost layer's colour, -1 if none: the smooth limb (procfx) */
+	int rim;
 };
 
 #define PLANET_FACE_RES		512
@@ -4120,9 +4122,10 @@ static void planet_update_patch (struct PlanetTex *t, const double down[3], doub
 }
 
 /* A vertex of the planet surface: position (68k viewing coordinates),
- * texture coordinates and cos(sun) of the surface there. */
+ * texture coordinates and cos(sun) of the surface there; for the smooth
+ * path also the view cosine and the model direction. */
 struct PVert {
-	double p[3], t[2], c;
+	double p[3], t[2], c, mu, m[3];
 };
 
 /* Keep the part of a polygon with lo <= c (sign 1) or c <= hi (sign -1).
@@ -4185,9 +4188,72 @@ static void emit_zone_quad (const struct LightZone *z, const struct PVert *a, co
 	glEnd ();
 }
 
+/*
+ * The smooth path (procfx layer 2, off with --flat-planets): no cuts. All
+ * the zones whose soft range meets cos(sun) range [lo, hi] are bound, one
+ * texture unit each, and the shader blends them.
+ */
+static void planet_bind_zones (struct PlanetTex *t, int f, const struct LightZone *zones, int nzones,
+			       double lo, double hi, double soft)
+{
+	GLuint tex[PLANET_MAX_ZONES] = { 0 }, any = 0;
+	int z;
+
+	for (z = 0; z < nzones; z++)
+		if (hi >= zones[z].lo - soft && lo <= zones[z].hi + soft)
+			any = tex[z] = planet_zone_texture (t, f, z, zones[z].code);
+	for (z = 0; z < PLANET_MAX_ZONES; z++)
+		procfx_planet_bind (z, tex[z] ? tex[z] : any);
+}
+
+static void planet_smooth_vertex (const struct PVert *v)
+{
+	glTexCoord2dv (v->t);
+	procfx_planet_attr (v->c, v->mu, v->m);
+	planet_vertex (v->p);
+}
+
+static double planet_ramp (double a, double b, double x)
+{
+	if (!(b > a)) return x >= b;
+	x = fmin (1.0, fmax (0.0, (x - a) / (b - a)));
+	return x * x * (3.0 - 2.0 * x);
+}
+
+/* 0 at the ground, 1 out in space: limb darkening and the halo's night
+ * side fade in with it, the same on the sphere and the cap, so nothing
+ * pops where one takes over from the other. */
+static double planet_space (const struct PlanetPrim *p, double d)
+{
+	return planet_ramp (1.02, 1.5, d / p->R);
+}
+
+static int planet_smooth_begin (const struct PlanetPrim *p, double d, const struct LightZone *z,
+				int n, double *soft)
+{
+	float lo[4] = { 9, 9, 9, 9 }, hi[4] = { 9, 9, 9, 9 }, rim[4] = { 0, 0, 0, 0 }, look[3];
+	int i, r, g, b;
+
+	/* half the narrowest inner zone, so every zone still shows */
+	*soft = 0.1;
+	for (i = 0; i < n; i++) {
+		lo[i] = z[i].lo;
+		hi[i] = z[i].hi;
+		if (i && i < n - 1) *soft = fmin (*soft, 0.5 * (z[i].hi - z[i].lo));
+	}
+	if (p->rim >= 0) {
+		split_rgb444b (p->rim, &r, &g, &b);
+		rim[0] = r / 255.0f; rim[1] = g / 255.0f; rim[2] = b / 255.0f; rim[3] = 1.0f;
+	}
+	look[0] = p->flags & 0x80 ? 1.0f : 0.0f;
+	look[1] = 0.25 * planet_space (p, d);
+	look[2] = 0.08f;
+	return procfx_planet_begin (lo, hi, *soft, rim, look, p->seed);
+}
+
 /* The whole planet, seen from a distance: a cube sphere. */
 static void draw_planet_sphere (struct PlanetTex *t, const struct PlanetPrim *p, const double sun[3],
-				const struct LightZone *zones, int nzones)
+				const struct LightZone *zones, int nzones, double soft)
 {
 	static struct PVert v[PLANET_FACE_GRID+1][PLANET_FACE_GRID+1];
 	static char front[PLANET_FACE_GRID][PLANET_FACE_GRID];
@@ -4211,6 +4277,8 @@ static void draw_planet_sphere (struct PlanetTex *t, const struct PlanetPrim *p,
 				v[j][i].t[0] = 0.5 * (x + 1.0);
 				v[j][i].t[1] = 0.5 * (y + 1.0);
 				v[j][i].c = pdot (dir[j][i], sun);
+				v[j][i].mu = -pdot (dir[j][i], v[j][i].p) / sqrt (pdot (v[j][i].p, v[j][i].p));
+				memcpy (v[j][i].m, m, sizeof (m));
 			}
 		}
 		/* no depth buffer: drop the far side by hand. A cell faces us
@@ -4226,6 +4294,28 @@ static void draw_planet_sphere (struct PlanetTex *t, const struct PlanetPrim *p,
 		}
 		if (!any) continue;
 
+		if (soft > 0.0) {
+			double lo = 2.0, hi = -2.0;
+			for (j = 0; j < PLANET_FACE_GRID; j++)
+				for (i = 0; i < PLANET_FACE_GRID; i++)
+					if (front[j][i])
+						for (k = 0; k < 4; k++) {
+							lo = fmin (lo, v[j + k/2][i + k%2].c);
+							hi = fmax (hi, v[j + k/2][i + k%2].c);
+						}
+			planet_bind_zones (t, f, zones, nzones, lo, hi, soft);
+			glBegin (GL_QUADS);
+			for (j = 0; j < PLANET_FACE_GRID; j++)
+				for (i = 0; i < PLANET_FACE_GRID; i++)
+					if (front[j][i]) {
+						planet_smooth_vertex (&v[j][i]);
+						planet_smooth_vertex (&v[j][i+1]);
+						planet_smooth_vertex (&v[j+1][i+1]);
+						planet_smooth_vertex (&v[j+1][i]);
+					}
+			glEnd ();
+			continue;
+		}
 		for (z = 0; z < nzones; z++) {
 			int bound = 0;
 			for (j = 0; j < PLANET_FACE_GRID; j++) {
@@ -4281,7 +4371,7 @@ static void draw_planet_sphere (struct PlanetTex *t, const struct PlanetPrim *p,
 #define GROUND_DOME_RADIUS	1.0e6
 
 static void draw_horizon_cap (struct PlanetTex *t, const struct PlanetPrim *p, double d,
-			      const double sun[3], const struct LightZone *zones, int nzones)
+			      const double sun[3], const struct LightZone *zones, int nzones, double soft)
 {
 	static struct PVert v[HORIZON_CAP_RINGS+1][HORIZON_CAP_SLICES+1];
 	double up[3], e1[3], e2[3];
@@ -4346,6 +4436,10 @@ static void draw_horizon_cap (struct PlanetTex *t, const struct PlanetPrim *p, d
 			/* from the emitted position, so the zone cuts stay affine */
 			v[i][j].c = (pdot (v[i][j].p, sun) - pdot (p->centre, sun)) / p->R;
 			to_model (p, n, m);
+			/* the smooth path: exact, not from the emitted position */
+			v[i][j].mu = -pdot (n, dir);
+			memcpy (v[i][j].m, m, sizeof (m));
+			if (soft > 0.0) v[i][j].c = pdot (n, sun);
 			cm = pdot (m, t->patch.c);
 			if (cm < 1e-6) cm = 1e-6;
 			v[i][j].t[0] = 0.5 + 0.5 * pdot (m, t->patch.u) / (cm * t->patch.half);
@@ -4357,6 +4451,25 @@ static void draw_horizon_cap (struct PlanetTex *t, const struct PlanetPrim *p, d
 	 * covered exactly once, so face culling is unnecessary here. */
 	glDisable (GL_CULL_FACE);
 
+	if (soft > 0.0) {
+		double lo = 2.0, hi = -2.0;
+		for (i = 0; i <= HORIZON_CAP_RINGS; i++)
+			for (j = 0; j <= HORIZON_CAP_SLICES; j++) {
+				lo = fmin (lo, v[i][j].c);
+				hi = fmax (hi, v[i][j].c);
+			}
+		planet_bind_zones (t, -1, zones, nzones, lo, hi, soft);
+		glBegin (GL_QUADS);
+		for (i = HORIZON_CAP_RINGS - 1; i >= 0; i--)
+			for (j = 0; j < HORIZON_CAP_SLICES; j++) {
+				planet_smooth_vertex (&v[i][j]);
+				planet_smooth_vertex (&v[i][j+1]);
+				planet_smooth_vertex (&v[i+1][j+1]);
+				planet_smooth_vertex (&v[i+1][j]);
+			}
+		glEnd ();
+		return;
+	}
 	for (z = 0; z < nzones; z++) {
 		glBindTexture (GL_TEXTURE_2D, planet_zone_texture (t, -1, z, zones[z].code));
 		/* Walk the rings from the horizon inwards, i.e. far to near:
@@ -4524,6 +4637,92 @@ static void planet_atmosphere_band (struct PlanetPrim *p)
 #define ATMOSPHERE_RINGS	24
 #define ATMOSPHERE_SLICES	64
 
+/* The smooth path (procfx layer 2): one soft halo for all the layers.
+ * Each visible layer's colour sits in the middle of its band and blends
+ * into the next; opaque out to the outermost band, which fades to
+ * nothing, unless it wraps the whole sky (the ST's clamp near pi, low
+ * down): then it stays opaque overhead like the flat discs, and the fade
+ * comes in smoothly as the edge sinks below the zenith.  Seen from space
+ * the night side of the halo is dimmer: the sun's cos at the point of the
+ * planet nearest each ray.  From inside the atmosphere that point is
+ * underfoot for the whole sky, and the ST's own tint already does that,
+ * so it fades out there. */
+struct Halo {
+	const struct PlanetPrim *p;
+	double down[3], e1[3], e2[3], sun[3], space, edge, th[9], mid[8];
+	float col[8][3];
+	int n;
+};
+
+static void halo_vertex (const struct Halo *h, double t, double a)
+{
+	double w[3], q[3], s, ql, f, al;
+	float c[3];
+	int k, l, m;
+
+	for (k = 0; k < 3; k++) w[k] = h->down[k]*cos (t) + (h->e1[k]*cos (a) + h->e2[k]*sin (a))*sin (t);
+	for (l = 0; l < h->n - 1 && t > h->mid[l+1]; l++) ;
+	m = l < h->n - 1 ? l + 1 : l;
+	f = planet_ramp (h->mid[l], h->mid[m] + 1e-9, t);
+	for (k = 0; k < 3; k++) c[k] = h->col[l][k] + f * (h->col[m][k] - h->col[l][k]);
+	al = 1.0 - h->edge * planet_ramp (h->th[h->n-1], h->th[h->n], t);
+	if (h->p->flags & 0x80) {
+		s = fmax (0.0, pdot (w, h->p->centre));
+		for (k = 0; k < 3; k++) q[k] = s * w[k] - h->p->centre[k];
+		ql = sqrt (pdot (q, q));
+		if (ql > 0.0)
+			al *= 1.0 - 0.6 * h->space * (1.0 - planet_ramp (-0.3, 0.3, pdot (q, h->sun) / ql));
+	}
+	glColor4f (c[0], c[1], c[2], (float) al);
+	glVertex3d (GROUND_DOME_RADIUS * w[0], GROUND_DOME_RADIUS * w[1], -GROUND_DOME_RADIUS * w[2]);
+}
+
+static void draw_planet_halo (const struct PlanetPrim *p, double d, double theta_p, const double down[3],
+			      const double e1[3], const double e2[3])
+{
+	struct Halo h;
+	int l, i, j, r, g, b;
+
+	h.p = p;
+	memcpy (h.down, down, sizeof (h.down));
+	memcpy (h.e1, e1, sizeof (h.e1));
+	memcpy (h.e2, e2, sizeof (h.e2));
+	planet_sun (p, h.sun);
+	h.space = planet_space (p, d);
+	h.th[0] = theta_p;
+	for (h.n = l = 0; l < p->natm; l++) {
+		double th = fmin (p->atm_th[l], M_PI - 0.01);
+		if (th <= h.th[h.n]) continue;
+		h.th[h.n+1] = th;
+		h.mid[h.n] = 0.5 * (h.th[h.n] + h.th[h.n+1]);
+		split_rgb444b (p->atm_col[l], &r, &g, &b);
+		h.col[h.n][0] = r / 255.0f; h.col[h.n][1] = g / 255.0f; h.col[h.n][2] = b / 255.0f;
+		h.n++;
+	}
+	if (!h.n) return;
+	h.edge = 1.0 - planet_ramp (M_PI - 0.5, M_PI - 0.01, h.th[h.n]);
+	glPushAttrib (GL_COLOR_BUFFER_BIT);
+	glEnable (GL_BLEND);
+	glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	/* the disc behind the planet fills any gap at its outline */
+	glBegin (GL_TRIANGLE_FAN);
+	halo_vertex (&h, 0.0, 0.0);
+	for (j = 0; j <= ATMOSPHERE_SLICES; j++)
+		halo_vertex (&h, theta_p, 2.0*M_PI*j / ATMOSPHERE_SLICES);
+	glEnd ();
+	for (i = 0; i < ATMOSPHERE_RINGS; i++) {
+		double t0 = theta_p + (h.th[h.n] - theta_p) * i / ATMOSPHERE_RINGS;
+		double t1 = theta_p + (h.th[h.n] - theta_p) * (i + 1) / ATMOSPHERE_RINGS;
+		glBegin (GL_QUAD_STRIP);
+		for (j = 0; j <= ATMOSPHERE_SLICES; j++) {
+			halo_vertex (&h, t0, 2.0*M_PI*j / ATMOSPHERE_SLICES);
+			halo_vertex (&h, t1, 2.0*M_PI*j / ATMOSPHERE_SLICES);
+		}
+		glEnd ();
+	}
+	glPopAttrib ();
+}
+
 static void draw_planet_atmosphere (const struct PlanetPrim *p, double d)
 {
 	double down[3], e1[3], e2[3], dot, len, theta_p;
@@ -4544,6 +4743,10 @@ static void draw_planet_atmosphere (const struct PlanetPrim *p, double d)
 
 	glDisable (GL_TEXTURE_2D);
 	glDisable (GL_CULL_FACE);
+	if (!flat_planets) {
+		draw_planet_halo (p, d, theta_p, down, e1, e2);
+		return;
+	}
 	/* outermost first, so that the inner layers stay visible (the ST
 	 * inserts them all at the same depth, and they come out the other way
 	 * round) */
@@ -4616,8 +4819,8 @@ void Nu_DrawPlanet (void **data)
 	struct PlanetPrim p;
 	struct PlanetTex *t;
 	struct LightZone zones[PLANET_MAX_ZONES];
-	double d, sun[3];
-	int nzones;
+	double d, sun[3], soft = 0.0;
+	int nzones, smooth;
 
 	memcpy (&p, *data, sizeof (p));
 	*data += sizeof (p);
@@ -4644,17 +4847,20 @@ void Nu_DrawPlanet (void **data)
 	glEnable (GL_TEXTURE_2D);
 	glTexEnvi (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
 	glColor3f (1.0f, 1.0f, 1.0f);
+	smooth = planet_smooth_begin (&p, d, zones, nzones, &soft);
+	if (!smooth) soft = 0.0;
 
 	if (d < p.R * PLANET_CAP_RATIO) {
 		double up[3] = { -p.centre[0]/d, -p.centre[1]/d, -p.centre[2]/d };
 		double down[3];
 		to_model (&p, up, down);
 		planet_update_patch (t, down, acos (p.R/d > 1.0 ? 1.0 : p.R/d));
-		draw_horizon_cap (t, &p, d, sun, zones, nzones);
+		draw_horizon_cap (t, &p, d, sun, zones, nzones, soft);
 	} else {
-		draw_planet_sphere (t, &p, sun, zones, nzones);
+		draw_planet_sphere (t, &p, sun, zones, nzones, soft);
 	}
 
+	if (smooth) procfx_planet_end ();
 	glDisable (GL_TEXTURE_2D);
 }
 /* ==== PLANET END ==== */
@@ -4798,6 +5004,7 @@ void Nu_PutPlanet ()
 		p.flags = 0;
 		p.natm = 0;
 	}
+	p.rim = p.natm ? p.atm_col[0] : -1;
 	/* V-1: only where the ST draws it */
 	planet_atmosphere_band (&p);
 
