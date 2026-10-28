@@ -12,7 +12,8 @@
  * body without one gets no layers and no limb geometry at all. And it is
  * drawn where the ST draws it (planet_atmosphere_band): not for a planet
  * small on the screen, nor for one that fills it, and the band reaches as
- * far as the ST's formula says.
+ * far as the ST's formula says.  Both with the smooth planets of procfx
+ * layer 2 (its stub says the shader is there) and with --flat-planets.
  *
  * run.sh cuts the block between the PLANET BEGIN and PLANET END markers
  * out of src/gl.c into planet_block.c, which this includes.
@@ -57,17 +58,27 @@ static void make_planet (struct PlanetPrim *p, int i, double dist, double angle)
 		p->atm_scale[k] = 1.0 + 0.02 * (k + 1);
 		p->atm_col[k] = 0x48f;
 	}
+	/* as Nu_PutPlanet: the rim from the record, before the band */
+	p->rim = p->natm ? p->atm_col[0] : -1;
 }
 
 static void draw (int i, double dist, double angle)
 {
 	struct PlanetPrim p;
 	void *data;
+	int had;
 
 	make_planet (&p, i, dist, angle);
+	had = p.natm;
 	planet_atmosphere_band (&p);
 	data = &p;
+	planet_rim_alpha = -1.0f;
 	Nu_DrawPlanet (&data);
+	/* an airless body gets no atmosphere rim */
+	if (planet_rim_alpha >= 0.0f && (planet_rim_alpha > 0.0f) != (had > 0)) {
+		printf ("rim %g on a body with %d layers\n", planet_rim_alpha, had);
+		gl_errors++;
+	}
 	data = &p;
 	Nu_DrawAtmosphere (&data);
 }
@@ -226,6 +237,8 @@ int main (void)
 	for (i = 0; i < NPLANETS; i++) random_features (0x1000 + i * 0x700, 0x6ff);
 
 	for (round = 0; round < 2; round++) {
+		/* the smooth path (procfx layer 2) first, then --flat-planets */
+		flat_planets = round;
 		/* every planet, far and then close up (the patch path) */
 		for (i = 0; i < NPLANETS; i++) {
 			draw (i, 4.0, 0.3 * i);
@@ -245,6 +258,8 @@ int main (void)
 		}
 	}
 	if (check_tint ()) return 1;
+	if (check_limb ()) return 1;
+	flat_planets = 0;
 	if (check_limb ()) return 1;
 	if (check_lave ()) return 1;
 	printf ("S-9: %d planets drawn in 2 rounds, %d texture uploads, %d GL misuses, "
