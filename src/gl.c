@@ -40,6 +40,7 @@ typedef void (*_GLUfuncptr)();
 #include "hdface.h"
 #include "hdui.h"
 #include "hdback.h"
+#include "hdinst.h"
 #include "procfx.h"
 #include "bindings.h"
 /* MEM_SIZE, and the engine's variables by label address (__D<label>) */
@@ -625,11 +626,13 @@ static void draw_control_panel ()
 	/* the screen with what the HD layers redraw taken out */
 	scr = VideoRaster;
 	if (!pixel_text || !pixel_art || !pixel_faces || !classic_ui) {
+		hdinst_mask (VideoRaster);
 		hdtext_frame (font_bmp, VideoRaster, hd_screen);
 		hdui_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
 		hdstill_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
 		hdface_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
 		hdback_frame (VideoRaster, hd_screen);
+		hdinst_frame (VideoRaster, hd_screen);
 		scr = hd_screen;
 	}
 	
@@ -697,6 +700,7 @@ static void draw_control_panel ()
 	}
 	hdstill_draw (MainRGBPalette, CtrlRGBPalette);
 	hdface_draw (MainRGBPalette, CtrlRGBPalette);
+	hdinst_draw (MainRGBPalette, CtrlRGBPalette);
 	hdtext_draw (font_bmp, MainRGBPalette, CtrlRGBPalette);
 	hdui_draw_over (MainRGBPalette, CtrlRGBPalette);
 	controls_page_draw ();

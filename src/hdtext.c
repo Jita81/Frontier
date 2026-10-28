@@ -118,6 +118,14 @@ void hdtext_glyph (const unsigned char *font, int x, int y, int col, int chr,
 	s[0].misses = 0;
 }
 
+/* pixels another HD layer drew over (and redraws), not checked */
+static const unsigned char *skip;
+
+void hdtext_skip (const unsigned char *mask)
+{
+	skip = mask;
+}
+
 /* Every pixel of the glyph is in its colour, and something in its box is
  * not: a block of solid colour is not a glyph. */
 static int on_screen (const unsigned char *g, const unsigned char *r, int x, int y, int col)
@@ -127,6 +135,7 @@ static int on_screen (const unsigned char *g, const unsigned char *r, int x, int
 	for (row = 0; row < 8; row++) {
 		for (c = 0; c < 8 && x + c < ST_W; c++) {
 			int p = r[(y + row) * ST_W + x + c];
+			if (skip && skip[(y + row) * ST_W + x + c]) continue;
 			if (ink (g, c, row)) {
 				if (p != col) return 0;
 				pixels++;
