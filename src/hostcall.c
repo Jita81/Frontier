@@ -22,6 +22,7 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <strings.h>
 #include <unistd.h>
 
 #include "main.h"
@@ -855,62 +856,74 @@ static void Call_Fread ()
 	}
 }
 
-#include <dirent.h>
-static DIR *poodir;
+/* make sure fe2.s is allocating enough space at a0... */
+#define MAX_FILENAME_LEN	14
+#define MAX_DIR_ENTRIES		256	/* the game shows at most 63 */
 
-static char cur_dir[GUEST_PATH_MAX];
+/* Fopendir reads the folder once into a list sorted by name (case-blind),
+ * which Freaddir hands out in that order.  Listed: regular files, and
+ * sub-folders (the game opens one and offers its parent dir back).  Hidden:
+ * dotfiles (.DS_Store, save temporaries), names too long for the game's
+ * 13-character buffer (a cut name is not the file on disk), anything else. */
+static struct dir_entry { char name[MAX_FILENAME_LEN]; int attribs, len; } dir_ent[MAX_DIR_ENTRIES];
+static int dir_n, dir_pos;
 
-/* A missing folder (no savs/ yet) lists as empty: the game then calls
- * Fclosedir, and Freaddir if it ever did, with no directory open. */
+static int dir_cmp (const void *a, const void *b)
+{
+	const char *x = ((const struct dir_entry *) a)->name, *y = ((const struct dir_entry *) b)->name;
+	int c = strcasecmp (x, y);
+	return c ? c : strcmp (x, y);
+}
+
+/* A missing folder (no savs/ yet) lists as empty. */
 static void Call_Fopendir ()
 {
-	if (poodir) closedir (poodir);
-	poodir = NULL;
-	if (read_guest_path (GetReg (REG_A2), cur_dir)) poodir = opendir (cur_dir);
-	SetReg (REG_D0, poodir ? 0 : -1);
+	char dir[GUEST_PATH_MAX], path[GUEST_PATH_MAX + 256];
+	static int warned;
+	struct dirent *dent;
+	struct stat st;
+	DIR *d = NULL;
+
+	dir_n = dir_pos = 0;
+	if (read_guest_path (GetReg (REG_A2), dir)) d = opendir (dir);
+	SetReg (REG_D0, d ? 0 : -1);
+	if (!d) return;
+	while ((dent = readdir (d))) {
+		if (save_tmp (dir, dent->d_name) || dent->d_name[0] == '.' ||
+		    strlen (dent->d_name) > MAX_FILENAME_LEN - 1) continue;
+		snprintf (path, sizeof path, "%s/%s", dir, dent->d_name);
+		if (stat (path, &st) || !(S_ISREG (st.st_mode) || S_ISDIR (st.st_mode))) continue;
+		if (dir_n == MAX_DIR_ENTRIES) {
+			if (!warned++) fprintf (stderr, "%s: over %d entries, the rest not listed\n", dir, MAX_DIR_ENTRIES);
+			break;
+		}
+		strncpy (dir_ent[dir_n].name, dent->d_name, MAX_FILENAME_LEN);	/* zero-padded */
+		dir_ent[dir_n].attribs = S_ISDIR (st.st_mode) ? 0x10 : 0;
+		dir_ent[dir_n++].len = st.st_size;
+	}
+	closedir (d);
+	qsort (dir_ent, dir_n, sizeof *dir_ent, dir_cmp);
 }
 
 static void Call_Fclosedir ()
 {
-	if (poodir) closedir (poodir);
-	poodir = NULL;
+	dir_n = dir_pos = 0;
 }
 
-/* make sure fe2.s is allocating enough space at a0... */
-#define MAX_FILENAME_LEN	14
-
+/* filename into buffer (a0), attributes d2, len d1; d0 -1 at the end */
 static void Call_Freaddir ()
 {
-	int p, i, attribs, len;
-	char name[MAX_FILENAME_LEN];
-	/* filename into buffer (a0), attributes d2, len d1 */
-	char full_path_shit[1024];
-	struct stat _stat;
-	struct dirent *dent = NULL;
-	/* skip '.', '..' (by name: they need not come first) and save temporaries */
-	while (poodir && (dent = readdir (poodir)) &&
-	       (!strcmp (dent->d_name, ".") || !strcmp (dent->d_name, "..") ||
-		save_tmp (cur_dir, dent->d_name)))
-		;
-	if (dent == NULL) {
+	int p = GetReg (REG_A0), i;
+	struct dir_entry *e;
+
+	if (dir_pos >= dir_n) {
 		SetReg (REG_D0, -1);
 		return;
 	}
-	strncpy (name, dent->d_name, MAX_FILENAME_LEN);
-	name[MAX_FILENAME_LEN-1] = '\0';
-	
-	snprintf (full_path_shit, sizeof full_path_shit, "%s/%s", cur_dir, dent->d_name);
-	if (stat (full_path_shit, &_stat)) memset (&_stat, 0, sizeof _stat);
-	
-	len = _stat.st_size;
-	attribs = (S_ISDIR (_stat.st_mode) ? 0x10 : 0);
-	
-	p = GetReg (REG_A0);
-	for (i=0; i<MAX_FILENAME_LEN; i++) {
-		STMemory_WriteByte (p++, name[i]);
-	}
-	SetReg (REG_D2, attribs);
-	SetReg (REG_D1, len);
+	e = &dir_ent[dir_pos++];
+	for (i = 0; i < MAX_FILENAME_LEN; i++) STMemory_WriteByte (p + i, e->name[i]);
+	SetReg (REG_D2, e->attribs);
+	SetReg (REG_D1, e->len);
 	SetReg (REG_D0, 0);
 }
 
