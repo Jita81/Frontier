@@ -4717,6 +4717,7 @@ void Nu_DrawCircle (void **data)
 	dreg2 = znode_rdlong (data);
 	znode_rdvertex (data, v1);
 	znode_rdcolor (data, &r, &g, &b);
+	if (fx_circle (v1, dreg2, r, g, b)) return;	/* an explosion's fireball */
 	
 	glColor3ub (r, g, b);
 
