@@ -2585,7 +2585,7 @@ static void split_counts (float right)
 static void f3_panel (float right)
 {
 	struct hdtext_run *head[8], *cash_lab = NULL, *cash = NULL;
-	float head_y = 138, hr[8], head_x1 = 0;
+	float head_y = 138, hr[8], head_x1 = 0, fig_x0 = 320;
 	int i, k, nh = 0;
 
 	for (i = 0; i < n_runs; i++) {
@@ -2619,8 +2619,21 @@ static void f3_panel (float right)
 				r->align = HDT_RIGHT;
 				r->ax = hr[k];
 				r->maxw = hr[k] - head[k]->ink0 + 6;
+				if (hr[k] - hdtext_measure (r) < fig_x0) fig_x0 = hr[k] - hdtext_measure (r);
 				break;
 			}
+	}
+	/* the rows' names clear of the card's edge, as the sheet's are, and
+	 * never into the first column of figures */
+	for (i = 0; i < n_runs; i++) {
+		struct hdtext_run *r = &runs[i];
+		float x0 = right + 7;
+		if (!ON_PAGE (r) || r == cash_lab || r->x0 < right || r->x0 > right + 6 || r->y <= 142 ||
+		    (r->kind & HDT_K_NUMERIC) || !(r->kind & HDT_K_LETTER))
+			continue;
+		r->align = HDT_LEFT;
+		r->ax = x0;
+		if (fig_x0 - 3 - x0 > 8) r->maxw = fig_x0 - 3 - x0;
 	}
 	if (cash_lab && cash) {
 		style (cash_lab, HDT_SECTION, C_TEXT2);
@@ -2715,7 +2728,7 @@ static void f3_sheet (float right)
 		r->align = HDT_LEFT;
 		r->ax = vx[g];
 		r->maxw = lim - vx[g];
-		if (runs[i - 1].ax != vx[g] || runs[i - 1].y != r->y) continue;
+		if (i == 0 || runs[i - 1].ax != vx[g] || runs[i - 1].y != r->y) continue;
 		for (k = 0; k < n0; k++)
 			if ((runs[k].kind & HDT_K_COLON) && on_sheet (&runs[k], right) && abs (gx[g] - runs[k].x0) <= 3 &&
 			    runs[k].y < r->y && (!above || runs[k].y > above->y))
@@ -2736,7 +2749,7 @@ static void f3_sheet (float right)
 			foot = k;
 		}
 	if (foot) {
-		float yh = top_end + 14, ylist = yh + ROW_DY * (nrow - foot + 1) + 2;
+		float yh = top_end + 14, ylist = yh + ROW_DY * (nrow - foot + 1);
 		for (i = 0; i < n0; i++)
 			if (on_sheet (&runs[i], right) && runs[i].y > row_y[foot - 1] && runs[i].y < row_y[foot] &&
 			    runs[i].y < list0)
@@ -2746,7 +2759,11 @@ static void f3_sheet (float right)
 			for (k = foot; k < nrow && row_y[k] != runs[i].y; k++)
 				;
 			if (k < nrow) ty[i] = yh + ROW_DY * (k - foot + 1);
-			else if (runs[i].y >= list0 && runs[i].y < row_y[foot]) ty[i] = ylist + runs[i].y - list0;
+			else if (runs[i].y >= list0 && runs[i].y < row_y[foot]) {
+				/* the list: rows of the same heading, on its pitch and in its face */
+				ty[i] = ylist + runs[i].y - list0;
+				if (!(runs[i].kind & HDT_K_COLON) && !is_head (&runs[i])) runs[i].role = HDT_LABEL;
+			}
 		}
 		sheet_text ("Fitted equipment", SHEET_X, yh, right, 1);
 	}
@@ -2854,7 +2871,7 @@ static void layout_f3 (unsigned char *out)
 					if (runs[k].y == r->y && (runs[k].kind & HDT_K_CAPS) && runs[k].x0 < right) break;
 				if (k == i) rule (L_BACK, 5, right - 4, r->y + r->dy - 3.5f, 0xffffff, 0.10f);
 			}
-		} else if (r->kind & HDT_K_COLON)
+		} else if ((r->kind & HDT_K_COLON) || (r->role == HDT_LABEL && r->x0 < right))
 			style (r, HDT_LABEL, C_TEXT2);
 		else
 			/* a value on the sheet reads as its neighbours do: the
