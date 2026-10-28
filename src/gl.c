@@ -531,6 +531,7 @@ int DrawStr (int xpos, int ypos, int col, unsigned char *str, bool shadowed)
 	y = ypos;
 	
 	if ((y > 192) || (y<0)) return x;
+	hdtext_string ();
 set_line:
 	screen = LOGSCREEN2;
 	screen += SCREENBYTES_LINE * y;
@@ -3983,7 +3984,8 @@ void Nu_DrawScreen ()
  * writes ST memory (the queued strings, which would, hold it back). */
 void Screen_Stalled (void)
 {
-	if (++stalled < 3 || queued_string_pos || !hdui_still_page ()) return;
+	if (stalled < 3) stalled++;	/* no further: it would wrap */
+	if (stalled < 3 || queued_string_pos || !hdui_still_page ()) return;
 	draw_control_panel ();
 	glFlush ();
 	SDL_GL_SwapBuffers ();

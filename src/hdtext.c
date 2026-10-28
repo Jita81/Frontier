@@ -44,9 +44,13 @@
  * that alternates between two glyphs (a highlighted menu item). */
 struct ent {
 	unsigned char chr, col, flags, misses;
+	unsigned int str;	/* the string it was drawn in (hdtext_string) */
 };
 #define F_USED		1
 #define F_SHADOW	2
+#define F_COUNTER	4	/* drawn in the game's frame counter */
+#define F_HIT		8	/* this frame: wholly on the screen */
+#define F_UNDER		16	/* this frame: on the screen under the counter */
 
 static struct ent slots[ST_W * ST_H][2];
 static unsigned char listed[ST_W * ST_H];
@@ -55,42 +59,21 @@ static int active[MAX_ACTIVE], n_active;
 /* what the last hdtext_frame found on the screen */
 static struct shown {
 	short x, y;
-	unsigned char chr, col, shadow;
+	unsigned char chr, col, shadow, counter;
 	float dx;		/* layout's shift, framebuffer pixels */
 } shown[MAX_ACTIVE];
 static int n_shown;
 
-/* glyphs a glyph in another colour was drawn over (the frame counter over
- * a title) and what was drawn over them, for hdtext_uncover: the last
- * MAX_COVERED, one a position; one goes when a glyph in its own colour is
- * drawn over it */
-#define MAX_COVERED	64
-static struct covered {
-	struct shown g;
-	unsigned char by, by_shadow;	/* the colour drawn over it, and its shadow */
-} covered[MAX_COVERED];
-static int n_covered, next_covered;
+/* The string DrawStr is drawing, and whether it is the game's frame
+ * counter (its F key): drawn at (5, 5) in colour 15 over whatever is
+ * there, a page's title too (--classic-ui: as any string) */
+static unsigned int str_id;
+static int str_new, str_counter;
 
-static void cover (int x, int y, const struct ent *e, int by, int by_shadow)
-{
-	struct covered *v;
-	int i;
-
-	for (i = 0; i < n_covered && (covered[i].g.x != x || covered[i].g.y != y); i++) ;
-	if (i == n_covered) {
-		if (n_covered < MAX_COVERED) n_covered++;
-		else i = next_covered++ % MAX_COVERED;
-	}
-	v = &covered[i];
-	memset (v, 0, sizeof (*v));
-	v->g.x = x;
-	v->g.y = y;
-	v->g.chr = e->chr;
-	v->g.col = e->col;
-	v->g.shadow = (e->flags & F_SHADOW) != 0;
-	v->by = by;
-	v->by_shadow = by_shadow;
-}
+/* the counter's ink (1) and shadow (2) where it is on the screen this
+ * frame */
+static unsigned char cmask[ST_W * ST_H];
+static int cmask_on;
 
 /* the glyph texture: NGLYPHS cells of cw x ch pixels, 16 to a row, each
  * covering the ST box from (-1, -1) to (9, 10) round its glyph */
@@ -105,6 +88,12 @@ static int ink (const unsigned char *g, int c, int row)
 	return c >= 0 && c < 8 && row >= 0 && row < 8 && (g[row] & (0x80 >> c));
 }
 
+void hdtext_string (void)
+{
+	str_id++;
+	str_new = 1;
+}
+
 void hdtext_glyph (const unsigned char *font, int x, int y, int col, int chr,
 		   int shadowed)
 {
@@ -113,6 +102,11 @@ void hdtext_glyph (const unsigned char *font, int x, int y, int col, int chr,
 	struct ent *s;
 	int o = y * ST_W + x, ox, oy, k;
 
+	if (str_new) {
+		str_new = 0;
+		str_counter = !classic_ui && x == 5 && y == 5 && col == 15;
+	}
+	if (str_counter) flags |= F_COUNTER;
 	if (pixel_text || x < 0 || x >= ST_W || y < 0 || y > ST_H - 8 ||
 	    chr < 0 || chr >= NGLYPHS || col == 255)
 		return;
@@ -124,19 +118,14 @@ void hdtext_glyph (const unsigned char *font, int x, int y, int col, int chr,
 		for (ox = x - 8; ox <= x + 8; ox++) {
 			if (ox < 0 || ox >= ST_W || (ox == x && oy == y)) continue;
 			s = slots[oy * ST_W + ox];
+			/* the counter replaces no glyph in another colour:
+			 * it shows round the counter (hdtext_frame) */
 			for (k = 0; k < 2; k++)
 				if ((s[k].flags & F_USED) && ox < x + g[9] &&
-				    x < ox + font[s[k].chr * 10 + 9]) {
-					if (s[k].col != col) cover (ox, oy, &s[k], col, shadowed);
+				    x < ox + font[s[k].chr * 10 + 9] &&
+				    !(str_counter && s[k].col != col))
 					s[k].flags = 0;
-				}
 		}
-	}
-	for (k = 0; k < n_covered; k++) {
-		struct shown *v = &covered[k].g;
-		if (v->col == col && abs (v->y - y) <= 7 && v->x < x + g[9] &&
-		    x < v->x + font[v->chr * 10 + 9])
-			covered[k--] = covered[--n_covered];
 	}
 
 	if (!listed[o]) {
@@ -145,6 +134,15 @@ void hdtext_glyph (const unsigned char *font, int x, int y, int col, int chr,
 		active[n_active++] = o;
 	}
 	s = slots[o];
+	if (str_counter && (s[0].flags & F_USED) && !(s[0].flags & F_COUNTER) && s[0].col != col) {
+		/* the counter on another colour's glyph: second, beside it */
+		s[1].chr = chr;
+		s[1].col = col;
+		s[1].flags = flags;
+		s[1].misses = 0;
+		s[1].str = str_id;
+		return;
+	}
 	if ((s[1].flags & F_USED) && s[1].chr == chr && s[1].col == col && s[1].flags == flags) {
 		struct ent t = s[0];
 		s[0] = s[1];
@@ -156,6 +154,7 @@ void hdtext_glyph (const unsigned char *font, int x, int y, int col, int chr,
 		s[0].flags = flags;
 	}
 	s[0].misses = 0;
+	s[0].str = str_id;
 }
 
 /* Every pixel of the glyph is in its colour, and something in its box is
@@ -238,35 +237,100 @@ static void why_missed (const unsigned char *g, const unsigned char *r, int x, i
 		 other ? "?" : "solid block");
 }
 
-void hdtext_frame (const unsigned char *font, const unsigned char *r, unsigned char *out)
+/* Every pixel of the glyph is in its colour or under the counter in the
+ * counter's colours, and some are under it */
+static int under_counter (const unsigned char *g, const unsigned char *r, int x, int y, int col)
+{
+	int row, c, under = 0;
+
+	for (row = 0; row < 8; row++)
+		for (c = 0; c < 8 && x + c < ST_W; c++) {
+			int i = (y + row) * ST_W + x + c;
+			if (!ink (g, c, row) || r[i] == col) continue;
+			if (!((cmask[i] & 1) && r[i] == 15) && !((cmask[i] & 2) && r[i] == 0)) return 0;
+			under = 1;
+		}
+	return under;
+}
+
+/* a glyph of string str (not the counter) is wholly on the screen */
+static int string_shown (unsigned int str)
 {
 	int i, k;
 
+	for (i = 0; i < n_active; i++)
+		for (k = 0; k < 2; k++)
+			if ((slots[active[i]][k].flags & (F_HIT | F_COUNTER)) == F_HIT &&
+			    slots[active[i]][k].str == str)
+				return 1;
+	return 0;
+}
+
+void hdtext_frame (const unsigned char *font, const unsigned char *r, unsigned char *out)
+{
+	int i, k, row, c;
+
 	memcpy (out, r, ST_W * ST_H);
 	n_shown = 0;
+	if (cmask_on) memset (cmask, 0, sizeof (cmask));
+	cmask_on = 0;
+	/* the glyphs wholly on the screen; where the counter's are */
+	for (i = 0; i < n_active; i++) {
+		int o = active[i], x = o % ST_W, y = o / ST_W;
+		struct ent *s = slots[o];
+
+		for (k = 0; k < 2; k++) {
+			const unsigned char *g = font + s[k].chr * 10;
+			if (!(s[k].flags & F_USED) || !on_screen (g, r, x, y, s[k].col)) continue;
+			s[k].flags |= F_HIT;
+			if (!(s[k].flags & F_COUNTER)) continue;
+			cmask_on = 1;
+			for (row = 0; row < 8; row++)
+				for (c = 0; c < 8 && x + c < ST_W; c++)
+					if (ink (g, c, row)) {
+						cmask[o + row * ST_W + c] |= 1;
+						if ((s[k].flags & F_SHADOW) && x + c + 1 < ST_W && y + row + 1 < ST_H)
+							cmask[o + (row + 1) * ST_W + c + 1] |= 2;
+					}
+		}
+	}
+	/* the glyphs the counter was drawn over, while their string shows:
+	 * a stale one's string has gone */
+	for (i = 0; i < n_active && cmask_on; i++) {
+		int o = active[i];
+		struct ent *s = slots[o];
+
+		for (k = 0; k < 2; k++)
+			if ((s[k].flags & (F_USED | F_HIT | F_COUNTER)) == F_USED &&
+			    under_counter (font + s[k].chr * 10, r, o % ST_W, o / ST_W, s[k].col) &&
+			    string_shown (s[k].str))
+				s[k].flags |= F_UNDER;
+	}
 	for (i = 0; i < n_active; ) {
 		int o = active[i], x = o % ST_W, y = o / ST_W, hit = -1;
 		struct ent *s = slots[o];
 
+		/* one glyph a place, or the counter and one under it */
 		for (k = 0; k < 2; k++) {
 			if (!(s[k].flags & F_USED)) continue;
-			if (hit < 0 && on_screen (font + s[k].chr * 10, r, x, y, s[k].col)) {
+			if ((s[k].flags & (F_HIT | F_UNDER)) && n_shown < MAX_ACTIVE &&
+			    (hit < 0 || ((s[0].flags ^ s[1].flags) & F_COUNTER))) {
+				struct shown *d = &shown[n_shown++];
 				hit = k;
 				s[k].misses = 0;
+				d->x = x;
+				d->y = y;
+				d->chr = s[k].chr;
+				d->col = s[k].col;
+				d->shadow = (s[k].flags & F_SHADOW) != 0;
+				d->counter = (s[k].flags & F_COUNTER) != 0;
+				erase (font + d->chr * 10, r, out, x, y, d->col, d->shadow);
 			} else if (++s[k].misses > MISS_LIMIT)
 				s[k].flags = 0;
+			s[k].flags &= ~(F_HIT | F_UNDER);
 		}
 		if (hit < 0 && (s[0].flags & F_USED) && s[0].misses == 1)
 			why_missed (font + s[0].chr * 10, r, x, y, s[0].col, s[0].chr);
-		if (hit >= 0) {
-			struct shown *d = &shown[n_shown++];
-			d->x = x;
-			d->y = y;
-			d->chr = s[hit].chr;
-			d->col = s[hit].col;
-			d->shadow = (s[hit].flags & F_SHADOW) != 0;
-			erase (font + d->chr * 10, r, out, x, y, d->col, d->shadow);
-		}
 		if (!(s[0].flags & F_USED) && !(s[1].flags & F_USED)) {
 			listed[o] = 0;
 			active[i] = active[--n_active];
@@ -713,51 +777,17 @@ int hdtext_runs (struct hdtext_run **r)
 	return n_runs;
 }
 
-int hdtext_uncover (const unsigned char *r, unsigned char *out, int x1, int y1)
+int hdtext_hide_counter (void)
 {
-	static unsigned char drop[MAX_ACTIVE];
-	int i, j, row, c, n = 0;
+	int i, j;
 
-	if (!runs_font) return 0;
-	memset (drop, 0, n_shown);
-	for (i = 0; i < n_covered && n_shown + n < MAX_ACTIVE; i++) {
-		const struct covered *v = &covered[i];
-		const unsigned char *g = runs_font + v->g.chr * 10;
-		int bad = 0, w = g[9];
-
-		if (v->g.x >= x1 || v->g.y >= y1) continue;
-		/* not where it has been drawn again */
-		for (j = 0; j < n_shown && (shown[j].x != v->g.x || shown[j].y != v->g.y ||
-					    shown[j].col != v->g.col); j++) ;
-		if (j < n_shown) continue;
-		/* each of its pixels is its colour or what was drawn over it */
-		for (row = 0; row < 8 && !bad; row++)
-			for (c = 0; c < 8 && !bad; c++) {
-				int px = v->g.x + c, py = v->g.y + row, p;
-				if (!ink (g, c, row)) continue;
-				p = px < ST_W && py < ST_H ? r[py * ST_W + px] : -1;
-				bad = p != v->g.col && p != v->by && !(v->by_shadow && p == 0);
-			}
-		if (bad) continue;
-		for (j = 0; j < n_shown; j++)
-			if (shown[j].col == v->by && abs (shown[j].y - v->g.y) <= 7 &&
-			    shown[j].x < v->g.x + w && v->g.x < shown[j].x + runs_font[shown[j].chr * 10 + 9])
-				drop[j] = 1;
-		shown[n_shown + n++] = v->g;
-	}
-	if (!n) return 0;
-	/* the glyphs over them go (hdtext_frame painted them out already);
-	 * they are painted out and join their runs again */
-	for (i = j = 0; i < n_shown + n; i++) {
-		if (i < n_shown && drop[i]) continue;
-		if (i >= n_shown)
-			erase (runs_font + shown[i].chr * 10, r, out, shown[i].x, shown[i].y,
-			       shown[i].col, shown[i].shadow);
-		shown[j++] = shown[i];
-	}
+	for (i = j = 0; i < n_shown; i++)
+		if (!shown[i].counter) shown[j++] = shown[i];
+	if (j == n_shown) return 0;
+	i = n_shown - j;
 	n_shown = j;
 	build_runs (runs_font);
-	return n;
+	return i;
 }
 
 int hdtext_chars (const struct hdtext_run *r, char *c, unsigned char *sp, int max)

@@ -20,6 +20,9 @@
 /* --pixel-text: keep the original 8x8 bitmap font */
 extern int pixel_text;
 
+/* DrawStr starts a string (the glyphs that follow are its) */
+void hdtext_string (void);
+
 /* DrawStr drew glyph chr of font (the 10 byte a glyph bitmap font
  * DrawChar draws with) (character code - 0x20) with its top left
  * at ST pixel (x, y) in palette colour col, with a shadow at (x+1, y+1)
@@ -93,13 +96,10 @@ struct hdtext_run {
  * on each line, for hdui to style.  Valid until the next hdtext_frame. */
 int hdtext_runs (struct hdtext_run **runs);
 
-/* After hdtext_frame, for a page whose title the game may draw its frame
- * counter over: bring back the glyphs left of x1 and above y1 (ST) that a
- * glyph in another colour was drawn over and that are still on raster
- * wherever that glyph does not hide them, paint them out of out and drop
- * the glyphs over them.  Returns how many came back; then call
+/* After hdtext_frame: drop the game's frame counter (its F key) from the
+ * runs.  Returns how many of its glyphs were dropped; then call
  * hdtext_runs again. */
-int hdtext_uncover (const unsigned char *raster, unsigned char *out, int x1, int y1);
+int hdtext_hide_counter (void);
 
 /* Run r's glyphs as ASCII ('?' for anything else), and whether a word
  * space comes before each; returns how many (at most max). */
