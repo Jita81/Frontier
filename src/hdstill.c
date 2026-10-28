@@ -144,6 +144,12 @@ static const struct art arts[] = {
 	{ 0x96349724541eb108ULL, 16, 11, K_PANEL, 0, 1, { G_ROUTE }, "icon route" },
 	{ 0x38afdfb87c76cf68ULL, 16, 11, K_PANEL, 0, 1, { G_TAKEOFF }, "icon take off (landed)" },
 	{ 0x3fa31e1416775b84ULL, 16, 11, K_PANEL, 0, 1, { GX (G_LIST) }, "icon list crossed (landed)" },
+	/* a map option turned off: its key without the cross, over the strip */
+	{ 0x27098800ad01b1c9ULL, 16, 11, K_PANEL, 0, 1, { G_PERSON }, "icon person (option off)" },
+	{ 0x1aae938aed8b65ccULL, 16, 11, K_PANEL, 0, 1, { G_GALMAP }, "icon galaxy map (option off)" },
+	{ 0x2f8394d95032ca79ULL, 16, 11, K_PANEL, 0, 1, { G_ALPHA }, "icon alpha (option off)" },
+	{ 0x204ff007744c5988ULL, 16, 11, K_PANEL, 0, 1, { G_WRENCH }, "icon wrench (option off)" },
+	{ 0x02fb7f3f0820e6baULL, 16, 11, K_PANEL, 0, 1, { G_DOC }, "icon doc (option off)" },
 	{ 0x980ec8842f7b354bULL, 64, 11, K_PANEL, 0, 1, { G_TARGET, G_CROSS, G_WRENCH, G_HYPER }, "icons 7-10 galaxy map" },
 	{ 0xaa1cc440b258bd81ULL, 64, 11, K_PANEL, 0, 1, { G_TARGET, G_CROSS, G_EMPTY, G_SECTOR }, "icons 7-10 galaxy map zoomed out" },
 	{ 0x86a58df0cc99b241ULL, 64, 11, K_PANEL, 0, 1, { GX (G_PERSON), GX (G_GALMAP), GX (G_ROUTE), GX (G_ALPHA) }, "icons 7-10 galaxy map info" },

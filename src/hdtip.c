@@ -32,6 +32,7 @@
 #include "hdback.h"
 #include "screen.h"
 #include "input.h"
+#include "bindings.h"
 #include "../m68000.h"
 #include "../fixups.h"
 
@@ -46,7 +47,8 @@
 #define A6_NEAREST_M		692	/* long: distance to the nearest body, for the log only */
 #define A6_FLIGHT_STATE		704	/* byte: 0 flight, 4 autopilot; over $0c the docking, launch and
 					 * landing phases ($10-$18 docking, $48 launch under way,
-					 * $50-$5b docked, $5c.. on the ground) */
+					 * $50-$5b docked, $5c.. set down where F7 launches, in a
+					 * station's bay or on a planet: nothing here tells which) */
 #define A6_SHIP_FLAGS		705	/* byte: bit 0 engines off, bit 2 object labels (F10) */
 #define A6_VIEW			706	/* byte: 0 front, 1 rear, 2/3 turrets, 4 external */
 #define A6_AP_TARGET		708	/* byte: something the autopilot can fly to */
@@ -72,54 +74,35 @@ static int in_3d (void) { return (signed char) rb (A6 + A6_TOOLS_MODE) < 0; }
 static unsigned int player (void) { return rl (A6 + A6_PLAYER); }
 
 /* ---------------------------------------------------------------- */
-/* Keys, from the game's key map */
+/* Keys: the ST key that gives code in the game's key map, then the key
+ * or button bound to that ST key on the Controls page (F12) */
 
-static const char *scan_name (int sc)
+static const char *bound_name (int sc)
 {
-	static const char *const fkey[10] = { "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10" };
-	if (sc >= 0x3b && sc <= 0x44) return fkey[sc - 0x3b];
-	switch (sc) {
-	case 0x01: return "Esc";
-	case 0x0e: return "Backspace";
-	case 0x0f: return "Tab";
-	case 0x1c: return "Return";
-	case 0x39: return "Space";
-	case 0x48: return "Up";
-	case 0x50: return "Down";
-	case 0x4b: return "Left";
-	case 0x4d: return "Right";
-	case 0x52: return "Insert";
-	case 0x53: return "Delete";
-	case 0x61: return "Undo";
-	case 0x62: return "Help";
+	int i;
+
+	for (i = 0; i < n_binding_actions; i++) {
+		if (binding_actions[i].kind != K_KEY || binding_actions[i].code != sc) continue;
+		if (binding_key[i]) return binding_key_name (binding_key[i]);
+		return binding_mouse[i] ? binding_mouse_name (binding_mouse[i]) : NULL;
 	}
-	return NULL;
+	return binding_key_name (sc);	/* not on the page: the key itself */
 }
 
-/* The key that gives code, "" when the map has none */
+/* The key that gives code, "" when none does */
 static void key_for (int code, char *out, size_t n)
 {
 	int pass, sc;
 
 	out[0] = 0;
-	for (pass = 0; pass < 2; pass++) {
-		p68K map = pass ? KEYMAP_UPPER : KEYMAP_LOWER;
+	for (pass = 0; pass < 2; pass++)
 		for (sc = 1; sc < 128; sc++) {
 			const char *name;
-			char ch[2];
-			if (rb (map + sc) != code) continue;
-			name = scan_name (sc);
-			if (!name) {
-				int c = rb (KEYMAP_LOWER + sc);
-				if (c <= 0x20 || c >= 0x7f) continue;
-				ch[0] = (c >= 'a' && c <= 'z') ? c - 32 : c;
-				ch[1] = 0;
-				name = ch;
-			}
+			if (rb ((pass ? KEYMAP_UPPER : KEYMAP_LOWER) + sc) != code) continue;
+			if (!(name = bound_name (sc))) continue;
 			snprintf (out, n, "%s%s", pass ? "Shift+" : "", name);
 			return;
 		}
-	}
 }
 
 /* ---------------------------------------------------------------- */
@@ -169,38 +152,58 @@ static int hit_code (int x, int y, int *r)
 static void set (char *d, size_t n, const char *s) { snprintf (d, n, "%s", s); }
 #define SET(f, s)	set (t->f, sizeof (t->f), s)
 
-static const char *glyph_title (int g)
-{
-	switch (g & ~G_OFF) {
-	case G_FRONT: case G_REAR: case G_EXT: return "Views";
-	case G_GALMAP: return "Galaxy map";
-	case G_SYSMAP: return "System map";
-	case G_SHIP: return "Ship and commander";
-	case G_CARGO: return "Cargo";
-	case G_CMDR: return "Commander";
-	case G_PHONE: return "Communications";
-	case G_TARGET: return "Zoom in";
-	case G_CROSS: return "Zoom out";
-	case G_WRENCH: return "Map display options";
-	case G_LOAD: return "Load game";
-	case G_SAVE: return "Save game";
-	case G_EXIT: return "Leave the game";
-	}
-	return NULL;
-}
+/* The icons outside the 3D view, by what the HD panel shows (hdstill):
+ * the maps' keys and the screens' own */
+static const struct gtip { unsigned char g; const char *title, *body; } glyphs[] = {
+	{ G_TARGET, "Zoom in", "Zoom the map in." },
+	{ G_CROSS, "Zoom out", "Zoom the map out." },
+	{ G_WRENCH, "Map display options", "Choose what the map shows: the keys here turn into its options." },
+	{ G_HYPER, "Whole galaxy", "Zoom out to the whole galaxy." },
+	{ G_SECTOR, "Back to the sector", "Return to the map of the sector around the system picked." },
+	{ G_BURST, "Autopilot target", "Pick a target or destination for the autopilot, then click it on the map." },
+	{ G_ORRERY, "Selected system", "Data on the system picked, with a picture of its bodies." },
+	{ G_SHIP, "Ship and commander", "" },
+	{ G_CARGO, "Cargo", "" },
+	{ G_CMDR, "Commander", "" },
+	{ G_PHONE, "Communications", "" },
+	{ G_LOAD, "Load game", "" },
+	{ G_SAVE, "Save game", "" },
+	{ G_EXIT, "Leave the game", "" },
+};
 
+/* A map's display options (behind its wrench key): crossed while the
+ * option is on, so the title says what a click does.  What each one
+ * draws was seen on the maps; the route option showed no change where
+ * it was tried, so it is named by its icon only. */
+static const struct otip { unsigned char g; const char *on, *off; } options[] = {
+	{ G_PERSON, "the lines from the stars", NULL },
+	{ G_GALMAP, "the sector grid", NULL },
+	{ G_ROUTE, NULL, "route option" },
+	{ G_ALPHA, "the you-are-here label", NULL },
+	{ G_WRENCH, "the body symbols", NULL },
+	{ G_DOC, "the names of the bodies", NULL },
+};
+
+/* The map's time keys in the second display: one click for all six, the
+ * game picks by x */
+static const char *const orrery[6] = {
+	"Map time: back fast", "Map time: back", "Map time: back slowly",
+	"Map time: forward slowly", "Map time: forward", "Map time: forward fast"
+};
 /* F7..F10 over a 3D view, from the state the game's handlers test */
 static void flight_key (struct tip *t, int slot, const struct hdstill_panel *p)
 {
 	int st = rb (A6 + A6_FLIGHT_STATE), fl = rb (A6 + A6_SHIP_FLAGS);
 	unsigned int pl = player ();
-	int docked = st >= 0x50 && st < 0x5c, landed = st >= 0x5c;
+	int docked = st >= 0x50 && st < 0x5c, down = st >= 0x5c;
 
 	switch (slot) {
 	case 7:
-		/* as the F7 handler l62d48: ignored while docked, take off from
-		 * the ground, $48 hands over to $4c, 4 back to manual, and in
-		 * every other state the engines toggle (705 bit 0) */
+		/* as the F7 handler l62d48: ignored while docked, from $5c up
+		 * the launch starts ($48; one more test at $60 is not read
+		 * here, so no reason is given), $48 hands over to $4c, 4 back
+		 * to manual, and in every other state the engines toggle
+		 * (705 bit 0) */
 		if (docked) {
 			char k[24];
 			SET (title, "Engines");
@@ -208,9 +211,9 @@ static void flight_key (struct tip *t, int slot, const struct hdstill_panel *p)
 			key_for (0xf4, k, sizeof (k));
 			snprintf (t->why, sizeof (t->why), "Not while docked. To leave, request launch on Communications%s%s%s.",
 				  k[0] ? " (" : "", k, k[0] ? ")" : "");
-		} else if (landed) {
-			SET (title, "Take off");
-			SET (body, "Lift off from the surface.");
+		} else if (down) {
+			SET (title, "Launch");
+			SET (body, "Start the launch and fly clear.");
 		} else if (st == 0x48) {
 			SET (title, "Engines");
 			SET (body, "Launch under way.");
@@ -267,8 +270,7 @@ static void flight_key (struct tip *t, int slot, const struct hdstill_panel *p)
 
 static void slot_tip (struct tip *t, int slot, const struct hdstill_panel *p)
 {
-	int g = p->valid ? p->slot[slot] : G_ABSENT;
-	const char *name;
+	int g = p->valid ? p->slot[slot] : G_ABSENT, i;
 
 	if (slot >= 7 && in_3d ()) {
 		flight_key (t, slot, p);
@@ -296,11 +298,25 @@ static void slot_tip (struct tip *t, int slot, const struct hdstill_panel *p)
 		SET (body, "Talk to stations and ships: launch and docking clearance, messages.");
 		return;
 	}
-	name = glyph_title (g);
-	if (name) {
-		SET (title, name);
-		if (g & G_OFF) SET (why, "Not available on this screen now.");
+	if (slot >= 7 && ((p->slot[10] & ~G_OFF) == G_ALPHA || (p->slot[10] & ~G_OFF) == G_DOC)) {
+		/* the options strip: its last key is the alpha or doc option */
+		for (i = 0; i < (int) (sizeof (options) / sizeof (options[0])); i++)
+			if (options[i].g == (g & ~G_OFF)) {
+				if (options[i].on)
+					snprintf (t->title, sizeof (t->title), "%s %s", g & G_OFF ? "Hide" : "Show", options[i].on);
+				else
+					snprintf (t->title, sizeof (t->title), "Turn the %s %s", options[i].off, g & G_OFF ? "off" : "on");
+				SET (body, "A map display option: its icon is crossed while on.");
+				return;
+			}
 	}
+	if (g & G_OFF) return;
+	for (i = 0; i < (int) (sizeof (glyphs) / sizeof (glyphs[0])); i++)
+		if (glyphs[i].g == g) {
+			SET (title, glyphs[i].title);
+			SET (body, glyphs[i].body);
+			return;
+		}
 }
 
 static void time_tip (struct tip *t, int code)
@@ -389,7 +405,6 @@ static int find (int x, int y, struct tip *t)
 		SET (title, "Flight status");
 		SET (body, st == 4 ? "The autopilot is flying the ship." :
 			   st >= 0x50 && st < 0x5c ? "Docked at a station." :
-			   st >= 0x5c ? "On the ground." :
 			   st == 8 ? "In hyperspace." :
 			   st == 0x48 || st == 0x4c ? "Launching." :
 			   "Who is flying the ship, and how.");
@@ -419,6 +434,14 @@ static int find (int x, int y, struct tip *t)
 	if (code >= 0) {
 		t->id = T_HIT + 0x100 * code, t->code = code;
 		t->x0 = r[0], t->y0 = r[1], t->x1 = r[2], t->y1 = r[3];
+		if (code == 0x80 && (p.flags & F_MAPKEYS) && r[0] == 262 && r[2] == 319) {
+			/* the system map's time keys: one click, six keys */
+			int k = (x - 262) * 6 / 58;
+			t->id += k, t->x0 = 262 + k * 58 / 6, t->x1 = 262 + (k + 1) * 58 / 6 - 1;
+			SET (title, orrery[k]);
+			SET (body, "Moves the time the map shows the bodies at; the game's clock runs on as before.");
+			return t->id;
+		}
 		if (code < 0x10 || (code >= 0x18 && code < 0xc1)) return t->id = 0;
 		if (code >= 0x10 && code <= 0x17) {
 			int n = code - 0x10 + 1;
@@ -433,16 +456,19 @@ static int find (int x, int y, struct tip *t)
 			time_tip (t, code);
 		} else if (code >= 0xf1 && code <= 0xf4) {
 			slot_tip (t, code - 0xf0, &p);
-		} else if (code >= 0xf7 && code <= 0xfa) {
+		} else if (code >= 0xf6 && code <= 0xfa) {
 			slot_tip (t, code - 0xf0, &p);
-		} else if (code == 0xf6) {
-			/* the bay's second key: the HD panel draws nothing
-			 * there, so there is nothing to name */
-			return t->id = 0;
 		} else if (code == 0xf5) {
 			if (p.flags & F_SCANNER) {
+				/* the bay's rect is wider than the scanner's glass
+				 * (hdstill.c scanner()): its corners are bare panel */
+				float ex = (x + 0.5f - 160.5f) / 79.5f, ey = (y + 0.5f - 184) / 13.8f;
+				if (ex * ex + ey * ey > 1) return t->id = 0;
 				SET (title, "Scanner");
 				SET (body, "Ships and objects around you: stalks show above or below your plane.");
+			} else if (p.slot[6] == G_ORRERY) {
+				SET (title, "Selected system");
+				SET (body, "The system picked on the galaxy map: its name, distance and kind.");
 			} else if (p.n_missiles) {
 				SET (title, "Missile pylons");
 				SET (body, "Click a missile to select it.");
@@ -762,7 +788,7 @@ void hdtip_draw (void)
 	float stx, sty, sx, sy, u, a, tx, ty, ex0, ey0, ey1;
 	Uint32 now;
 
-	if (classic_ui || pixel_art || use_renderer == R_OLD) return;
+	if (classic_ui || pixel_art || use_renderer == R_OLD || controls_page_open ()) return;
 	if (log_on < 0) {
 		const char *e = getenv ("FE2_HDTIP_LOG");
 		log_on = e && *e && *e != '0';
