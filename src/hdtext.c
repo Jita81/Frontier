@@ -1104,15 +1104,15 @@ static int set_slot (UniChar u, float *z)
 #define MAX_CHARS	256
 
 /* A sum of money as the game printed it ('$-1234.5', '$14 000'), set
- * as '-$1,234.5'.  Anything but a sum is left as it is. */
+ * as '-$1,234.5'.  Anything but one sum (two '$' or '-') is left as it is. */
 static int money_chars (UniChar *u, short *src, int n)
 {
 	UniChar d[MAX_CHARS];
 	int i, k, m = 0, nd = 0, neg = 0, cur = 0, point = -1, whole;
 
 	for (i = 0; i < n; i++) {
-		if (u[i] == '$') cur = 1;
-		else if (u[i] == '-') neg = 1;
+		if (u[i] == '$' && !cur) cur = 1;
+		else if (u[i] == '-' && !neg) neg = 1;
 		else if (u[i] == '.' && point < 0) point = nd;
 		else if (u[i] >= '0' && u[i] <= '9') d[nd++] = u[i];
 		else if (u[i] != ' ' && u[i] != ',') return n;

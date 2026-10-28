@@ -2068,11 +2068,13 @@ static void split_merged (int ships)
 			    H >= 0 ? sp[k] && hdtext_glyph_x (r, k) >= H - 6 :
 			    c[k] == '$' && isalnum ((unsigned char) c[k - 1]))
 				break;
-		/* on the ships pages, not inside a figure (between two of
-		 * its characters), nor a sum's thousands from the rest: the
-		 * column below that starts there is a ship's details */
-		if (k < n && X >= 0 && ships && ((!sp[k] && FIG (c[k]) && FIG (c[k - 1])) || (c[0] == '$' && !memchr (c + k, '$', n - k))))
-			continue;
+		/* on the ships pages the column below may be a ship's
+		 * details, starting inside a figure: never cut a figure in
+		 * two (all that is right of the cut being figures) */
+		if (k < n && X >= 0 && ships && FIG (c[k - 1])) {
+			for (j = k; j < n && FIG (c[j]); j++);
+			if (j == n) continue;
+		}
 		if (k < n && hdtext_split (i, k)) {
 			n_runs = hdtext_runs (&runs);
 			cut_row[runs[i].y] = 1;
@@ -2533,12 +2535,17 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 	}
 
 	/* the card on the left: the picture and the cargo panel */
-	/* its top flush with the picture's, where the game left the screen
-	 * over the picture empty: no strip with nothing in it */
 	pic = find_blob (out, 0, 15, 119, FOOT_Y - 1, bb);
-	e = add (E_GLASS, L_BACK, 0, pic && !inplace && bb[1] - 0.5f > BODY_Y0 ? bb[1] - 0.5f : BODY_Y0, 120.5f, 166.5f);
+	e = add (E_GLASS, L_BACK, 0, BODY_Y0, 120.5f, 166.5f);
 	e->flags = F_ALL;
 	if (pic) {
+		/* the picture flush with the card's top, as with its sides:
+		 * where the game left the screen over it empty, a matte as
+		 * dark as a portrait's backdrop, framed with it */
+		if (!inplace && bb[1] - BODY_Y0 - bb[0] >= 1 && bb[1] - BODY_Y0 < 12) {
+			quad (L_BACK, bb[0], BODY_Y0 + bb[0], bb[2], bb[1], 0x000000, 0.6f);
+			bb[1] = BODY_Y0 + bb[0];
+		}
 		e = add (E_FRAME, L_OVER, bb[0], bb[1], bb[2], bb[3]);
 		e->a = 0;
 		e->c = 1;
@@ -2574,16 +2581,22 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 	/* the right */
 	if (grid || mounts) {
 		int nc = 0, rows, idx[6];
-		float cw = (COL_X1 - COL_X0 - 3) / 2, y1 = foot ? 149 : 166.5f, ch;
+		float cw = (COL_X1 - COL_X0 - 3) / 2, y1 = foot ? 149 : 166.5f, ch, in = mounts ? 2.5f : 0;
 		for (i = 0; i < n_btn && nc < 6; i++)
 			if (btn[i].x >= 122 && btn[i].x <= 126 && btn[i].y < FOOT_Y) idx[nc++] = i;
 		rows = (nc + 1) / 2;
 		/* the mounts: a short card each, at the top */
 		ch = mounts ? 44 : (y1 - BODY_Y0 - 3 * (rows - 1)) / rows;
+		/* ... in a panel, as the other pages' rows are */
+		if (mounts) {
+			e = add (E_GLASS, L_BACK, COL_X0, BODY_Y0, COL_X1, 166.5f);
+			e->flags = F_ALL;
+			cw -= in;
+		}
 		for (j = 0; j < nc; j++) {
 			struct button *b = &btn[idx[j]];
 			int next = j + 1 < nc ? btn[idx[j + 1]].y : FOOT_Y;
-			float x0 = COL_X0 + (j & 1) * (cw + 3), y0 = BODY_Y0 + (j / 2) * (ch + 3);
+			float x0 = COL_X0 + in + (j & 1) * (cw + 3), y0 = BODY_Y0 + in + (j / 2) * (ch + 3);
 			grid_card (b, x0, y0, x0 + cw, y0 + ch, space, next, mounts ? I_GUN : 0);
 		}
 	} else {
@@ -2704,16 +2717,17 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 					 * cargo; the upgrades' prices and weight */
 					struct hdtext_run *cell[6], *name = NULL;
 					int nc = row_cells (b->y + 1, cell, 6), idx = lfirst + row;
-					float price = nc ? page_num (cell[0]) : NAN, last = nc ? page_num (cell[nc - 1]) : NAN;
+					float price = nc ? page_num (cell[0]) : NAN, end = nc ? page_num (cell[nc - 1]) : NAN;
 					no_plus = no_minus = 0;
 					fitted = -1;
 					if (idx >= lcount || nc < 2) list = 0;
 					else if (list == LIST_MARKET) {
-						no_plus = price > money || room == 0;
-						no_minus = last == 0;
+						/* none in stock ('-') the game will not sell */
+						no_plus = price > money || room == 0 || (nc >= 3 && page_num (cell[1]) == 0);
+						no_minus = end == 0;
 					} else {
 						fitted = upg_fitted (idx);
-						no_plus = price > money || last > room;
+						no_plus = price > money || end > room;
 						no_minus = fitted == 0;
 					}
 					/* a fitted upgrade: a tick after its name, a pip
