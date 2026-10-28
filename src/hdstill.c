@@ -108,7 +108,7 @@ struct art {
 	signed char v;		/* K_PANEL: the time key lit, 0 paused, 1..5
 				 * 1x..10000x, -1 none (time stands still in
 				 * the game's menu); K_MISSILE: 1 points right */
-	unsigned char g[4];	/* icons of the keys from the one at its left */
+	unsigned char g[5];	/* icons of the keys from the one at its left */
 	const char *name;
 };
 
@@ -142,10 +142,14 @@ static const struct art arts[] = {
 	{ 0x230ef774688b02e6ULL, 16, 11, K_PANEL, 0, 1, { G_SHIP }, "icon ship" },
 	{ 0x54664eec90e7f24aULL, 16, 11, K_PANEL, 0, 1, { G_CARGO }, "icon cargo" },
 	{ 0xf41a4b6cbf549286ULL, 16, 11, K_PANEL, 0, 1, { G_CMDR }, "icon commander" },
-	{ 0x2bdfae244adcdcbcULL, 16, 11, K_PANEL, 0, 1, { G_ARM }, "icon missile" },
+	{ 0x2bdfae244adcdcbcULL, 16, 11, K_PANEL, 0, 1, { G_ENGINES_OFF }, "icon engines off" },
+	{ 0x440c2b8e3c61a48aULL, 16, 11, K_PANEL, 0, 1, { G_AUTOPILOT }, "icon autopilot" },
 	{ 0x7b3ff1e79e9c3765ULL, 16, 11, K_PANEL, 0, 1, { G_BEAM }, "icon beam" },
 	{ 0xd3ba8a0e288b9151ULL, 16, 11, K_PANEL, 0, 1, { G_EMPTY }, "icon empty" },
-	{ 0x23a4b63e9aa289e4ULL, 16, 11, K_PANEL, 0, 1, { G_BURST }, "icon burst" },
+	{ 0x23a4b63e9aa289e4ULL, 16, 11, K_PANEL, 0, 1, { G_BURST }, "icon pick (system map)" },
+	{ 0xc9ae8b98a3cdfdd7ULL, 16, 11, K_PANEL, 0, 1, { G_GEAR }, "icon gear down" },
+	{ 0xabe8d5e4025cc7acULL, 16, 11, K_PANEL, 0, 1, { G_JUMP }, "icon hyperspace (in flight)" },
+	{ 0xd809a46516fb8361ULL, 16, 11, K_PANEL, 0, 1, { G_ROSTER }, "icon passengers and contracts" },
 	{ 0x96349724541eb108ULL, 16, 11, K_PANEL, 0, 1, { G_ROUTE }, "icon route" },
 	{ 0x38afdfb87c76cf68ULL, 16, 11, K_PANEL, 0, 1, { G_TAKEOFF }, "icon take off (landed)" },
 	{ 0x3fa31e1416775b84ULL, 16, 11, K_PANEL, 0, 1, { GX (G_LIST) }, "icon list crossed (landed)" },
@@ -161,6 +165,7 @@ static const struct art arts[] = {
 	{ 0x9b5c4f4ac5879452ULL, 64, 11, K_PANEL, 0, 1, { G_TARGET, G_CROSS, GX (G_WRENCH), GX (G_DOC) }, "icons 7-10 system map info" },
 	{ 0xd81a763c56d5b42eULL, 64, 11, K_PANEL, 0, 1, { G_PERSON, G_EMPTY, G_LAUNCH, G_LIST }, "icons 7-10 docked" },
 	{ 0x9b7f1f4805f6d7e0ULL, 64, 11, K_PANEL, 0, 1, { G_LOAD, G_SAVE, G_DELETE, G_EXIT }, "icons 7-10 game menu" },
+	{ 0xa0feef8ca46dcdc7ULL, 80, 13, K_PANEL, 0, 1, { G_SECTOR, G_MARKET, G_PEOPLE, G_EMPTY, G_STARS }, "icons 6-10 system info" },
 	/* keys in the bay */
 	{ 0xcc2e57fc156a3812ULL, 16, 13, K_PANEL, 0, 1, { G_ORRERY }, "bay key orrery" },
 	{ 0xf987ebdcb79f4c99ULL, 128, 13, K_PANEL, F_BUTTONS, 1, { 0 }, "bay key row" },
@@ -1029,22 +1034,42 @@ static void g_list (void)
 	CGContextRestoreGState (C);
 	gseg (-0.36f, -0.56f, 0.88f, -0.56f);
 	gseg (-0.36f, 0, 0.6f, 0);
-	gseg (-0.36f, 0.56f, 0.4f, 0.56f);
+	gseg (-0.36f, 0.56f, 0.16f, 0.56f);	/* clear of the key number */
 	gstroke (0xe8eef5, 0.9f, 1.3f);
 }
 
-static void g_arm (void)
+/* the drive cut: a flared nozzle firing down and back, as the old icon
+ * has it, its flame crossed out */
+static void g_engines_off (void)
 {
 	CGContextSaveGState (C);
-	CGContextTranslateCTM (C, 0.12f, -0.12f);
-	CGContextRotateCTM (C, (float) -M_PI / 4);
-	missile_shape (1.75f, 0.13f);
+	CGContextTranslateCTM (C, 0.24f, -0.24f);
+	CGContextRotateCTM (C, (float) (3 * M_PI / 4));
+	/* the flame */
+	CGContextSaveGState (C);
+	glow (0xff8a2a, 0.9f, 3);
+	CGContextAddEllipseInRect (C, CGRectMake (-0.1f, -0.3f, 1.2f, 0.6f));
+	CGContextClip (C);
+	lgrad (0, 0, 1.1f, 0, 3, CS3 (0xfff3c0, 0xffb347, 0xff4d1a), AS3 (1, 0.9f, 0), AS3 (0, 0.45f, 1));
+	CGContextRestoreGState (C);
+	/* the bell, flared wider than its flame, and the drive above it */
+	CGContextMoveToPoint (C, -0.4f, -0.14f);
+	CGContextAddQuadCurveToPoint (C, -0.08f, -0.16f, 0.04f, -0.4f);
+	CGContextAddLineToPoint (C, 0.04f, 0.4f);
+	CGContextAddQuadCurveToPoint (C, -0.08f, 0.16f, -0.4f, 0.14f);
+	CGContextClosePath (C);
+	CGContextSaveGState (C);
+	CGContextClip (C);
+	lgrad (0, -0.4f, 0, 0.4f, 3, CS3 (0xe4eaf1, 0xa9b6c4, 0x5d6c7c), AS3 (1, 1, 1), AS3 (0, 0.45f, 1));
+	CGContextRestoreGState (C);
+	CGContextAddRect (C, CGRectMake (-0.64f, -0.24f, 0.24f, 0.48f));
+	gfill (0x8fa3b8, 1);
 	CGContextRestoreGState (C);
 	CGContextSaveGState (C);
 	glow (0xff4d4d, 0.8f, 2);
-	gseg (-0.78f, 0.34f, -0.36f, 0.76f);
-	gseg (-0.36f, 0.34f, -0.78f, 0.76f);
-	gstroke (0xff4d4d, 1, 1.5f);
+	gseg (-0.64f, -0.08f, 0.08f, 0.64f);
+	gseg (-0.64f, 0.64f, 0.08f, -0.08f);
+	gstroke (0xff4d4d, 1, 1.8f);
 	CGContextRestoreGState (C);
 }
 
@@ -1080,22 +1105,29 @@ static void g_beam (void)
 	gfill (0x8fa3b8, 1);
 }
 
-static void g_burst (void)
+/* the system map's pick: corners closing on a body */
+static void g_reticle (void)
 {
 	int i;
 	CGContextSaveGState (C);
-	glow (0xff4d4d, 0.8f, 2.5f);
-	for (i = 0; i < 8; i++) {
-		float a = i * (float) M_PI / 4, c = cosf (a), s = sinf (a);
-		gseg (0.34f * c, 0.34f * s, 0.64f * c, 0.64f * s);
+	CGContextTranslateCTM (C, -0.16f, -0.24f);	/* clear of the key number */
+	CGContextSaveGState (C);
+	glow (0xffb347, 0.7f, 2);
+	for (i = 0; i < 4; i++) {
+		float sx = i & 1 ? 1 : -1, sy = i & 2 ? 1 : -1;
+		CGContextMoveToPoint (C, 0.52f * sx, 0.22f * sy);
+		CGContextAddLineToPoint (C, 0.52f * sx, 0.52f * sy);
+		CGContextAddLineToPoint (C, 0.22f * sx, 0.52f * sy);
 	}
-	gstroke (0xff4d4d, 1, 1.3f);
+	gstroke (0xffb347, 1, 1.4f);
 	CGContextRestoreGState (C);
-	for (i = 0; i < 8; i += 2) {
-		float a = (i + 1) * (float) M_PI / 4;
-		glow_ball (0.8f * cosf (a), 0.8f * sinf (a), 0.08f, 0xffd79a, 0xffb347, 0xffb347, 2);
-	}
-	glow_ball (0, 0, 0.2f, 0xff9a9a, 0xff4d4d, 0xff4d4d, 4);
+	CGContextSaveGState (C);
+	glow (0xff4d4d, 0.7f, 2);
+	gcirc (0, 0, 0.27f);
+	gstroke (0xff4d4d, 1, 1.1f);
+	CGContextRestoreGState (C);
+	glow_ball (0, 0, 0.12f, 0xff9a9a, 0xff4d4d, 0xff4d4d, 3);
+	CGContextRestoreGState (C);
 }
 
 static void g_orrery (void)
@@ -1304,6 +1336,134 @@ static void g_alpha (void)
 	CGContextRestoreGState (C);
 }
 
+/* the autopilot: the pilot's seat empty, the computer flying it in */
+static void g_autopilot (void)
+{
+	CGContextSaveGState (C);
+	glow (0xe8d84a, 0.6f, 2);
+	CGContextMoveToPoint (C, -0.66f, -0.56f);
+	CGContextAddLineToPoint (C, -0.66f, 0.34f);
+	CGContextAddQuadCurveToPoint (C, -0.66f, 0.76f, -0.26f, 0.76f);
+	CGContextAddLineToPoint (C, 0.26f, 0.76f);
+	CGContextAddQuadCurveToPoint (C, 0.66f, 0.76f, 0.66f, 0.34f);
+	CGContextAddLineToPoint (C, 0.66f, -0.56f);
+	gseg (-0.88f, -0.56f, -0.44f, -0.56f);
+	gseg (0.44f, -0.56f, 0.88f, -0.56f);
+	gstroke (0xe8d84a, 1, 1.5f);
+	CGContextRestoreGState (C);
+	CGContextSaveGState (C);
+	glow (0x3fd0ff, 0.8f, 2);
+	dotted (0, -0.86f, 0, -0.2f, 4, 0.055f, 0x3fd0ff, 1);
+	CGContextRestoreGState (C);
+	glow_ball (0, 0.24f, 0.17f, 0xb8f0ff, 0x3fd0ff, 0x3fd0ff, 3);
+}
+
+/* the landing gear down: a leg, its brace, the wheel, and down it goes */
+static void g_gear (void)
+{
+	CGContextSaveGState (C);
+	glow (0xe8eef5, 0.45f, 2);
+	gseg (-0.34f, -0.86f, -0.34f, 0.3f);
+	gstroke (0xe8eef5, 1, 2);
+	gseg (0.12f, -0.86f, -0.34f, -0.24f);
+	gstroke (0xc9d4e0, 1, 1.3f);
+	CGContextRestoreGState (C);
+	ball (-0.34f, 0.5f, 0.36f, 0x8fa3b8, 0x2a3440);
+	gcirc (-0.34f, 0.5f, 0.36f);
+	gstroke (0xc9d4e0, 1, 0.9f);
+	gcirc (-0.34f, 0.5f, 0.15f);
+	gfill (0xe8eef5, 1);
+	arrow (0.52f, -0.84f, 0.52f, 0.88f, 0x3ddc84);
+}
+
+/* into hyperspace from flight: an arrow into the swirl */
+static void g_jump (void)
+{
+	float lw = LW;
+	CGContextSaveGState (C);
+	CGContextTranslateCTM (C, 0.34f, -0.08f);
+	CGContextScaleCTM (C, 0.8f, 0.8f);
+	CGContextRotateCTM (C, (float) (-M_PI / 3));	/* no tail on the key number */
+	LW = lw / 0.7f;
+	g_hyper ();
+	LW = lw;
+	CGContextRestoreGState (C);
+	arrow (-0.96f, 0, 0.02f, 0, 0x3ddc84);
+}
+
+/* the system's market: a price on the rise */
+static void g_market (void)
+{
+	CGContextMoveToPoint (C, -0.72f, -0.86f);
+	CGContextAddLineToPoint (C, -0.72f, 0.72f);
+	CGContextAddLineToPoint (C, 0.78f, 0.72f);
+	gstroke (0xc9d4e0, 1, 1.2f);
+	CGContextSaveGState (C);
+	glow (0xe05cff, 0.8f, 2);
+	CGContextMoveToPoint (C, -0.56f, 0.46f);
+	CGContextAddLineToPoint (C, -0.14f, 0.08f);
+	CGContextAddLineToPoint (C, 0.22f, 0.24f);
+	CGContextAddLineToPoint (C, 0.72f, -0.4f);
+	gstroke (0xe05cff, 1, 1.5f);
+	CGContextRestoreGState (C);
+	CGContextSaveGState (C);
+	glow (0xff4d4d, 0.8f, 2);
+	gcirc (-0.2f, -0.5f, 0.2f);
+	gseg (-0.2f, -0.86f, -0.2f, -0.14f);
+	gstroke (0xff4d4d, 1, 1.3f);
+	CGContextRestoreGState (C);
+	glow_ball (0.72f, -0.4f, 0.1f, 0xffd79a, 0xffb347, 0xffb347, 2);
+}
+
+/* a head and shoulders, lit from the top */
+static void bust (float x, float y, float w, float hr, unsigned light, unsigned dark, unsigned hl, unsigned hd)
+{
+	CGContextMoveToPoint (C, x - w, 0.86f);
+	CGContextAddCurveToPoint (C, x - w, y - 0.1f, x + w, y - 0.1f, x + w, 0.86f);
+	CGContextClosePath (C);
+	CGContextSaveGState (C);
+	CGContextClip (C);
+	lgrad (0, y, 0, 0.86f, 2, CS2 (light, dark), AS2 (1, 1), NULL);
+	CGContextRestoreGState (C);
+	ball (x, y - 0.12f - hr, hr, hl, hd);
+}
+
+/* the system's people */
+static void g_people (void)
+{
+	bust (-0.34f, 0.0f, 0.44f, 0.22f, 0xf0e070, 0xa89a2a, 0xffd79a, 0xd08a3a);
+	bust (0.3f, 0.26f, 0.48f, 0.24f, 0x6b95ff, 0x2a4cb8, 0xf3a6ff, 0xc24ee0);
+}
+
+/* who is aboard, and on what terms: two passengers and their list */
+static void g_roster (void)
+{
+	int i;
+	bust (-0.56f, 0.1f, 0.34f, 0.19f, 0xf0e070, 0xa89a2a, 0xffd79a, 0xd08a3a);
+	bust (-0.08f, 0.28f, 0.38f, 0.21f, 0x6b95ff, 0x2a4cb8, 0xf3a6ff, 0xc24ee0);
+	/* a fill takes the whole path: the dots first, then the lines,
+	 * the list high and short, clear of the key number */
+	for (i = 0; i < 3; i++) gcirc (0.5f, 0.42f * i - 0.62f, 0.07f);
+	gfill (0x3fd0ff, 1);
+	for (i = 0; i < 3; i++) gseg (0.64f, 0.42f * i - 0.62f, 0.86f, 0.42f * i - 0.62f);
+	gstroke (0xe8eef5, 0.9f, 1.2f);
+}
+
+/* the stars about the system */
+static void g_stars (void)
+{
+	static const float d[] = {
+		-0.7f, -0.48f, 0.07f, -0.28f, -0.76f, 0.05f, 0.76f, 0.12f, 0.06f,
+		-0.76f, 0.38f, 0.07f, -0.36f, 0.72f, 0.05f, 0.12f, 0.76f, 0.06f,
+		0.16f, -0.3f, 0.05f
+	};
+	int i;
+	for (i = 0; i < 7; i++) gcirc (d[3 * i], d[3 * i + 1], d[3 * i + 2]);
+	gfill (0xc9d4e0, 1);
+	glow_ball (0.56f, -0.6f, 0.11f, 0xffffff, 0xc9d4e0, 0xe8eef5, 2);
+	glow_ball (0.02f, 0.22f, 0.22f, 0xfff3a0, 0xffa53a, 0xffb347, 4);
+}
+
 /* icon g at (cx, cy), s device pixels across; with G_OFF, dimmed and
  * crossed out */
 static void glyph (int g, float cx, float cy, float s)
@@ -1333,9 +1493,9 @@ static void glyph (int g, float cx, float cy, float s)
 	case G_PERSON: g_person (); break;
 	case G_LAUNCH: g_launch (); break;
 	case G_LIST: g_list (); break;
-	case G_ARM: g_arm (); break;
+	case G_ENGINES_OFF: g_engines_off (); break;
 	case G_BEAM: g_beam (); break;
-	case G_BURST: g_burst (); break;
+	case G_BURST: g_reticle (); break;
 	case G_ORRERY: g_orrery (); break;
 	case G_LOAD: g_load (); break;
 	case G_SAVE: g_save (); break;
@@ -1346,6 +1506,13 @@ static void glyph (int g, float cx, float cy, float s)
 	case G_TAKEOFF: g_takeoff (); break;
 	case G_DOC: g_doc (); break;
 	case G_ALPHA: g_alpha (); break;
+	case G_AUTOPILOT: g_autopilot (); break;
+	case G_GEAR: g_gear (); break;
+	case G_JUMP: g_jump (); break;
+	case G_MARKET: g_market (); break;
+	case G_PEOPLE: g_people (); break;
+	case G_STARS: g_stars (); break;
+	case G_ROSTER: g_roster (); break;
 	}
 	if (off) {
 		CGContextEndTransparencyLayer (C);
@@ -1980,7 +2147,7 @@ static void draw_art (const struct art *a, int x, int y)
 		L.flags = a->flags;
 		for (i = 1; i <= 10; i++) L.slot[i] = i == 5 || i == 6 ? G_ABSENT : G_EMPTY;
 		s = slot_at (x, y);
-		for (i = 0; i < 4 && s > 0 && s + i <= 10; i++)
+		for (i = 0; i < 5 && s > 0 && s + i <= 10; i++)
 			if (a->g[i] != G_ABSENT) L.slot[s + i] = a->g[i];
 		panel ();
 		break;
@@ -2469,7 +2636,7 @@ static void note_panel (const struct rec *r)
 	if (a->kind != K_PANEL) return;
 	panel_now.valid = 1;
 	s = r->y >= CTRL_Y ? slot_at (r->x, r->y) : 0;
-	for (i = 0; i < 4 && s > 0 && s + i <= 10; i++)
+	for (i = 0; i < 5 && s > 0 && s + i <= 10; i++)
 		if (a->g[i] != G_ABSENT && !panel_now.slot[s + i]) panel_now.slot[s + i] = a->g[i];
 	/* the bay (its middle) and the second display (the map's keys) */
 	if (!(panel_now.seen & 1) && r->x <= 160 && r->x + r->w > 160 && r->y <= 180 && r->y + r->h > 180) {
