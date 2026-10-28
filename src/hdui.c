@@ -2154,6 +2154,43 @@ static void more_pager (const unsigned char *raster, unsigned char *out, struct 
 	pill->hot = down ? hh : -1;
 }
 
+/* The sums on a station page (the cash, a price, a column under a head
+ * with a '$'): set with their thousands marked and the minus first, a
+ * debt in the caution colour.  The figures stay the game's. */
+static void money_runs (void)
+{
+	float h0[8], h1[8];
+	int nh = 0, i, k, n, cur, neg, dig, other, pass;
+	char c[48];
+	unsigned char sp[48];
+
+	for (pass = 0; pass < 2; pass++)
+		for (i = 0; i < n_runs; i++) {
+			struct hdtext_run *r = &runs[i];
+			if (!ON_PAGE (r) || r->hide || (pass == 0) != (r->y <= 4 && r->x0 >= 118)) continue;
+			n = hdtext_chars (r, c, sp, 48);
+			cur = neg = dig = other = 0;
+			for (k = 0; k < n; k++)
+				if (c[k] == '$') cur = 1;
+				else if (c[k] == '-') neg = 1;
+				else if (c[k] >= '0' && c[k] <= '9') dig++;
+				else if (c[k] != '.' && c[k] != ',') other = 1;
+			if (pass == 0) {
+				if (cur && nh < 8) {
+					h0[nh] = r->x0;
+					h1[nh++] = r->x1;
+				}
+				continue;
+			}
+			if (!dig || other || n >= 48) continue;
+			for (k = 0; k < nh && !cur; k++)
+				if (r->x0 >= 118 && r->y < FOOT_Y && r->ink1 > h0[k] && r->ink0 < h1[k]) cur = 1;
+			if (!cur) continue;
+			r->money = 1;
+			if (neg && r->role) r->rgb = text_rgb (C_AMBER);
+		}
+}
+
 static void layout_station (const unsigned char *raster, unsigned char *out)
 {
 	enum { CARDS, TABLE, ROWS, PLAIN } mode;
@@ -2498,6 +2535,8 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 		} else if (!r->role)
 			style_body (r);
 	}
+
+	money_runs ();
 
 	/* the rest of the right column: nothing (where the game's boxes were) */
 	if (!inplace) add_hot (118, 0, ST_W, foot ? FOOT_Y : CTRL_Y, 1, 1, 1);
