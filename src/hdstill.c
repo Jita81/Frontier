@@ -233,18 +233,16 @@ static unsigned frame_no;
 #define GAUGE_Y	168
 #define GAUGE_W	68
 #define GAUGE_H	10
-static struct gauges {
-	unsigned v[3];		/* fuel, laser and hull temperature, 0..65535 */
-	char speed[24];		/* as the game prints it */
+static struct gauges {		/* as shown: the texture is redrawn when it changes */
+	unsigned char bar[3];	/* fuel, laser and hull temperature, 0..63 */
+	unsigned char warn[3];	/* red: the laser will not fire, the hull nears damage */
+	char heat[8];
+	char speed[24];		/* as the game prints it, a few times a second */
 } gs, gs_built;
 static float gs_k;		/* > 0: drawn this frame, faded so */
+static unsigned gs_at;		/* the frame speed was last read in */
 static struct tex gtex;
 static int gfail;		/* no texture: leave the game's lines */
-
-static int gauge_warn (int i)
-{
-	return (i == 1 && gs.v[1] > HDSTILL_LASER_CUT) || (i == 2 && gs.v[2] >= HDSTILL_HEAT_WARN);
-}
 
 /* ------------------------------------------------------------------ */
 /* the art, drawn in code */
@@ -1654,8 +1652,8 @@ static void slats (void)
 {
 	int i;
 	if (!in_art (234, 169, 266, 178)) return;
-	for (i = 0; i < 3; i++) {
-		float c0 = 238.25f + 5 * i, c1 = c0 + 13.5f, hw = 1.5f;
+	for (i = 0; i < 3; i++) {	/* wider for the HD gauges' names */
+		float c0 = 238.25f + 5 * i, c1 = c0 + 13.5f, hw = classic_ui ? 1.5f : 1.75f;
 		float pt[8] = { c0 - hw, 169.2f, c0 + hw, 169.2f, c1 + hw, 177.8f, c1 - hw, 177.8f };
 		groove (pt, 4);
 	}
@@ -1988,21 +1986,31 @@ static void draw_art (const struct art *a, int x, int y)
 }
 
 #define RIM(y) (233 + ((y) - 169) * 1.5f - 1.6f)	/* inside the bay's slanted edge */
+#define MSL(y) (224.6f + ((y) - 174.7f) * 1.5f)		/* right of the right missile */
 
-/* a line of the plate: label at x0, value against the bay's edge */
-static void plate_row (float x0, float y0, float y1, const char *label, const char *val, unsigned c)
+/* a line of the plate on base, between x0 and x1: a small label at x0,
+ * the value (its unit smaller) against x1, cv rows high, shrunk to fit */
+static void plate_row (float x0, float x1, float base, float cv, const char *label, const char *val, unsigned c)
 {
 	CTFontRef f = font ("DINCondensed-Bold");
-	float cap = 0.45f * (y1 - y0) * SY, size = cap / (CTFontGetCapHeight (f) / 100);
-	float base = Y (y1) - ((y1 - y0) * SY - cap * 1.35f) / 2, w;
-	CGMutablePathRef p = text_path (f, label, size, 0.6f * U, X (x0 + 1.2f), base, NULL);
-	fill_path (p, 0x8fa3b8, 0.95f);
-	CGPathRelease (p);
-	p = text_path (f, val, size * 1.35f, 0, 0, 0, &w);
-	CGPathRelease (p);
-	p = text_path (f, val, size * 1.35f, 0, X (RIM (y0 + 0.4f) - 1.2f) - w, base, NULL);
-	fill_path (p, c, 1);
-	CGPathRelease (p);
+	const char *u = strchr (val, ' ');
+	char v[24];
+	const char *s[3] = { label, v, u ? u + 1 : "" };
+	float k = SY / (CTFontGetCapHeight (f) / 100), sz[3] = { 1.5f * k, cv * k, 0.7f * cv * k };
+	float w[3], gap = 1.2f * SX, x = X (x1);
+	CGMutablePathRef p;
+	int i;
+
+	snprintf (v, sizeof v, "%.*s", u ? (int) (u - val) : 23, val);
+	for (i = 0; i < 3; i++) CGPathRelease (text_path (f, s[i], sz[i], i ? 0 : 0.5f * U, 0, 0, &w[i]));
+	k = fminf (1, (X (x1) - X (x0)) / (w[0] + gap + w[1] + (u ? 0.3f * gap + w[2] : 0)));
+	for (i = u ? 2 : 1; i >= 0; i--) {
+		x = i ? x - w[i] * k : X (x0);
+		p = text_path (f, s[i], sz[i] * k, i ? 0 : 0.5f * U * k, x, Y (base), NULL);
+		fill_path (p, i ? c : 0x8fa3b8, i == 2 ? 0.75f : 0.95f);
+		CGPathRelease (p);
+		x -= (i == 2 ? 0.3f : 1) * gap * k;
+	}
 }
 
 static void gauges_paint (void)
@@ -2010,19 +2018,20 @@ static void gauges_paint (void)
 	static const char *const name[3] = { "FUEL", "LASER", "HEAT" };
 	static const unsigned col[3] = { 0x46e86a, 0xffb13b, 0x37c8ff };
 	CTFontRef f = font ("DINCondensed-Bold");
-	float a = atan2f (8.6f * SY, 13.5f * SX), cap = 2.1f * SX * sinf (a);
-	float r1 = 169.8f, r2 = 172.2f, r3 = 174.6f;
-	float pl[12] = { X (201), Y (r1), X (RIM (r1)), Y (r1), X (RIM (r3)), Y (r3),
-			 X (219), Y (r3), X (219), Y (r2), X (201), Y (r2) };
+	float a = atan2f (8.6f * SY, 13.5f * SX), cap = 2.9f * SX * sinf (a);
+	/* clear of what the game draws in the bay: the galactic map's
+	 * distance (x < 212), the right missile (nose at y 173, MSL) and the scanner */
+	float r1 = 169.4f, r2 = 172.6f, r3 = 177.0f;
+	float pl[12] = { X (212), Y (r1), X (RIM (r1)), Y (r1), X (RIM (r3)), Y (r3),
+			 X (MSL (r3)), Y (r3), X (MSL (r2)), Y (r2), X (212), Y (r2) };
 	CGMutablePathRef p;
-	char s[16];
 	int i, k;
 
 	for (i = 0; i < 3; i++) {
 		/* the slat's middle line runs from (c0, 169.2) to (c0 + 13.5, 177.8) */
 #define ON(y) (c0 + ((y) - 169.2f) * 13.5f / 8.6f)
-		float c0 = 238.25f + 5 * i, hw = 1.05f, yt = 177.4f - 7.8f * gs.v[i] / 65536;
-		unsigned c = gauge_warn (i) ? 0xff4b3e : col[i];
+		float c0 = 238.25f + 5 * i, hw = 1.3f, yt = 177.4f - 7.8f * gs.bar[i] / 63;
+		unsigned c = gs.warn[i] ? 0xff4b3e : col[i];
 		if (i == 1) {	/* the top sixteenth: the laser will not fire */
 			float y1 = 169.6f + 7.8f / 16, pt[8] = { X (ON (169.6f) - hw), Y (169.6f), X (ON (169.6f) + hw),
 				Y (169.6f), X (ON (y1) + hw), Y (y1), X (ON (y1) - hw), Y (y1) };
@@ -2050,21 +2059,20 @@ static void gauges_paint (void)
 			CGContextTranslateCTM (C, X (ON (170.1f)), Y (170.1f));
 			CGContextRotateCTM (C, a);
 			if (!k) shade (0, 0, 1.5f * U, 0x000000, 1);
-			fill_path (p, k ? 0x0a1410 : 0xffffff, k ? 0.85f : 0.9f);
+			fill_path (p, k ? 0x06100c : 0xffffff, k ? 1 : 0.95f);
 			CGContextRestoreGState (C);
 		}
 		CGPathRelease (p);
 #undef ON
 	}
 
-	/* the plate: speed, then the hull temperature a step down the edge */
+	/* the plate: speed, then the hull temperature down the edge */
 	p = poly (pl, 6, 2 * U);
 	fill_path (p, 0x101823, 0.82f);
 	stroke_inside (p, 0.8f * U, 0x8fd8ff, 0.18f);
 	CGPathRelease (p);
-	plate_row (201, r1, r2, "SPEED", gs.speed, 0xe8f0f8);
-	snprintf (s, sizeof s, "%u%%", gs.v[2] * 100 / 65536);
-	plate_row (219, r2, r3, "HEAT", s, gauge_warn (2) ? 0xff4b3e : 0xe8f0f8);
+	plate_row (212.6f, RIM (169.8f) - 0.4f, r2 - 0.5f, 2.3f, "SPEED", gs.speed, 0xe8f0f8);
+	plate_row (MSL (r3) - 0.3f, RIM (174.2f) - 0.4f, r3 - 0.5f, 2.3f, "HEAT", gs.heat, gs.warn[2] ? 0xff4b3e : 0xe8f0f8);
 }
 
 #endif /* __APPLE__ */
@@ -2404,7 +2412,7 @@ static unsigned rw (unsigned a) { return (unsigned short) STMemory_ReadWord (a);
 static void gauges_frame (unsigned char *out)
 {
 	static const unsigned lim[] = { 1u << 30, 1 << 28, 1 << 26, 1 << 22, 1 << 18, 0 }, post[] = { 0, 1, 2, 3, 5, 7 };
-	unsigned ship = (unsigned) STMemory_ReadLong (A6 + 674), sq;
+	unsigned ship = (unsigned) STMemory_ReadLong (A6 + 674), sq, g[3];
 	int vel[3], d, x, y, i;
 	long long v;
 
@@ -2412,11 +2420,22 @@ static void gauges_frame (unsigned char *out)
 	if (classic_ui || gfail || !ship || ship >= 0x100000 || art_at (262, 177) <= 0 || art_at (205, 170) <= 0) gs_k = 0;
 	if (gs_k <= 0) return;
 	/* as the game's gauge routine (L6f210) works them out */
-	gs.v[0] = (rw (ship + 242) * rw (__DL6f1f2 + 2 * (STMemory_ReadByte (ship + 166) & 0xff)) >> 8) & 0xffff;
-	gs.v[1] = rw (ship + 190);
-	gs.v[2] = rw (A6 + 866);
+	g[0] = (rw (ship + 242) * rw (__DL6f1f2 + 2 * (STMemory_ReadByte (ship + 166) & 0xff)) >> 8) & 0xffff;
+	g[1] = rw (ship + 190);
+	g[2] = rw (A6 + 866);
+	for (i = 0; i < 3; i++) gs.bar[i] = g[i] >> 10;
+	gs.warn[1] = g[1] > HDSTILL_LASER_CUT;
+	gs.warn[2] = g[2] >= HDSTILL_HEAT_WARN;
+	snprintf (gs.heat, sizeof gs.heat, "%u%%", g[2] * 100 / 65536);
+	for (y = GAUGE_Y; y < GAUGE_Y + GAUGE_H; y++)
+		for (x = 234; x < 266; x++)
+			for (i = 0; i < 3; i++)
+				if (fabsf (x + 0.5f - (238.25f + 5 * i + (y + 0.5f - 169.2f) * 13.5f / 8.6f)) <= 2.5f)
+					out[y * ST_W + x] = 255;
 	/* the speed as "Actual" works it out (L63574, L368e0) and prints it
-	 * (L3e640), on every view */
+	 * (L3e640), on every view: a few times a second, to be read */
+	if (frame_no - gs_at < 8 && gs.speed[0]) return;
+	gs_at = frame_no;
 	for (d = i = 0; i < 3; i++)
 		while ((labs ((long) (vel[i] = (int) STMemory_ReadLong (ship + 98 + 4 * i))) >> d) >= 0x4000) d++;
 	for (sq = i = 0; i < 3; i++) sq += (vel[i] >> d) * (vel[i] >> d);
@@ -2432,11 +2451,6 @@ static void gauges_frame (unsigned char *out)
 		v = 3 * v + (v >> 1) - (v >> 4);
 		snprintf (gs.speed, sizeof gs.speed, "%lld.%lld km/h", v / 10, v % 10);
 	}
-	for (y = GAUGE_Y; y < GAUGE_Y + GAUGE_H; y++)
-		for (x = 234; x < 266; x++)
-			for (i = 0; i < 3; i++)
-				if (fabsf (x + 0.5f - (238.25f + 5 * i + (y + 0.5f - 169.2f) * 13.5f / 8.6f)) <= 2.5f)
-					out[y * ST_W + x] = 255;
 }
 
 void hdstill_frame (const unsigned char *raster, unsigned char *out,
@@ -2668,6 +2682,7 @@ void hdstill_forget (void)
 	}
 	if (gtex.id) glDeleteTextures (1, &gtex.id);
 	gtex.id = 0;
+	gfail = 0;
 	built_sx = built_sy = 0;
 	n_shown = 0;
 }

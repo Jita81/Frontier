@@ -39,7 +39,8 @@ void hdstill_draw (const unsigned int *pal, const unsigned int *ctrl_pal);
 
 /* The HD gauges' red thresholds, for hover text: the laser will not fire
  * above LASER_CUT, the hull nears damage at HEAT_WARN.  The SPEED/HEAT
- * plate covers ST x 201-233, y 169.8-174.6. */
+ * plate covers ST x 212-237, y 169.4-172.6 and, right of the missile,
+ * x 221-243, y 172.6-177. */
 #define HDSTILL_LASER_CUT	0xf000
 #define HDSTILL_HEAT_WARN	0xc000
 
