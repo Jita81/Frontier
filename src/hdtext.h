@@ -54,6 +54,12 @@ void hdtext_draw (const unsigned char *font, const unsigned int *pal,
 /* The GL context is going away: drop the glyph textures. */
 void hdtext_forget (void);
 
+/* A lit sign's lettering (hdback's concourse): s set in the title face,
+ * centred in w x h pixels, as two alpha textures, the letters and the
+ * same blurred for their glow; the first row is the top.  Two slots, each
+ * kept until it is asked for something else.  0: none (not on Apple). */
+int hdtext_sign (int slot, const char *s, int w, int h, unsigned int *tex, unsigned int *glow);
+
 /* The design system's text roles */
 enum {
 	HDT_AUTO,	/* hdtext decides: the panel's, else a HUD label's */

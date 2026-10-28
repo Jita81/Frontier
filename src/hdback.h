@@ -62,6 +62,11 @@ int hdback_active (void);
 int hdback_frost_begin (float *rgb);
 void hdback_frost_end (void);
 
+/* After the 3D view (GL renderer): docked or landed, the front or rear
+ * view, the station's concourse over it, fading in and out (0.3 s);
+ * nothing under --pixel-art, --classic-ui or FE2_HD_BACKDROP=0. */
+void hdback_concourse (int fb_w, int fb_h);
+
 /* The GL context is going away: drop the backdrop texture. */
 void hdback_forget (void);
 

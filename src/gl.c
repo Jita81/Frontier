@@ -6014,6 +6014,7 @@ void Nu_DrawScreen ()
 	}
 	hull_end ();
 	if (hangar_faces) hull_hangar_grade ();
+	if (use_renderer == R_GL) hdback_concourse (fb_w, fb_h);
 	//fprintf (stderr, "\n");
 
 #if PRIM_DEBUG

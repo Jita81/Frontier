@@ -14,6 +14,8 @@
 #include "hdback.h"
 #include "hdui.h"
 #include "art.h"
+#include "hdtext.h"
+#include <SDL.h>
 #include "../m68000.h"
 #include "../fixups.h"
 
@@ -37,6 +39,7 @@ extern unsigned short MainPalette[256];	/* ST $0rgb words, read only */
 #define A6_PORT_PTR		678	/* long: its object */
 #define A6_BIG_SPACE		14466	/* long: the object slots */
 #define A6_SPACE_MODE		536	/* byte: bit 0 set while a 3D view fills each frame */
+#define A6_VIEW_MODE		706	/* byte: A6_plr_3dview_mode */
 #define OBJ_OFFSETS		__DL44b02	/* word per index: slot offset */
 
 #define OBJ_SIZE		286
@@ -320,8 +323,14 @@ static char tex_file[64];	/* what tex holds, or failed to load */
 static GLuint frost_tex;
 static int frost_tw, frost_th;
 
+static GLuint conc_tex;		/* the concourse's picture, its own */
+static char conc_file[64];
+
 void hdback_forget (void)
 {
+	if (conc_tex) glDeleteTextures (1, &conc_tex);
+	conc_tex = 0;
+	conc_file[0] = 0;
 	if (tex) glDeleteTextures (1, &tex);
 	if (frost_tex) glDeleteTextures (1, &frost_tex);
 	tex = frost_tex = 0;
@@ -588,10 +597,10 @@ static void log_where (const struct where *w, int page,
 	char buf[512];
 
 	snprintf (buf, sizeof buf,
-		  "hdback: state=$%02x mode=$%02x bgcol=%d pal14=$%03x page=%d port=#%d model=$%02x flags=$%02x %s"
+		  "hdback: state=$%02x view=$%02x mode=$%02x bgcol=%d pal14=$%03x page=%d port=#%d model=$%02x flags=$%02x %s"
 		  " body=#%d model=$%02x %dK class=%s chain=%s star=#%d model=$%02x light=%s"
 		  " -> key %s-%s-%s %s%s%s",
-		  w->state, rb (A6 + A6_SPACE_MODE), fe2_bgcol, MainPalette[PAGE_COLOUR], page,
+		  w->state, rb (A6 + A6_VIEW_MODE), rb (A6 + A6_SPACE_MODE), fe2_bgcol, MainPalette[PAGE_COLOUR], page,
 		  w->port_idx, w->port_model, w->port_flags, kind_name[w->kind],
 		  w->body_idx, w->body_model, w->body_temp, w->cls ? w->cls : "-", w->chain,
 		  w->star_idx, w->star_model, light_name[w->light],
@@ -605,9 +614,18 @@ static void log_where (const struct where *w, int page,
 	}
 }
 
+static int off = -1;	/* FE2_HD_BACKDROP=0 */
+
+static void read_env (void)
+{
+	const char *e = getenv ("FE2_HD_BACKDROP");
+	const char *d = getenv ("FE2_HD_DEBUG");
+	off = e && !strcmp (e, "0");
+	debug = d && *d && strcmp (d, "0");
+}
+
 void hdback_draw (int fb_w, int fb_h)
 {
-	static int off = -1;
 	struct where w;
 	const struct art *a = NULL;
 	enum light drawn = L_NONE;
@@ -617,12 +635,7 @@ void hdback_draw (int fb_w, int fb_h)
 	GLint env;
 	int page;
 
-	if (off < 0) {
-		const char *e = getenv ("FE2_HD_BACKDROP");
-		const char *d = getenv ("FE2_HD_DEBUG");
-		off = e && !strcmp (e, "0");
-		debug = d && *d && strcmp (d, "0");
-	}
+	if (off < 0) read_env ();
 	drew = shown = 0;
 	/* --classic-ui keeps the game's own flat pages */
 	if (pixel_art || classic_ui || off) return;
@@ -705,6 +718,261 @@ void hdback_draw (int fb_w, int fb_h)
 	}
 
 	glTexEnvi (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, env);
+	glMatrixMode (GL_PROJECTION);
+	glPopMatrix ();
+	glMatrixMode (GL_MODELVIEW);
+	glPopMatrix ();
+	glPopAttrib ();
+}
+
+/* --- the concourse ----------------------------------------------------
+ *
+ * Docked or landed, looking out of the ship (front or rear view): the
+ * station's arrivals concourse instead of the 3D bay, behind hdui's
+ * station-home cards, with the port's name and the date lit on its two
+ * blank signs.  Cross-fades back to the 3D view on a launch or another
+ * view.  art/hangar/manifest.txt: the pictures, where their signs and
+ * ceiling are, and which goes where (docs/hd/hangar.md). */
+
+#define CONC_FADE	0.3f	/* seconds */
+#define MAX_CPIC	8
+#define MAX_CUSE	32
+
+static struct cpic { char file[64]; float ceil, sign[2][8]; } cpics[MAX_CPIC];
+static struct cuse { char kind[16], cls[16], light[16]; int pic; float rgb[3]; } cuses[MAX_CUSE];
+static int n_cpic, n_cuse, conc_read;
+static int conc_tw, conc_th, conc_iw, conc_ih;
+
+static void read_concourse (void)
+{
+	FILE *f = fopen (art_path ("hangar/manifest.txt"), "r");
+	char line[512], d[64];
+	struct cpic *p;
+	struct cuse *u;
+	float *g;
+	int i, n;
+
+	conc_read = 1;
+	if (!f) return;
+	while (fgets (line, sizeof line, f)) {
+		p = &cpics[n_cpic];
+		g = p->sign[0];
+		u = &cuses[n_cuse];
+		if (n_cpic < MAX_CPIC && sscanf (line,
+		    "pic %63s %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f",
+		    p->file, &p->ceil, g, g + 1, g + 2, g + 3, g + 4, g + 5, g + 6, g + 7,
+		    g + 8, g + 9, g + 10, g + 11, g + 12, g + 13, g + 14, g + 15) == 18)
+			n_cpic++;
+		else if (n_cuse < MAX_CUSE && (n = sscanf (line, "use %15s %15s %15s %63s %f %f %f",
+			   u->kind, u->cls, u->light, d, u->rgb, u->rgb + 1, u->rgb + 2)) >= 4) {
+			if (n < 7) u->rgb[0] = u->rgb[1] = u->rgb[2] = 1.0f;
+			for (u->pic = -1, i = 0; i < n_cpic; i++)
+				if (!strcmp (cpics[i].file, d)) u->pic = i;
+			if (u->pic >= 0) n_cuse++;
+		}
+	}
+	fclose (f);
+}
+
+static int field_is (const char *pat, const char *s)
+{
+	return !strcmp (pat, "*") || (s && !strcmp (pat, s));
+}
+
+static const struct cuse *conc_pick (const struct where *w)
+{
+	int i;
+
+	if (!conc_read) read_concourse ();
+	for (i = 0; w->kind && i < n_cuse; i++)
+		if (field_is (cuses[i].kind, kind_name[w->kind]) && field_is (cuses[i].cls, w->cls) &&
+		    field_is (cuses[i].light, light_name[w->light]))
+			return &cuses[i];
+	return NULL;
+}
+
+static int conc_load (const char *file)
+{
+	char rel[96];
+	unsigned char *rgba;
+	GLint bound;
+
+	if (!strcmp (file, conc_file)) return conc_tex != 0;
+	if (conc_tex) glDeleteTextures (1, &conc_tex);
+	conc_tex = 0;
+	snprintf (conc_file, sizeof conc_file, "%s", file);
+	snprintf (rel, sizeof rel, "hangar/%s", file);
+	rgba = art_load_rgba (rel, &conc_iw, &conc_ih);
+	if (!rgba) {
+		fprintf (stderr, "hdback: cannot read %s\n", art_path (rel));
+		return 0;
+	}
+	conc_tw = pow2 (conc_iw);
+	conc_th = pow2 (conc_ih);
+	glGetIntegerv (GL_TEXTURE_BINDING_2D, &bound);
+	glGenTextures (1, &conc_tex);
+	glBindTexture (GL_TEXTURE_2D, conc_tex);
+	glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA, conc_tw, conc_th, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+	glPixelStorei (GL_UNPACK_ALIGNMENT, 1);
+	glTexSubImage2D (GL_TEXTURE_2D, 0, 0, 0, conc_iw, conc_ih, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+	glPixelStorei (GL_UNPACK_ALIGNMENT, 4);
+	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glBindTexture (GL_TEXTURE_2D, (GLuint) bound);
+	free (rgba);
+	return 1;
+}
+
+/* a texture over the quad q (x,y of TL TR BR BL, pixels), in perspective:
+ * each corner's q is from where the diagonals cross */
+static void sign_quad (const float *q, GLuint t)
+{
+	static const float st[4][2] = { { 0, 0 }, { 1, 0 }, { 1, 1 }, { 0, 1 } };
+	float d1x = q[4] - q[0], d1y = q[5] - q[1], d2x = q[6] - q[2], d2y = q[7] - q[3];
+	float den = d1x * d2y - d1y * d2x, a, b, dist[4], w;
+	int i;
+
+	if (fabsf (den) < 1e-6f) return;
+	a = ((q[2] - q[0]) * d2y - (q[3] - q[1]) * d2x) / den;	/* along TL-BR */
+	b = ((q[2] - q[0]) * d1y - (q[3] - q[1]) * d1x) / den;	/* along TR-BL */
+	if (a <= 0 || a >= 1 || b <= 0 || b >= 1) return;
+	dist[0] = a; dist[2] = 1 - a; dist[1] = b; dist[3] = 1 - b;
+	glBindTexture (GL_TEXTURE_2D, t);
+	glBegin (GL_TRIANGLE_FAN);
+	for (i = 0; i < 4; i++) {
+		w = (dist[i] + dist[(i + 2) & 3]) / dist[(i + 2) & 3];
+		glTexCoord4f (st[i][0] * w, st[i][1] * w, 0, w);
+		glVertex2f (q[2 * i], q[2 * i + 1]);
+	}
+	glEnd ();
+}
+
+/* the lettering on sign k: the light bleeding round it (bloom), then the
+ * letters, dark on the yellow lightbox, white hot on the blue one */
+static void sign_text (int k, const char *s, const float *q, float fade)
+{
+	static const float bloom[2][4] = { { 1.00f, 0.95f, 0.70f, 0.45f }, { 0.62f, 0.55f, 1.00f, 0.80f } };
+	static const float ink[2][4] = { { 0.20f, 0.15f, 0.12f, 0.92f }, { 1.00f, 0.98f, 1.00f, 1.00f } };
+	unsigned int t, g;
+	int w = (int) ((hypotf (q[2] - q[0], q[3] - q[1]) + hypotf (q[4] - q[6], q[5] - q[7])) / 2);
+	int h = (int) ((hypotf (q[6] - q[0], q[7] - q[1]) + hypotf (q[4] - q[2], q[5] - q[3])) / 2);
+
+	if (!*s || !hdtext_sign (k, s, w, h, &t, &g)) return;
+	glBlendFunc (GL_SRC_ALPHA, GL_ONE);
+	glColor4f (bloom[k][0], bloom[k][1], bloom[k][2], bloom[k][3] * fade);
+	sign_quad (q, g);
+	if (!k) glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	glColor4f (ink[k][0], ink[k][1], ink[k][2], ink[k][3] * fade);
+	sign_quad (q, t);
+}
+
+void hdback_concourse (int fb_w, int fb_h)
+{
+	static float fade, rgb[3];
+	static const struct cpic *p;
+	static Uint32 last;
+	static char name[64], date[32];
+	const struct cuse *use = NULL;
+	const char *nm, *dt;
+	struct where w;
+	Uint32 now = SDL_GetTicks ();
+	float dts = last ? (now - last) / 1000.0f : 0, s, dw, dh, x0, y0, u, v, y, c, q[8], ph;
+	int px, py, pw, ph_i, top, k, i;
+
+	last = now;
+	if (dts > 0.1f) dts = 0.1f;
+	if (off < 0) read_env ();
+	if (pixel_art || classic_ui || off) return;
+	locate (&w);
+	if (w.kind && hdui_concourse (&nm, &dt) && rb (A6 + A6_VIEW_MODE) <= 1 &&
+	    (rb (A6 + A6_SPACE_MODE) & 0x01))
+		use = conc_pick (&w);
+	if (use) {
+		p = &cpics[use->pic];
+		memcpy (rgb, use->rgb, sizeof rgb);
+		snprintf (name, sizeof name, "%s", nm);
+		snprintf (date, sizeof date, "%s", dt);
+	}
+	fade += (use ? dts : -dts) / CONC_FADE;
+	if (fade > 1) fade = 1;
+	if (fade <= 0 || !p || !conc_load (p->file)) {
+		fade = fade < 0 ? 0 : fade;
+		return;
+	}
+
+	/* over the 3D view and the bars beside it, down to the console */
+	gl_picture_rect (&px, &py, &pw, &ph_i);
+	top = py + 32 * ph_i / 200;
+	pw = fb_w;
+	ph = (float) (fb_h - top);
+	s = (float) pw / conc_iw;
+	if (ph / conc_ih > s) s = ph / conc_ih;
+	dw = conc_iw * s;
+	dh = conc_ih * s;
+	x0 = (pw - dw) * 0.5f;
+	y0 = (ph - dh) * 0.5f;
+	u = (float) conc_iw / conc_tw;
+	v = (float) conc_ih / conc_th;
+
+	glPushAttrib (GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_TEXTURE_BIT |
+		      GL_VIEWPORT_BIT | GL_CURRENT_BIT | GL_TRANSFORM_BIT | GL_LIGHTING_BIT);
+	glViewport (0, top, pw, (int) ph);
+	glMatrixMode (GL_PROJECTION);
+	glPushMatrix ();
+	glLoadIdentity ();
+	glOrtho (0, pw, ph, 0, -1, 1);		/* pixels, y down */
+	glMatrixMode (GL_MODELVIEW);
+	glPushMatrix ();
+	glLoadIdentity ();
+	glDisable (GL_DEPTH_TEST);
+	glDisable (GL_LIGHTING);
+	glDisable (GL_CULL_FACE);
+	glDisable (GL_FOG);
+	glEnable (GL_BLEND);
+	glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	glEnable (GL_TEXTURE_2D);
+	glTexEnvi (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+	glBindTexture (GL_TEXTURE_2D, conc_tex);
+
+	/* the picture, its ceiling opening tinted to the world or sky above */
+	{
+		const float ys[4] = { 0, p->ceil, p->ceil + 0.08f, 1 };
+		glBegin (GL_QUAD_STRIP);
+		for (i = 0; i < 4; i++) {
+			c = i < 2 ? 1 : 0;
+			glColor4f (1 + (rgb[0] - 1) * c, 1 + (rgb[1] - 1) * c, 1 + (rgb[2] - 1) * c, fade);
+			y = y0 + ys[i] * dh;
+			glTexCoord2f (0, ys[i] * v); glVertex2f (x0, y);
+			glTexCoord2f (u, ys[i] * v); glVertex2f (x0 + dw, y);
+		}
+		glEnd ();
+	}
+
+	/* life: a slow shimmer along the wall's light strips */
+	{
+		float t = (now % 9000) / 9000.0f * 1.6f - 0.3f, b0 = y0 + (p->ceil + 0.08f) * dh;
+		float b1 = y0 + 0.62f * dh, xa = x0 + (t - 0.12f) * dw, xm = x0 + t * dw, xb = x0 + (t + 0.12f) * dw;
+		glDisable (GL_TEXTURE_2D);
+		glBlendFunc (GL_DST_COLOR, GL_ONE);
+		glBegin (GL_QUAD_STRIP);
+		glColor4f (0, 0, 0, 1); glVertex2f (xa, b0); glVertex2f (xa, b1);
+		glColor4f (0.10f * fade, 0.09f * fade, 0.06f * fade, 1); glVertex2f (xm, b0); glVertex2f (xm, b1);
+		glColor4f (0, 0, 0, 1); glVertex2f (xb, b0); glVertex2f (xb, b1);
+		glEnd ();
+		glEnable (GL_TEXTURE_2D);
+	}
+
+	/* the signs: the port's name on the yellow one, the date on the blue */
+	for (k = 0; k < 2; k++) {
+		for (i = 0; i < 4; i++) {
+			q[2 * i] = x0 + p->sign[k][2 * i] * dw;
+			q[2 * i + 1] = y0 + p->sign[k][2 * i + 1] * dh;
+		}
+		sign_text (k, k ? date : name, q, fade);
+	}
+
 	glMatrixMode (GL_PROJECTION);
 	glPopMatrix ();
 	glMatrixMode (GL_MODELVIEW);
