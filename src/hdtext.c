@@ -73,7 +73,8 @@ static int n_shown;
 
 /* The string DrawStr is drawing, and whether it is the game's frame
  * counter (its F key): drawn at (5, 5) in colour 15 over whatever is
- * there, a page's title too (--classic-ui: as any string) */
+ * there, a page's title too.  Only where the HD layer hides it from a
+ * page (layout_file); otherwise it is any string. */
 static unsigned int str_id;
 static int str_new, str_counter;
 
@@ -111,7 +112,7 @@ void hdtext_glyph (const unsigned char *font, int x, int y, int col, int chr,
 
 	if (str_new) {
 		str_new = 0;
-		str_counter = !classic_ui && x == 5 && y == 5 && col == 15;
+		str_counter = hdui_layer_on () && x == 5 && y == 5 && col == 15;
 	}
 	if (str_counter) flags |= F_COUNTER;
 	if (pixel_text || x < 0 || x >= ST_W || y < 0 || y > ST_H - 8 ||

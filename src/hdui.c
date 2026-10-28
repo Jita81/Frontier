@@ -219,6 +219,11 @@ static int layer_on (void)
 #endif
 }
 
+int hdui_layer_on (void)
+{
+	return layer_on () && !pixel_text;
+}
+
 /* FE2_HDUI_DUMP=dir: write each new picture (the screen, its palettes and
  * the copy to be uploaded) there, for looking at a page offline */
 static void dump (const unsigned char *raster, const unsigned char *out,
