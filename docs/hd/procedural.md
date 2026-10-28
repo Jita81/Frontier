@@ -212,7 +212,7 @@ exists.
   from `hdback.c` and about 30 of shared object reader (`pf_record`,
   `pf_frame`, which the sky band now uses too).  Hooks: gl.c +37
   (`put_star`, `draw_corona` with its square, four calls, one line in
-  `Nu_3DViewInit`), main.c +3, screen.h +1, soft.c +1, procfx.h +25.
+  `Nu_3DViewInit`), main.c +3, screen.h +1, soft.c +3/-2, procfx.h +26.
 - **Put.**  `Nu_PutTwinklyCircle` and `Nu_PutCircle` add the star after the
   disc's data: the model word of the object being drawn, and its seed
   (the long at +118).  The model check keeps it to stars (`$98`-`$ae`),
