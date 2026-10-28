@@ -38,6 +38,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <math.h>
 #include "hdui.h"
 #include "hdtext.h"
@@ -2041,8 +2042,14 @@ static int column_at (int x)
 	return n;
 }
 
-/* A number the game ran on into the next column's (one space between):
- * two runs, so each goes in its column */
+/* the rows split_merged cut: their pieces are as wide as the game's
+ * columns let them run, so they do not set their columns' width */
+static unsigned char cut_row[200];
+
+/* A number the game ran on into the next column's ("$1060000$942200",
+ * or one space between): cut where the next column starts (or, with no
+ * column to go by, before the second '$'), so each piece goes in its
+ * column, and look again at what is left on the right */
 static void split_merged (void)
 {
 	int i, j, k, n;
@@ -2053,16 +2060,17 @@ static void split_merged (void)
 		const struct hdtext_run *r = &runs[i];
 		int X = -1;
 		if (!ON_PAGE (r) || r->x0 < 118 || r->y < 8 || r->y >= FOOT_Y || !(r->kind & HDT_K_NUMERIC)) continue;
-		for (j = 0; j < n_runs && X < 0; j++)
-			if (runs[j].y != r->y && runs[j].x0 > r->x0 + 4 && runs[j].x0 < r->ink1 && column_at (runs[j].x0) >= 3)
+		for (j = 0; j < n_runs; j++)
+			if (runs[j].y != r->y && runs[j].x0 > r->x0 + 4 && runs[j].x0 < r->ink1 && (X < 0 || runs[j].x0 < X) && column_at (runs[j].x0) >= 3)
 				X = runs[j].x0;
-		if (X < 0) continue;
 		n = hdtext_chars (r, c, sp, 64);
-		for (k = n - 1; k >= 1 && !sp[k]; k--)
-			;
-		if (k >= 1) {
-			hdtext_split (i, k);
+		for (k = 1; k < n; k++)
+			if (X >= 0 ? hdtext_glyph_x (r, k) >= X : c[k] == '$' && isalnum ((unsigned char) c[k - 1]))
+				break;
+		if (k < n && hdtext_split (i, k)) {
 			n_runs = hdtext_runs (&runs);
+			cut_row[runs[i].y] = 1;
+			i += 2;
 		}
 	}
 }
@@ -2247,6 +2255,10 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 		}
 		if (grid) space = split_words ();
 	}
+	/* two tall rows that are not the grid: a conversation's answers,
+	 * read as rows, not cards (the bulletin board has three or more) */
+	if (mode == CARDS && !grid && n124 < 3) mode = ROWS;
+	memset (cut_row, 0, sizeof cut_row);
 	if (mode == TABLE && !grid) {
 		split_merged ();
 		split_heads ();
@@ -2398,13 +2410,13 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 			if (k < ncol || ncol >= 16) continue;
 			for (j = 0; j < n_runs; j++)
 				if (runs[j].x0 == r->x0 && runs[j].y >= 8 && runs[j].y < FOOT_Y &&
-				    (runs[j].kind & HDT_K_NUMERIC)) {
+				    (runs[j].kind & HDT_K_NUMERIC) && !cut_row[runs[j].y]) {
 					n++;
 					if (runs[j].ink1 > mx1) mx1 = runs[j].ink1;
 				}
 			for (j = 0; j < n_runs && ok; j++) {
 				const struct hdtext_run *q = &runs[j];
-				if (q->x0 != r->x0 || q->y < 8 || q->y >= FOOT_Y || !(q->kind & HDT_K_NUMERIC)) continue;
+				if (q->x0 != r->x0 || q->y < 8 || q->y >= FOOT_Y || !(q->kind & HDT_K_NUMERIC) || cut_row[q->y]) continue;
 				for (k = 0; k < n_runs; k++)
 					if (runs[k].y == q->y && runs[k].ink0 > q->ink1 && runs[k].ink0 < mx1 + 4)
 						ok = 0;
@@ -2431,6 +2443,9 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 					r->ax = colmax[k];
 					r->scale = 0.92f;
 				}
+			/* a cut piece keeps its size: the game's columns
+			 * crowded it, ours have room */
+			if (r->y >= 8 && cut_row[r->y] && (r->kind & HDT_K_NUMERIC)) r->maxw = hdtext_measure (r) + 1;
 		}
 		place_heads (colx, ncol);
 		if (mode == TABLE || mode == ROWS) {
@@ -2622,7 +2637,7 @@ static void f3_panel (float right)
 /* The ship's status pages (F3): one glass sheet, the 3D view framed */
 static void layout_f3 (unsigned char *out)
 {
-	int i, k, view = -1, top_head = 1000;
+	int i, j, k, view = -1, top_head = 1000;
 	float right = 319;
 	struct elem *e;
 
@@ -2656,7 +2671,20 @@ static void layout_f3 (unsigned char *out)
 		struct hdtext_run *r = &runs[i];
 		if (!ON_PAGE (r)) continue;
 		if (r->col == BG && r->shadow && r->x0 < right) {
-			/* in the page colour, seen by its shadow alone: a column's heading */
+			/* in the page colour, seen by its shadow alone: a column's
+			 * heading.  The game heads the hold's second column too;
+			 * with nothing in it, the heading is said once */
+			for (k = 0; k < i; k++)
+				if (runs[k].y == r->y && runs[k].hash == r->hash) break;
+			if (k < i) {
+				for (j = 0; j < n_runs; j++)
+					if (ON_PAGE (&runs[j]) && runs[j].y > r->y && runs[j].y < 132 && runs[j].col != BG &&
+					    runs[j].x0 >= r->x0 && runs[j].x0 <= r->x0 + 40) break;
+				if (j == n_runs) {
+					r->hide = 1;
+					continue;
+				}
+			}
 			style (r, HDT_SECTION, C_TEXT2);
 			continue;
 		}
