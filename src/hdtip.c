@@ -128,7 +128,7 @@ struct tip {
 
 enum {
 	T_NONE, T_HIT, T_SLAT_FUEL, T_SLAT_LASER, T_SLAT_HULL, T_STATUS, T_VIEWNAME,
-	T_CLOCK, T_ACTUAL, T_SET, T_RELATIVE
+	T_CLOCK, T_ACTUAL, T_SET, T_RELATIVE, T_PLATE_SPEED, T_PLATE_HEAT
 };
 
 static const char *view_name (int v)
@@ -380,6 +380,8 @@ static void time_tip (struct tip *t, int code)
 		SET (why, "Not now: a ship nearby is active, so time cannot be sped up.");
 }
 
+#define HEAT_WHY "Over 75%: at 100% the ship is destroyed. Fly away from the star, or slow down in air."
+
 static int find (int x, int y, struct tip *t)
 {
 	struct hdstill_panel p;
@@ -428,7 +430,7 @@ static int find (int x, int y, struct tip *t)
 			t->id = T_SLAT_LASER;
 			SET (title, "Laser temperature");
 			SET (body, "Rises as the lasers fire.");
-			if (pl && rw (pl + OBJ_LASER_TEMP) > 0xf000)
+			if (pl && rw (pl + OBJ_LASER_TEMP) > HDSTILL_LASER_CUT)
 				SET (why, "Too hot to fire: let the lasers cool.");
 			else if (pl && rl (pl + OBJ_FUEL) == 0)
 				SET (why, "No fuel in the drive: the lasers cannot fire.");
@@ -436,6 +438,24 @@ static int find (int x, int y, struct tip *t)
 			t->id = T_SLAT_HULL;
 			SET (title, "Hull temperature");
 			SET (body, "Rises close to stars and planets; keep it out of the top.");
+		}
+		if (ch == 3 && rw (A6 + A6_HULL_TEMP) >= HDSTILL_HEAT_WARN)
+			SET (why, HEAT_WHY);
+		return t->id;
+	}
+	/* the HD gauges' plate beside them */
+	if ((r[0] = hdstill_gauge_at (x, y))) {
+		t->x0 = 212, t->y0 = 168, t->x1 = 243, t->y1 = 177;
+		if (r[0] == 1) {
+			t->id = T_PLATE_SPEED;
+			SET (title, "Speed");
+			SET (body, "How fast you are moving, relative to the nearest large body: the front view's Actual speed, on every view.");
+		} else {
+			t->id = T_PLATE_HEAT;
+			SET (title, "Hull temperature");
+			SET (body, "Heat from a nearby star, or from air friction, as a share of what the hull can take. It falls away from them.");
+			if (rw (A6 + A6_HULL_TEMP) >= HDSTILL_HEAT_WARN)
+				SET (why, HEAT_WHY);
 		}
 		return t->id;
 	}

@@ -48,16 +48,33 @@ void hdui_backdrop (const unsigned int *pal, int bgcol);
  * dim the picture and hdback adds no scrim of its own. */
 int hdui_owns_page (void);
 
+/* Nonzero while the last hdui_frame's page is one the game waits on
+ * without drawing frames (load and save: a name typed, a file chosen) */
+int hdui_still_page (void);
+
+/* The HD layer lays this frame's pages out (not --classic-ui, --old-renderer
+ * or --pixel-text) */
+int hdui_layer_on (void);
+
 /* The game cleared the ST area (x1, y1)-(x2, y2) for a 3D viewer this
- * frame: the next hdui_frame leaves it alone and frames it. */
-void hdui_clear_area (int x1, int y1, int x2, int y2);
+ * frame: the next hdui_frame leaves it alone and gives it a card.
+ * Nonzero when the backdrop under this frame already has that card
+ * there: then the caller leaves it, not painting the area black. */
+int hdui_clear_area (int x1, int y1, int x2, int y2);
 
 /* The pointer, in ST pixels, as input.c is about to give it to the game,
- * and the buttons held (2: the left one).  While the left button is held
- * on a control this layer moved, *ax and *ay are changed to a point inside
- * that control's original click region; otherwise they are left alone.
+ * and the buttons held (2: the left one); returns the buttons to give it.
+ * While the left button is held on a control this layer moved, *ax and
+ * *ay are changed to a point inside that control's original click region;
+ * otherwise they are left alone, but for the click a service's card on the
+ * docked view asks for: on the services page it opened, a press and a
+ * release on that service's control (the returned buttons).
  * Never called by an oracle replay (it writes the tape's values itself). */
-void hdui_mouse (short *ax, short *ay, int buttons);
+int hdui_mouse (short *ax, short *ay, int buttons);
+
+/* For hdback's concourse, this frame: 0 something is over the 3D view, 1
+ * nothing, 2 nothing and docked or landed; date: the console's, or "". */
+int hdui_concourse (const char **date);
 
 /* The GL context is going away: drop this layer's textures. */
 void hdui_forget (void);
