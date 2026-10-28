@@ -42,6 +42,8 @@ extern int flat_sky;
  * polygon belongs to the background object, with its rotation (nine 1.15
  * words of the object's frame, as floats) in m.  Reads only. */
 int procfx_sky_put (float m[9]);
+/* the sky was put in this 3D view (cleared in Nu_3DViewInit) */
+extern int procfx_sky_seen;
 
 /* Draw side, around one such polygon.  proj and vp are the projection and
  * viewport the polygon's vertices were projected with.  procfx_sky_begin

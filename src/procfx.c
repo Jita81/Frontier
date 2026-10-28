@@ -195,11 +195,13 @@ int flat_sky = 0;
 
 /* the sky's frame, kept for the corona's streamers too */
 static float sky_rot[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+int procfx_sky_seen;
 
 int procfx_sky_put (float m[9])
 {
 	if (pf_object (NULL) != SKY_MODEL || !pf_rot (m)) return 0;
 	memcpy (sky_rot, m, sizeof sky_rot);
+	procfx_sky_seen = 1;
 	return !flat_sky;
 }
 
@@ -363,33 +365,44 @@ void procfx_endgame_backdrop (float fade)
 	glPopAttrib ();
 }
 
-/* ---- glows: additive light on a square about a point ----------------- */
+/* ---- glows: screen-blended light on a square about a point ----------- */
 
-struct glow { const char *name, *glsl; GLuint prog; int failed; };
+/* uniform locations, looked up at compile; -1 where a program has none */
+enum { U_VP, U_FOC, U_C, U_SUN, U_COL, U_TH, U_ROT, U_SEED, U_DISC, U_N };
+static const char *const u_name[U_N] =
+	{ "uVp", "uFoc", "uC", "uSun", "uCol", "uTh", "uRot", "uSeed", "uDisc" };
 
-/* l's program (compiled on first use) bound for additive light, with the
- * eye ray set up; 0, and nothing changed, when it is not available */
-static GLuint glow_begin (struct glow *l)
+struct glow { const char *name, *glsl; GLuint prog; int failed; GLint u[U_N]; };
+
+/* l's program (compiled on first use) bound, with the eye ray set up; 0,
+ * and nothing changed, when it is not available.  Screen blend: light
+ * over a bright disc tints it rather than burning it to white. */
+static int glow_begin (struct glow *l)
 {
 	GLint vp[4];
 	GLdouble pr[16];
+	int i;
 
 	if (l->failed) return 0;
-	if (!l->prog && !(l->prog = procfx_program (l->name, l->glsl))) {
+	if (!l->prog && (l->prog = procfx_program (l->name, l->glsl)))
+		for (i = 0; i < U_N; i++) l->u[i] = glGetUniformLocation (l->prog, u_name[i]);
+	if (!l->prog) {
 		l->failed = 1;
 		return 0;
 	}
-	glGetIntegerv (GL_VIEWPORT, vp);
-	glGetDoublev (GL_PROJECTION_MATRIX, pr);
 	glPushAttrib (GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_CURRENT_BIT);
 	glDisable (GL_CULL_FACE);
 	glEnable (GL_BLEND);
-	glBlendFunc (GL_ONE, GL_ONE);
+	glBlendFunc (GL_ONE, GL_ONE_MINUS_SRC_COLOR);
 	glBlendEquation (GL_FUNC_ADD);
 	glUseProgram (l->prog);
-	glUniform4f (glGetUniformLocation (l->prog, "uVp"), vp[0], vp[1], vp[2], vp[3]);
-	glUniform2f (glGetUniformLocation (l->prog, "uFoc"), pr[0], pr[5]);
-	return l->prog;
+	if (l->u[U_VP] >= 0) {
+		glGetIntegerv (GL_VIEWPORT, vp);
+		glGetDoublev (GL_PROJECTION_MATRIX, pr);
+		glUniform4f (l->u[U_VP], vp[0], vp[1], vp[2], vp[3]);
+		glUniform2f (l->u[U_FOC], pr[0], pr[5]);
+	}
+	return 1;
 }
 
 void procfx_glow_end (void)
@@ -427,6 +440,7 @@ void procfx_limb_put (int col, double scale, const double c[3], double r, float 
 	fr = gam + thp < 1.5 ? 256 * tan (gam + thp) : 1e4;
 	g = 1 - smooth (245, 409, nr + fr) * (1 - smooth (178, 230, nr));
 	g *= smooth (1.3, 2.0, d / r) * (k && !strcmp (k, "rocky") ? 1.0 : 1.6);
+	if (g <= 0) return;
 	for (i = 0; i < 3; i++) limb[i] = g * ((col >> (8 - 4*i)) & 15) / 15.0;
 	limb[3] = fmin (fmax ((scale - 1.0) * 12, 0.04), 0.12);
 }
@@ -453,18 +467,18 @@ static struct glow limb_fx = { "limb glow", limb_glsl };
 float procfx_limb_begin (const float limb[4], const double c[3], double r, const double sun[3])
 {
 	double d = sqrt (c[0]*c[0] + c[1]*c[1] + c[2]*c[2]), thp, gam, h;
-	GLuint p;
+	const GLint *u = limb_fx.u;
 
 	if (flat_limb || limb[3] <= 0 || c[2] <= 0 || d <= r) return 0;
 	thp = asin (r / d);
 	gam = acos (c[2] / d);
 	/* the square at the planet's depth that holds the glow's outer cone */
 	h = c[2] * (tan (fmin (gam + thp * (1 + 4 * limb[3]), 1.45)) - tan (gam));
-	if (h <= 0 || !(p = glow_begin (&limb_fx))) return 0;
-	glUniform3f (glGetUniformLocation (p, "uC"), c[0] / d, c[1] / d, -c[2] / d);
-	glUniform3f (glGetUniformLocation (p, "uSun"), sun[0], sun[1], -sun[2]);
-	glUniform3fv (glGetUniformLocation (p, "uCol"), 1, limb);
-	glUniform2f (glGetUniformLocation (p, "uTh"), thp, limb[3]);
+	if (h <= 0 || !glow_begin (&limb_fx)) return 0;
+	glUniform3f (u[U_C], c[0] / d, c[1] / d, -c[2] / d);
+	glUniform3f (u[U_SUN], sun[0], sun[1], -sun[2]);
+	glUniform3fv (u[U_COL], 1, limb);
+	glUniform2f (u[U_TH], thp, limb[3]);
 	return h;
 }
 
@@ -483,32 +497,34 @@ void procfx_star_put (struct procfx_star *s)
 	s->seed = (unsigned int) STMemory_ReadLong (rec + OBJ_SEED);
 }
 
-/* gl_TexCoord[0] runs -1..1 across the square, uDisc is the disc's radius
- * on that scale.  The streamers are noise over the direction away from
- * the disc, turned into the sky's frame (a star's own rotation is not
- * kept where it is drawn), so they stay put when the ship rolls, and
- * seeded by the star. */
+/* gl_TexCoord[0] runs -1..1 across the square, uC is the star's centre
+ * and uDisc.x the disc's radius on that scale.  The streamers are noise
+ * over the direction away from the star (the eye ray less its part along
+ * the star's), turned into the sky's frame (a star's own rotation is not
+ * kept where it is drawn) so they stay put when the ship rolls, seeded by
+ * the star; uDisc.y is 0 with no sky this view.  Deep tone by the disc. */
 static const char corona_glsl[] =
 	"uniform mat3 uRot;\n"
-	"uniform vec3 uCol, uSeed;\n"
-	"uniform float uDisc;\n"
+	"uniform vec3 uC, uCol, uSeed;\n"
+	"uniform vec2 uDisc;\n"
 	"void main () {\n"
 	"	vec2 q = gl_TexCoord[0].xy;\n"
 	"	float r = length (q);\n"
 	"	if (r >= 1.0) discard;\n"
-	"	float t = clamp ((r - uDisc) / (1.0 - uDisc), 0.0, 1.0);\n"
-	"	vec3 u = uRot * vec3 (q / max (r, 1e-4), 0.0);\n"
-	"	float s = smoothstep (0.45, 0.8, pf_fbm (u * (2.5 + 1.5 * t) + uSeed, 4));\n"
-	"	float g = 0.55 * pow (1.0 - t, 4.0) + 0.6 * s * pow (1.0 - t, 2.0);\n"
-	"	gl_FragColor = vec4 (uCol * g, 1.0);\n"
+	"	float t = clamp ((r - uDisc.x) / (1.0 - uDisc.x), 0.0, 1.0);\n"
+	"	vec3 e = normalize (uC + vec3 (q, 0.0)), n = normalize (uC);\n"
+	"	vec3 d = e - n * dot (e, n), u = uRot * (d / max (length (d), 1e-6));\n"
+	"	float s = uDisc.y * smoothstep (0.45, 0.8, pf_fbm (u * (2.5 + 1.5 * t) + uSeed, 4));\n"
+	"	float g = min (0.55 * pow (1.0 - t, 4.0) + 0.6 * s * pow (1.0 - t, 2.0), 1.0);\n"
+	"	gl_FragColor = vec4 (mix (uCol, uCol * uCol, (1.0 - t) * (1.0 - t)) * g, 1.0);\n"
 	"}\n";
 
 static struct glow corona_fx = { "corona", corona_glsl };
 
 /* by star_light */
 static const float tone[L_MAX][3] = {
-	{ 0.9, 0.9, 0.9 }, { 1.0, 0.45, 0.25 }, { 1.0, 0.65, 0.35 },
-	{ 1.0, 0.86, 0.58 }, { 0.82, 0.88, 1.0 }, { 0.58, 0.72, 1.0 }
+	{ 0.9, 0.9, 0.9 }, { 1.0, 0.42, 0.22 }, { 1.0, 0.62, 0.30 },
+	{ 1.0, 0.92, 0.72 }, { 0.82, 0.88, 1.0 }, { 0.58, 0.72, 1.0 }
 };
 
 float procfx_corona_begin (const struct procfx_star *s, const float c[3], float r)
@@ -517,14 +533,14 @@ float procfx_corona_begin (const struct procfx_star *s, const float c[3], float 
 	float h = 3 * r - 0.016f * c[2];
 	const float *k = tone[star_light (s->model)];
 	unsigned int z = s->seed;
-	GLuint p;
+	const GLint *u = corona_fx.u;
 
-	if (flat_stars || !s->model || c[2] >= 0 || !(p = glow_begin (&corona_fx))) return 0;
-	pf_frame (glGetUniformLocation (p, "uRot"), sky_rot);
-	glUniform3fv (glGetUniformLocation (p, "uCol"), 1, k);
-	glUniform3f (glGetUniformLocation (p, "uSeed"),
-		     (z & 1023) / 37.0f, (z >> 10 & 1023) / 41.0f, (z >> 20 & 1023) / 43.0f);
-	glUniform1f (glGetUniformLocation (p, "uDisc"), r / h);
+	if (flat_stars || !s->model || c[2] >= 0 || !glow_begin (&corona_fx)) return 0;
+	pf_frame (u[U_ROT], sky_rot);
+	glUniform3f (u[U_C], c[0] / h, c[1] / h, c[2] / h);
+	glUniform3fv (u[U_COL], 1, k);
+	glUniform3f (u[U_SEED], (z & 1023) / 37.0f, (z >> 10 & 1023) / 41.0f, (z >> 20 & 1023) / 43.0f);
+	glUniform2f (u[U_DISC], r / h, procfx_sky_seen);
 	return h;
 }
 

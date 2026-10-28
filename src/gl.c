@@ -1158,6 +1158,7 @@ void Nu_3DViewInit ()
 	//printf ("%d bytes object data\n", obj_data_pos);
 	obj_data_pos = 0;
 	detached_pos = 0;
+	procfx_sky_seen = 0;
 
 	//add_node (&znode_start, 0);
 	znode_start = NULL;
@@ -1256,12 +1257,13 @@ static void billboard_end ()
 }
 
 /* procfx glows: a square of half side h facing the eye at c, texture
- * coordinates -1..1 across it */
+ * coordinates -1..1 across it, then the glow ended; nothing for h 0 */
 static void glow_quad (const float c[3], float h)
 {
 	static const float q[4][2] = { {-1, -1}, {1, -1}, {1, 1}, {-1, 1} };
 	int i;
 
+	if (h <= 0) return;
 	billboard_begin (c[0], c[1], c[2]);
 	glBegin (GL_QUADS);
 	for (i = 0; i < 4; i++) {
@@ -1270,6 +1272,7 @@ static void glow_quad (const float c[3], float h)
 	}
 	glEnd ();
 	billboard_end ();
+	procfx_glow_end ();
 }
 
 /* Object-space position of the eye, i.e. the inverse modelview applied
@@ -2219,14 +2222,11 @@ static void put_star (void)
 static void draw_corona (void **data, const int v[3], float size)
 {
 	struct procfx_star s;
-	float c[3] = { v[0], v[1], v[2] }, h;
+	float c[3] = { v[0], v[1], v[2] };
 
 	memcpy (&s, *data, sizeof s);
 	*data += sizeof s;
-	if (s.model && (h = procfx_corona_begin (&s, c, size > 0 ? size : 0)) > 0) {
-		glow_quad (c, h);
-		procfx_glow_end ();
-	}
+	if (s.model) glow_quad (c, procfx_corona_begin (&s, c, size > 0 ? size : 0));
 }
 
 void Nu_PutTwinklyCircle ()
@@ -3244,7 +3244,10 @@ void Nu_DrawPlanet (void **data)
 		planet_update_patch (t, down, acos (p.R/d > 1.0 ? 1.0 : p.R/d));
 		draw_horizon_cap (t, &p, d, sun, zones, nzones);
 	} else {
+		/* procfx limb glow: over the sphere, under anything nearer */
+		float c[3] = { p.centre[0], p.centre[1], -p.centre[2] };
 		draw_planet_sphere (t, &p, sun, zones, nzones);
+		if (p.limb[3] > 0) glow_quad (c, procfx_limb_begin (p.limb, p.centre, p.R, sun));
 	}
 
 	glDisable (GL_TEXTURE_2D);
@@ -3435,26 +3438,6 @@ static int circle_slices (double size, double z)
 	if (rpx * 2.0 * M_PI / 16.0 <= 32.0) return 32;
 	if (rpx * 2.0 * M_PI / 16.0 >= 256.0) return 256;
 	return (int) (rpx * 2.0 * M_PI / 16.0);
-}
-
-/* procfx limb glow: over the planet's sphere, under anything nearer */
-static void Nu_DrawPlanetGlow (void **data)
-{
-	struct PlanetPrim p;
-	double d, sun[3];
-	float c[3], h;
-
-	memcpy (&p, *data, sizeof p);
-	Nu_DrawPlanet (data);
-	d = sqrt (pdot (p.centre, p.centre));
-	if (p.limb[3] <= 0 || p.R <= 0 || d <= 0) return;
-	planet_fix_radius (&p, d);
-	planet_sun (&p, sun);
-	c[0] = p.centre[0]; c[1] = p.centre[1]; c[2] = -p.centre[2];
-	if ((h = procfx_limb_begin (p.limb, p.centre, p.R, sun)) > 0) {
-		glow_quad (c, h);
-		procfx_glow_end ();
-	}
 }
 
 void Nu_PutCircle ()
@@ -3871,7 +3854,7 @@ NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	&Nu_DrawComplexStartInner, // 9
 	&Nu_DrawComplexBezier,
 	&Nu_DrawTwinklyCircle,
-	&Nu_DrawPlanetGlow,
+	&Nu_DrawPlanet,
 	&Nu_DrawCircle,
 	&Nu_DrawCylinder,
 	&Nu_DrawBlob,
