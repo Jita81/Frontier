@@ -43,24 +43,35 @@
 #define A6_TOOLS_MODE		42	/* byte: negative while a 3D view fills the screen */
 #define A6_MISSILE_SEL		671	/* byte: the pylon selected, 1..8, 0 none */
 #define A6_FLAGS673		673	/* byte: bit 6 far enough from any body to jump (L622de) */
+#define A6_ME			670	/* byte: the player, as an owner (OBJ_OWNER) */
 #define A6_PLAYER		674	/* long: the player's ship object */
 #define A6_NEAREST_M		692	/* long: distance to the nearest body, for the log only */
-#define A6_FLIGHT_STATE		704	/* byte: 0 flight, 4 autopilot; over $0c the docking, launch and
-					 * landing phases ($10-$18 docking, $48 launch under way,
+#define A6_FLIGHT_STATE		704	/* byte: 0 flight, 4 autopilot, 8 hyperspace; over $0c the
+					 * docking, launch and landing phases: $1c-$30 the station
+					 * carries the ship in, $34-$44 out through the launch tube
+					 * (the player's controls are not run, L61b2c), $48 lifting
+					 * off, $4c clearing the station under the player's control,
 					 * $50-$5b docked, $5c.. set down where F7 launches, in a
 					 * station's bay or on a planet: nothing here tells which) */
 #define A6_SHIP_FLAGS		705	/* byte: bit 0 engines off, bit 2 object labels (F10) */
 #define A6_VIEW			706	/* byte: 0 front, 1 rear, 2/3 turrets, 4 external */
 #define A6_AP_TARGET		708	/* byte: something the autopilot can fly to */
+#define A6_FUEL			792	/* word: hydrogen fuel, tonnes (drive classes below 10) */
+#define A6_MILFUEL		794	/* word: military fuel, tonnes (classes 10 up) */
 #define A6_HULL_TEMP		866	/* word */
 #define A6_DEST_SET		977	/* byte: a destination system picked */
-#define A6_DEST_SYS		1044	/* long: the system picked (packed), for the log only */
+#define A6_DEST_SYS		1044	/* long: low word the distance to the system picked */
 #define A6_COMBAT		10476	/* byte: bit 1 a ship nearby is active (time keys refused) */
+#define A6_GAME_DATA		14470	/* long: the game data, by object type */
 #define A6_ICON_POS		14514	/* the click table: x0, y0, x1, y1, code words */
 
+#define OBJ_TYPE		90	/* word: the object's type, into the game data */
+#define OBJ_OWNER		93	/* byte: who owns it, against 670(a6) */
 #define OBJ_EQUIP		158	/* long: bit 5 an autopilot fitted */
+#define OBJ_DRIVE		166	/* byte: the hyperdrive's class */
 #define OBJ_LASER_TEMP		190	/* word: firing refused over $f000 */
 #define OBJ_STATE		211	/* byte: $84 docked */
+#define OBJ_OWN_FUEL		237	/* byte: fuel of a ship the player does not own */
 #define OBJ_FUEL		242	/* long: the fuel in the unit being burnt */
 
 #define KEYMAP_LOWER		__DL41bd6_keymap_lower	/* 128 bytes by ST scan code */
@@ -161,14 +172,14 @@ static const struct gtip { unsigned char g; const char *title, *body; } glyphs[]
 	{ G_HYPER, "Whole galaxy", "Zoom out to the whole galaxy." },
 	{ G_SECTOR, "Back to the sector", "Return to the map of the sector around the system picked." },
 	{ G_BURST, "Autopilot target", "Pick a target or destination for the autopilot, then click it on the map." },
-	{ G_ORRERY, "Selected system", "Data on the system picked, with a picture of its bodies." },
-	{ G_SHIP, "Ship and commander", "" },
-	{ G_CARGO, "Cargo", "" },
-	{ G_CMDR, "Commander", "" },
-	{ G_PHONE, "Communications", "" },
-	{ G_LOAD, "Load game", "" },
-	{ G_SAVE, "Save game", "" },
-	{ G_EXIT, "Leave the game", "" },
+	{ G_ORRERY, "System data", "Data on the system picked, with a picture of its bodies." },
+	{ G_SHIP, "Ship", "Your ship and its equipment." },
+	{ G_CARGO, "Cargo", "What the ship is carrying." },
+	{ G_CMDR, "Commander", "Your own record." },
+	{ G_LOAD, "Load game", "Carry on from a saved game." },
+	{ G_SAVE, "Save game", "Save the game as it stands." },
+	{ G_DELETE, "Delete saved game", "Remove a saved game." },
+	{ G_EXIT, "Leave the game", "End this game." },
 };
 
 /* A map's display options (behind its wrench key): crossed while the
@@ -184,12 +195,37 @@ static const struct otip { unsigned char g; const char *on, *off; } options[] = 
 	{ G_DOC, "the names of the bodies", NULL },
 };
 
-/* The map's time keys in the second display: one click for all six, the
- * game picks by x */
-static const char *const orrery[6] = {
-	"Map time: back fast", "Map time: back", "Map time: back slowly",
-	"Map time: forward slowly", "Map time: forward", "Map time: forward fast"
-};
+/* The hyperdrive module's check (L81236 with d0 = 1), read without
+ * running it: range from the drive's class (table L812ce) over the ship
+ * type's mass, then the fuel the jump burns */
+static void jump_why (struct tip *t, unsigned int pl)
+{
+	unsigned int gd = rl (A6 + A6_GAME_DATA), c, q, need;
+	int dist = rw (A6 + A6_DEST_SYS + 2), cls = rb (pl + OBJ_DRIVE), mass, range, have;
+	p68K ty;
+
+	ty = gd + rw (gd + (short) rw (pl + OBJ_TYPE));
+	ty += (short) rw (ty + 28);
+	if (!(mass = rw (ty + 6))) return;
+	c = rl (__DL812ce + 8 * cls);
+	q = c / mass;
+	range = (q > 0xffff ? c : q) & 0xffff;		/* divu: unchanged on overflow */
+	if (range < dist || !dist) {
+		SET (why, !dist ? "The system picked is the one you are in." :
+				   "Out of range: the system picked is further than the hyperdrive reaches.");
+		return;
+	}
+	q = (unsigned int) mass * dist / 20001;
+	need = ((q > 0xffff ? (unsigned int) mass * dist : q) + 1) & 0xffff;
+	if (rb (pl + OBJ_OWNER) != rb (A6 + A6_ME))
+		have = rb (pl + OBJ_OWN_FUEL), need &= 0xff;
+	else
+		have = rw (A6 + (cls < 10 ? A6_FUEL : A6_MILFUEL));
+	if ((int) need > have)
+		snprintf (t->why, sizeof (t->why), "Not enough %s fuel: the jump needs %u t, the ship has %d t.",
+			  cls < 10 ? "hydrogen" : "military", need, have);
+}
+
 /* F7..F10 over a 3D view, from the state the game's handlers test */
 static void flight_key (struct tip *t, int slot, const struct hdstill_panel *p)
 {
@@ -215,8 +251,15 @@ static void flight_key (struct tip *t, int slot, const struct hdstill_panel *p)
 			SET (title, "Launch");
 			SET (body, "Start the launch and fly clear.");
 		} else if (st == 0x48) {
-			SET (title, "Engines");
-			SET (body, "Launch under way.");
+			SET (title, "Take control");
+			SET (body, "Lifting off: take the controls and fly clear yourself.");
+		} else if (st >= 0x1c && st < 0x48) {
+			/* the station moves the ship; the player's controls
+			 * are not run until it lets go ($4c or flight) */
+			SET (title, st >= 0x34 ? "Launch under way" : "Docking under way");
+			SET (body, st >= 0x34 ? "The station is carrying the ship out through the launch tube." :
+					       "The station is bringing the ship in.");
+			SET (why, "No engine control until the station lets the ship go.");
 		} else if (st == 4) {
 			SET (title, "Manual control");
 			SET (body, "Switch the autopilot off and fly by hand.");
@@ -235,24 +278,22 @@ static void flight_key (struct tip *t, int slot, const struct hdstill_panel *p)
 		SET (title, "Hyperspace");
 		SET (body, "Jump to the system picked on the galaxy map.");
 		if (p->valid && (p->slot[8] & ~G_OFF) == G_HYPER) break;
-		/* the game's own tests for the F8 icon, in its order (l63ecc):
-		 * a destination (977), open flight (704 <= $0c), clear of
-		 * bodies (673 bit 6).  The last test is a call into the
-		 * hyperdrive's module (range, fuel, the drive itself) that
-		 * cannot be read without running it: when only that one can
-		 * have failed, the label gives no reason. */
-		if (docked)
-			SET (why, "Not while docked: launch first.");
-		else if (st > 0x0c)
-			SET (why, "Only in open flight: not while docking, launching or landing.");
-		else if (!rb (A6 + A6_DEST_SET)) {
+		/* the game's tests for the F8 icon, in its order (l63ecc): a
+		 * destination (977), open flight (704 <= $0c), clear of bodies
+		 * (673 bit 6), then the hyperdrive module's check (L81236) */
+		if (!rb (A6 + A6_DEST_SET)) {
 			char k[24];
 			key_for (0xf2, k, sizeof (k));
 			snprintf (t->why, sizeof (t->why), "No destination: pick a system on the galaxy map%s%s%s.",
 				  k[0] ? " (" : "", k, k[0] ? ")" : "");
-		}
+		} else if (docked)
+			SET (why, "Not while docked: launch first.");
+		else if (st > 0x0c)
+			SET (why, "Only in open flight: not while docking, launching or landing.");
 		else if (!(rb (A6 + A6_FLAGS673) & 0x40))
 			SET (why, "Too close to a nearby body: fly further out first.");
+		else if (pl)
+			jump_why (t, pl);
 		break;
 	case 9:
 		SET (title, "Undercarriage");
@@ -407,6 +448,8 @@ static int find (int x, int y, struct tip *t)
 			   st >= 0x50 && st < 0x5c ? "Docked at a station." :
 			   st == 8 ? "In hyperspace." :
 			   st == 0x48 || st == 0x4c ? "Launching." :
+			   st >= 0x34 && st < 0x48 ? "Launching: the station is carrying the ship out." :
+			   st >= 0x1c && st < 0x34 ? "Docking: the station is bringing the ship in." :
 			   "Who is flying the ship, and how.");
 		return t->id;
 	}
@@ -435,11 +478,17 @@ static int find (int x, int y, struct tip *t)
 		t->id = T_HIT + 0x100 * code, t->code = code;
 		t->x0 = r[0], t->y0 = r[1], t->x1 = r[2], t->y1 = r[3];
 		if (code == 0x80 && (p.flags & F_MAPKEYS) && r[0] == 262 && r[2] == 319) {
-			/* the system map's time keys: one click, six keys */
-			int k = (x - 262) * 6 / 58;
-			t->id += k, t->x0 = 262 + k * 58 / 6, t->x1 = 262 + (k + 1) * 58 / 6 - 1;
-			SET (title, orrery[k]);
-			SET (body, "Moves the time the map shows the bodies at; the game's clock runs on as before.");
+			/* the system map's time control (l4b518): one click,
+			 * read from y 178 to 188, a signed rate from x - 291,
+			 * squared (or to the fourth) so faster further out */
+			int d = x - 291;
+			if (y < 178 || y > 188) return t->id = 0;
+			t->id += 1 + (d > 0) - (d < 0), t->y0 = 178, t->y1 = 188;
+			t->x0 = d < 0 ? 262 : d ? 292 : 291, t->x1 = d < 0 ? 290 : d ? 319 : 291;
+			SET (title, d < 0 ? "Map time: back" : d ? "Map time: forward" : "Map time: still");
+			SET (body, d ? "Runs the time the map shows the bodies at, faster the further from the middle. "
+				       "The game's clock runs on as before." :
+				       "The middle of the map's time control: the map's time stands still.");
 			return t->id;
 		}
 		if (code < 0x10 || (code >= 0x18 && code < 0xc1)) return t->id = 0;
@@ -770,13 +819,13 @@ static void log_tip (const struct tip *t, int x, int y)
 	hdstill_panel (&p);
 	fprintf (stderr, "hdtip: at %d,%d id %#x code %#x \"%s\" key \"%s\" why \"%s\" | 704=%#x 705=%#x 706=%d "
 		 "42=%d 671=%d 673=%#x 692=%u 708=%d 977=%d 1044=%u 10476=%#x obj211=%#x obj158=%#x "
-		 "obj190=%#x obj242=%#x 866=%d panel=%d flags=%d slot7-10=%d,%d,%d,%d missiles=%d\n",
+		 "obj190=%#x obj242=%#x obj166=%d 792=%d 866=%d panel=%d flags=%d slot7-10=%d,%d,%d,%d missiles=%d\n",
 		 x, y, t->id, t->code, t->title, t->key, t->why,
 		 rb (A6 + A6_FLIGHT_STATE), rb (A6 + A6_SHIP_FLAGS), rb (A6 + A6_VIEW),
 		 (signed char) rb (A6 + A6_TOOLS_MODE), rb (A6 + A6_MISSILE_SEL), rb (A6 + A6_FLAGS673),
 		 rl (A6 + A6_NEAREST_M), rb (A6 + A6_AP_TARGET), rb (A6 + A6_DEST_SET), rl (A6 + A6_DEST_SYS),
 		 rb (A6 + A6_COMBAT), pl ? rb (pl + OBJ_STATE) : 0, pl ? rl (pl + OBJ_EQUIP) : 0,
-		 pl ? rw (pl + OBJ_LASER_TEMP) : 0, pl ? rl (pl + OBJ_FUEL) : 0, rw (A6 + A6_HULL_TEMP),
+		 pl ? rw (pl + OBJ_LASER_TEMP) : 0, pl ? rl (pl + OBJ_FUEL) : 0, pl ? rb (pl + OBJ_DRIVE) : 0, rw (A6 + A6_FUEL), rw (A6 + A6_HULL_TEMP),
 		 p.valid, p.flags, p.slot[7], p.slot[8], p.slot[9], p.slot[10], p.n_missiles);
 }
 
