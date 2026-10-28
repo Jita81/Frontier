@@ -69,15 +69,14 @@ void ShortCut_CheckKeys(void)
        ShortCut_MouseMode();
        break;
      case SDLK_q:                    /* Quit program */
-       SDL_Quit ();
-       exit (0);
-       bQuitProgram = TRUE;
+       Main_Quit (0);
        break;
      case SDLK_d:
        Call_DumpDebug ();
        break;
      case SDLK_e:
        Screen_ToggleRenderer ();
+       Main_SaveSettings ();
        break;
   }
 
