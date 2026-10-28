@@ -53,6 +53,8 @@ int procfx_planet_begin (const float lo[4], const float hi[4], float soft,
 			 const float rim[4], const float look[3], unsigned int seed);
 /* between the two: light zone unit's texture */
 void procfx_planet_bind (int unit, unsigned int tex);
+/* before each vertex: cos(sun), view cosine, model direction there */
+void procfx_planet_attr (double c, double mu, const double m[3]);
 void procfx_planet_end (void);
 /* change_vidmode, before the GL context goes */
 void procfx_forget (void);

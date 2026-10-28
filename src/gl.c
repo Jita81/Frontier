@@ -2743,13 +2743,13 @@ static void planet_bind_zones (struct PlanetTex *t, int f, const struct LightZon
 static void planet_smooth_vertex (const struct PVert *v)
 {
 	glTexCoord2dv (v->t);
-	glMultiTexCoord2d (GL_TEXTURE1, v->c, v->mu);
-	glMultiTexCoord3dv (GL_TEXTURE2, v->m);
+	procfx_planet_attr (v->c, v->mu, v->m);
 	planet_vertex (v->p);
 }
 
 static double planet_ramp (double a, double b, double x)
 {
+	if (!(b > a)) return x >= b;
 	x = fmin (1.0, fmax (0.0, (x - a) / (b - a)));
 	return x * x * (3.0 - 2.0 * x);
 }
@@ -3174,13 +3174,16 @@ static void planet_atmosphere_band (struct PlanetPrim *p)
 /* The smooth path (procfx layer 2): one soft halo for all the layers.
  * Each visible layer's colour sits in the middle of its band and blends
  * into the next; opaque out to the outermost band, which fades to
- * nothing.  Seen from space the night side of the halo is dimmer: the
- * sun's cos at the point of the planet nearest each ray.  From inside the
- * atmosphere that point is underfoot for the whole sky, and the ST's own
- * tint already does that, so it fades out there. */
+ * nothing, unless it wraps the whole sky (the ST's clamp near pi, low
+ * down): then it stays opaque overhead like the flat discs, and the fade
+ * comes in smoothly as the edge sinks below the zenith.  Seen from space
+ * the night side of the halo is dimmer: the sun's cos at the point of the
+ * planet nearest each ray.  From inside the atmosphere that point is
+ * underfoot for the whole sky, and the ST's own tint already does that,
+ * so it fades out there. */
 struct Halo {
 	const struct PlanetPrim *p;
-	double down[3], e1[3], e2[3], sun[3], space, th[9], mid[8];
+	double down[3], e1[3], e2[3], sun[3], space, edge, th[9], mid[8];
 	float col[8][3];
 	int n;
 };
@@ -3196,7 +3199,7 @@ static void halo_vertex (const struct Halo *h, double t, double a)
 	m = l < h->n - 1 ? l + 1 : l;
 	f = planet_ramp (h->mid[l], h->mid[m] + 1e-9, t);
 	for (k = 0; k < 3; k++) c[k] = h->col[l][k] + f * (h->col[m][k] - h->col[l][k]);
-	al = 1.0 - planet_ramp (h->th[h->n-1], h->th[h->n], t);
+	al = 1.0 - h->edge * planet_ramp (h->th[h->n-1], h->th[h->n], t);
 	if (h->p->flags & 0x80) {
 		s = fmax (0.0, pdot (w, h->p->centre));
 		for (k = 0; k < 3; k++) q[k] = s * w[k] - h->p->centre[k];
@@ -3222,14 +3225,16 @@ static void draw_planet_halo (const struct PlanetPrim *p, double d, double theta
 	h.space = planet_space (p, d);
 	h.th[0] = theta_p;
 	for (h.n = l = 0; l < p->natm; l++) {
-		if (p->atm_th[l] <= h.th[h.n]) continue;
-		h.th[h.n+1] = fmin (p->atm_th[l], M_PI - 0.01);
+		double th = fmin (p->atm_th[l], M_PI - 0.01);
+		if (th <= h.th[h.n]) continue;
+		h.th[h.n+1] = th;
 		h.mid[h.n] = 0.5 * (h.th[h.n] + h.th[h.n+1]);
 		split_rgb444b (p->atm_col[l], &r, &g, &b);
 		h.col[h.n][0] = r / 255.0f; h.col[h.n][1] = g / 255.0f; h.col[h.n][2] = b / 255.0f;
 		h.n++;
 	}
 	if (!h.n) return;
+	h.edge = 1.0 - planet_ramp (M_PI - 0.5, M_PI - 0.01, h.th[h.n]);
 	glPushAttrib (GL_COLOR_BUFFER_BIT);
 	glEnable (GL_BLEND);
 	glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);

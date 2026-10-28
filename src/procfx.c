@@ -241,13 +241,16 @@ int flat_planets = 0;
 /* gl.c binds the textures of up to four light zones, each baked by
  * planet.c from the body's own features and colours, on units 0-3, and
  * gives every vertex: gl_TexCoord[0] the texture position, [1] cos(sun)
- * and the view cosine mu there, [2] the model direction.  Each zone
- * weighs in over its cos(sun) range with soft edges that sum to 1, so the
- * game's day, twilight and night colours blend across the terminator.
- * On top: the day side brightens towards the sun, the limb darkens, fine
- * noise fixed to the body (seeded by it) fades in once its cells are
- * bigger than a pixel, and with an atmosphere the limb turns towards the
- * innermost layer's colour on the lit side. */
+ * and the view cosine mu there (procfx_planet_attr), [2] the model
+ * direction.  Each zone weighs in over its cos(sun) range with soft edges
+ * that sum to 1, so the game's day, twilight and night colours blend
+ * across the terminator.  On top: a lit body's day side falls off by up
+ * to a fifth towards the terminator (full zone colour where the sun is
+ * high), the limb darkens, fine noise fixed to the body (seeded by it)
+ * fades in octave by octave only once that octave's cells span several
+ * pixels, and not at grazing angles, so a far planet stays clean and
+ * nothing shimmers; with an atmosphere the lit limb turns towards the
+ * innermost layer's colour. */
 static const char planet_glsl[] =
 	"uniform sampler2D uZ0, uZ1, uZ2, uZ3;\n"
 	"uniform vec4 uLo, uHi, uRim;\n"
@@ -264,8 +267,14 @@ static const char planet_glsl[] =
 	"	col *= mix (1.0, 0.8 + 0.2 * smoothstep (0.0, 0.7, c), day * uLook.x);\n"
 	"	col *= mix (1.0 - uLook.y, 1.0, sqrt (mu));\n"
 	"	vec3 p = gl_TexCoord[2].xyz * 256.0 + uSeed;\n"
-	"	float amp = uLook.z * (1.0 - smoothstep (0.25, 1.0, length (fwidth (p))));\n"
-	"	if (amp > 0.0) col *= 1.0 + amp * (2.0 * pf_fbm (p, 3) - 1.0);\n"
+	"	float px = length (fwidth (p)), n = 0.0, a = 1.0;\n"
+	"	for (int k = 0; k < 3; k++) {\n"
+	"		float f = 1.0 - smoothstep (0.1, 0.4, px);\n"
+	"		if (f <= 0.0) break;\n"
+	"		n += a * f * (2.0 * pf_noise (p) - 1.0);\n"
+	"		p = p * 2.03 + vec3 (1.7, 9.2, 3.1); px *= 2.03; a *= 0.5;\n"
+	"	}\n"
+	"	col *= 1.0 + uLook.z * smoothstep (0.05, 0.3, mu) * n;\n"
 	"	col = mix (col, uRim.rgb, uRim.a * 0.6 * pow (1.0 - mu, 4.0) * day);\n"
 	"	gl_FragColor = vec4 (col, 1.0);\n"
 	"}\n";
@@ -308,6 +317,12 @@ void procfx_planet_bind (int unit, unsigned int tex)
 	glActiveTexture (GL_TEXTURE0 + unit);
 	glBindTexture (GL_TEXTURE_2D, tex);
 	glActiveTexture (GL_TEXTURE0);
+}
+
+void procfx_planet_attr (double c, double mu, const double m[3])
+{
+	glMultiTexCoord2d (GL_TEXTURE1, c, mu);
+	glMultiTexCoord3dv (GL_TEXTURE2, m);
 }
 
 void procfx_planet_end (void)

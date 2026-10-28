@@ -58,17 +58,27 @@ static void make_planet (struct PlanetPrim *p, int i, double dist, double angle)
 		p->atm_scale[k] = 1.0 + 0.02 * (k + 1);
 		p->atm_col[k] = 0x48f;
 	}
+	/* as Nu_PutPlanet: the rim from the record, before the band */
+	p->rim = p->natm ? p->atm_col[0] : -1;
 }
 
 static void draw (int i, double dist, double angle)
 {
 	struct PlanetPrim p;
 	void *data;
+	int had;
 
 	make_planet (&p, i, dist, angle);
+	had = p.natm;
 	planet_atmosphere_band (&p);
 	data = &p;
+	planet_rim_alpha = -1.0f;
 	Nu_DrawPlanet (&data);
+	/* an airless body gets no atmosphere rim */
+	if (planet_rim_alpha >= 0.0f && (planet_rim_alpha > 0.0f) != (had > 0)) {
+		printf ("rim %g on a body with %d layers\n", planet_rim_alpha, had);
+		gl_errors++;
+	}
 	data = &p;
 	Nu_DrawAtmosphere (&data);
 }

@@ -68,13 +68,13 @@ noise library.  Two are built: the Milky Way, switched off with
 All six only read memory and draw GL, so the risk to the core and the
 oracle is nil.  The risk column is about visuals and code.
 
-- **Limb glow.**  Built as part of the planets layer: see its notes below.
+- **Limb glow.**  Built as part of the planets layer: see "Prototype notes: the planets" below.
   - Hook: `Nu_DrawPlanet`, after `draw_planet_sphere`, drawn additive.
   - State: the outer `atm_col`, taken before `planet_atmosphere_band` zeroes `natm`; the sun vector; the body class.
   - Airless bodies get none.
   - Fade out while the near-atmosphere cones are drawn.
   - Verify: Lave from orbit.
-  - Switch: `--flat-limb`.
+  - Switch: `--flat-planets`, which covers the whole planets layer.
 - **Corona.**
   - Hook: `Nu_DrawTwinklyCircle`, with a model check in `Nu_PutTwinklyCircle`.
   - Streamers: `pf_fbm` over angle, seeded by the star.
@@ -91,11 +91,11 @@ oracle is nil.  The risk column is about visuals and code.
   - Hook: `pick` in hdback.c.
   - Flip, hue and crop from a seed of the port.
   - Switch: `--same-backdrops`.
-- **Close detail.**  Built as part of the planets layer: see its notes below.
+- **Close detail.**  Built as part of the planets layer: see "Prototype notes: the planets" below.
   - Hook: `draw_planet_sphere`.
   - 3D `pf_fbm` on the sphere position, so there are no cube seams.
   - Overlaps the parked planet-fidelity work, so do it last.
-  - Switch: `--flat-detail`.
+  - Switch: `--flat-planets`, as for the limb.
 
 **Recommendation.**  Ship the sky band, then limb glow, then corona.  With
 the shared blocks that is about 450 lines.  Do rings once a ringed save
