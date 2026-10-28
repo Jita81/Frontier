@@ -160,10 +160,15 @@ void CALLBACK combineCallback(GLdouble coords[3],
                      GLdouble *vertex_data[4],
                      GLfloat weight[4], GLdouble **dataOut );
 
+/* The 3D view, framebuffer pixels: the picture's top 168 rows, or wider
+ * (wide_3d) while draw_wide_flight draws a flight view past the picture. */
+static int wide_3d, v3d_x, v3d_y, v3d_w, v3d_h;
+
 static void set_main_viewport ()
 {
 	int ctrl_h = 32*pic_h/200;
-	glViewport (pic_x, pic_y + ctrl_h, pic_w, pic_h - ctrl_h);
+	if (wide_3d) glViewport (v3d_x, v3d_y, v3d_w, v3d_h);
+	else glViewport (pic_x, pic_y + ctrl_h, pic_w, pic_h - ctrl_h);
 }
 
 static void set_ctrl_viewport ()
@@ -5314,7 +5319,7 @@ static int circle_slices (double size, double z)
 
 	if (z >= 0.0 || size <= 0.0) return 32;
 	glGetDoublev (GL_PROJECTION_MATRIX, pm);
-	rpx = size / -z * pm[0] * pic_w * 0.5;
+	rpx = size / -z * pm[0] * (wide_3d ? v3d_w : pic_w) * 0.5;
 	if (rpx * 2.0 * M_PI / 16.0 <= 32.0) return 32;
 	if (rpx * 2.0 * M_PI / 16.0 >= 256.0) return 256;
 	return (int) (rpx * 2.0 * M_PI / 16.0);
@@ -5558,7 +5563,7 @@ static int oval_steps (const GLdouble c[3], double r)
 	if (-c[2] <= r) return OVAL_STEPS_MAX;	/* at or around the eye */
 	if (use_renderer == R_GL) pm[0] = tessProjMatrix[0];
 	else glGetDoublev (GL_PROJECTION_MATRIX, pm);
-	rpx = r / -c[2] * pm[0] * pic_w * 0.5;
+	rpx = r / -c[2] * pm[0] * (wide_3d ? v3d_w : pic_w) * 0.5;
 	n = rpx * 2.0 * M_PI / 16.0;
 	if (n <= OVAL_STEPS_MIN) return OVAL_STEPS_MIN;
 	if (n >= OVAL_STEPS_MAX) return OVAL_STEPS_MAX;
@@ -5868,6 +5873,53 @@ void Nu_GLClearArea ()
 }
 
 typedef void (*NU_DRAWFUNC) (void **);
+
+/*
+ * Widescreen flight (wide_3d): the core sends a planet only while its disc
+ * overlaps its own 4:3 picture (L3cd9c_ProjectPlanet), so a planet whose
+ * disc runs on into a side strip would vanish there as a whole disc the
+ * moment its rim leaves the picture. Instead it fades out over the last
+ * PLANET_FADE_PX of overlap (and in again the same way), with the surface
+ * and its atmosphere layers alike. A planet well inside, and any 4:3 window,
+ * is drawn exactly as before.
+ */
+#define PLANET_FADE_PX	(24.0 * pic_h / 720.0)
+
+static void planet_faded (NU_DRAWFUNC draw, void **data)
+{
+	const struct PlanetPrim *p = *data;
+	double t = tan (36.5 * M_PI / 360.0), lim[2] = { 1.9*t, t };
+	double z = p->centre[2], R2 = p->R * p->R, a = 1.0;
+	/* pixels per unit of x/z and y/z, as in draw_wide_flight */
+	double px[2] = { pic_w/2.0/lim[0], (pic_h - 32*pic_h/200)/2.0/lim[1] };
+	int i;
+
+	if (!wide_3d || z <= 0.0 || z*z <= R2) {
+		draw (data);
+		return;
+	}
+	for (i = 0; i < 2; i++) {
+		/* the disc's extent in x/z (y/z): the tangent planes */
+		double c = p->centre[i], q = p->R * sqrt (c*c + z*z - R2);
+		double s0 = (c*z - q) / (z*z - R2), s1 = (c*z + q) / (z*z - R2);
+		a = MIN (a, MIN (lim[i] - s0, s1 + lim[i]) * px[i] / PLANET_FADE_PX);
+	}
+	if (a >= 1.0) {
+		draw (data);
+	} else if (a <= 0.0) {
+		*data += sizeof (struct PlanetPrim);
+	} else {
+		glPushAttrib (GL_COLOR_BUFFER_BIT);
+		glEnable (GL_BLEND);
+		glBlendColor (0.0f, 0.0f, 0.0f, (GLfloat) a);
+		glBlendFunc (GL_CONSTANT_ALPHA, GL_ONE_MINUS_CONSTANT_ALPHA);
+		draw (data);
+		glPopAttrib ();
+	}
+}
+static void Nu_DrawPlanetFaded (void **data) { planet_faded (Nu_DrawPlanet, data); }
+static void Nu_DrawAtmosphereFaded (void **data) { planet_faded (Nu_DrawAtmosphere, data); }
+
 NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	NULL,
 	&Nu_DrawTriangle,
@@ -5881,7 +5933,7 @@ NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	&Nu_DrawComplexStartInner, // 9
 	&Nu_DrawComplexBezier,
 	&Nu_DrawTwinklyCircle,
-	&Nu_DrawPlanet,
+	&Nu_DrawPlanetFaded,
 	&Nu_DrawCircle,
 	&Nu_DrawCylinder,
 	&Nu_DrawBlob,
@@ -5889,7 +5941,7 @@ NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	&Nu_DrawPoint,
 	&Nu_Draw2DLine,
 	NULL,	/* NU_SUBTREE, see Nu_DrawPrimitive */
-	&Nu_DrawAtmosphere,
+	&Nu_DrawAtmosphereFaded,
 	&Nu_DrawSkyBand,
 	&Nu_DrawComplexOval
 };
@@ -5971,6 +6023,105 @@ static void set_gl_clear_col (int rgb)
 }
 
 /*
+ * A flight view in a window wider (or taller) than 4:3: the 3D view goes
+ * on past the picture where the black bars were, and the console's glass
+ * past the panel.
+ *
+ * One pass through a wider frustum with the same centre and scale, so the
+ * picture keeps its place and size and there is no seam to see. The core
+ * hands over every object inside its cull cone (L39646_3DObjClipOffscreen:
+ * |x| <= z, 2|y| <= z, less the object's size), which is wider than the
+ * picture, and the star blobs too (Nu_PutBlob comes before the core's
+ * 320x168 test, which only feeds its own 2D list): ships, stations,
+ * planets and stars all carry on into the strips. The view stops at that
+ * cone, so nothing pops in at the window's edge; a window wider than about
+ * 2.1:1 keeps the rest of its bars. Only what the core drops one primitive
+ * at a time off its 320x168 screen never reaches us: a circle whose centre
+ * is off it (L3a93c_project_real_circle: the small lights) and a line
+ * wholly off it (L3ace2_project_line).
+ *
+ * The console: beside the panel and under the picture, dark glass in
+ * hdui's base colours (C_BG1 at the top to C_BG0), the panel's top line
+ * run on.
+ */
+static int draw_wide_flight (void)
+{
+	int ctrl_h = 32*pic_h/200, i;
+	int ox = pic_x, oy = pic_y + ctrl_h, ow = pic_w, oh = pic_h - ctrl_h;
+	double t = tan (36.5 * M_PI / 360.0);		/* gluPerspective's */
+	double cx = ox + ow/2.0, cy = oy + oh/2.0, hx = ow/2.0, hy = oh/2.0;
+	int x0 = MAX (0, (int) ceil (cx - hx/(1.9*t)));
+	int x1 = MIN (fb_w, (int) floor (cx + hx/(1.9*t)));
+	int y1 = MIN (fb_h, (int) floor (cy + hy*0.5/t));
+	int e = MAX (1, pic_h/400);
+	/* the sky left, right and above the picture; the glass left and
+	 * right of the panel and below the picture */
+	int r[6][4] = {
+		{ x0, oy, ox - x0, y1 - oy }, { ox + ow, oy, x1 - ox - ow, y1 - oy },
+		{ ox, oy + oh, ow, y1 - oy - oh },
+		{ 0, 0, ox, oy }, { ox + ow, 0, fb_w - ox - ow, oy }, { ox, 0, ow, pic_y } };
+	double sx = 320.0/fb_w, sy = 200.0/fb_h;
+	GLdouble proj[16];
+
+	if (pic_w >= fb_w && pic_h >= fb_h) return 0;
+	glEnable (GL_SCISSOR_TEST);
+	/* the sky colour (still the clear colour) past the picture only */
+	for (i = 0; i < 3; i++) {
+		if (r[i][2] <= 0 || r[i][3] <= 0) continue;
+		glScissor (r[i][0], r[i][1], r[i][2], r[i][3]);
+		glClear (GL_COLOR_BUFFER_BIT);
+	}
+	glScissor (x0, oy, x1 - x0, y1 - oy);
+	glGetDoublev (GL_PROJECTION_MATRIX, proj);
+	glMatrixMode (GL_PROJECTION);
+	glLoadIdentity ();
+	glFrustum (1.9*t*GL_NEAR_PLANE*(x0 - cx)/hx, 1.9*t*GL_NEAR_PLANE*(x1 - cx)/hx,
+		   -t*GL_NEAR_PLANE, t*GL_NEAR_PLANE*(y1 - cy)/hy,
+		   GL_NEAR_PLANE, GL_FAR_PLANE);
+	glMatrixMode (GL_MODELVIEW);
+	wide_3d = 1;
+	v3d_x = x0; v3d_y = oy; v3d_w = x1 - x0; v3d_h = y1 - oy;
+	set_main_viewport ();
+	draw_3dview (znode_start);
+	hull_end ();
+	glDisable (GL_SCISSOR_TEST);
+	wide_3d = 0;
+	glMatrixMode (GL_PROJECTION);
+	glLoadMatrixd (proj);
+	glMatrixMode (GL_MODELVIEW);
+
+	glViewport (0, 0, fb_w, fb_h);
+	push_ortho ();
+	glPushAttrib (GL_ENABLE_BIT | GL_LIGHTING_BIT);
+	glDisable (GL_LIGHTING);
+	glDisable (GL_TEXTURE_2D);
+	glDisable (GL_BLEND);
+	glShadeModel (GL_SMOOTH);
+	glBegin (GL_QUADS);
+	for (i = 3; i < 6; i++) {
+		int *q = r[i];
+		if (q[2] <= 0 || q[3] <= 0) continue;
+		glColor3ub (0x0b, 0x10, 0x16);
+		glVertex2d (q[0]*sx, 0);
+		glVertex2d ((q[0] + q[2])*sx, 0);
+		glColor3ub (0x14, 0x1c, 0x26);
+		glVertex2d ((q[0] + q[2])*sx, q[3]*sy);
+		glVertex2d (q[0]*sx, q[3]*sy);
+		if (i == 5) continue;
+		glColor3ub (0x36, 0x3f, 0x49);
+		glVertex2d (q[0]*sx, (oy - e)*sy);
+		glVertex2d ((q[0] + q[2])*sx, (oy - e)*sy);
+		glVertex2d ((q[0] + q[2])*sx, oy*sy);
+		glVertex2d (q[0]*sx, oy*sy);
+	}
+	glEnd ();
+	glPopAttrib ();
+	pop_ortho ();
+	set_main_viewport ();
+	return 1;
+}
+
+/*
  * There is deliberately no backdrop drawing here.
  *
  * Nothing paints the backdrop under GL: Fn_Draw3DView, the engine's 2D
@@ -6009,7 +6160,11 @@ void Nu_DrawScreen ()
 	} else {
 		Uint32 t = hull_log_on () ? SDL_GetTicks () : 0;
 		hangar_faces = 0;
-		draw_3dview (znode_start);
+		/* a flight view with the panel up and no HD backdrop */
+		if (use_renderer != R_GL || classic_ui || !znode_start
+		    || !STMemory_ReadByte (__DL60cf_hblank_do_pal) || hdback_active ()
+		    || !bindings_in_flight_view (0, 0) || !draw_wide_flight ())
+			draw_3dview (znode_start);
 		if (t) hull_log_frame (t);
 	}
 	hull_end ();
