@@ -62,11 +62,9 @@ void hdui_clear_area (int x1, int y1, int x2, int y2);
  * Never called by an oracle replay (it writes the tape's values itself). */
 int hdui_mouse (short *ax, short *ay, int buttons);
 
-/* For hdback's concourse: nonzero when the last frame was a docked or
- * landed ship's front or rear view with no page up; name is the port's
- * (the speed line's, as the station card shows it), date the console's
- * date, "" if none. */
-int hdui_concourse (const char **name, const char **date);
+/* For hdback's concourse, this frame: 0 something is over the 3D view, 1
+ * nothing, 2 nothing and docked or landed; date: the console's, or "". */
+int hdui_concourse (const char **date);
 
 /* The GL context is going away: drop this layer's textures. */
 void hdui_forget (void);

@@ -62,10 +62,10 @@ int hdback_active (void);
 int hdback_frost_begin (float *rgb);
 void hdback_frost_end (void);
 
-/* After the 3D view (GL renderer): docked or landed, the front or rear
- * view, the station's concourse over it, fading in and out (0.3 s);
- * nothing under --pixel-art, --classic-ui or FE2_HD_BACKDROP=0. */
-void hdback_concourse (int fb_w, int fb_h);
+/* After the HD frame hooks (GL): docked or landed, the front or rear view
+ * bare, the port's concourse over the 3D view (docs/hd/hangar.md).  out:
+ * the screen about to be uploaded; the gunsight is taken out of it. */
+void hdback_concourse (int fb_w, int fb_h, unsigned char *out);
 
 /* The GL context is going away: drop the backdrop texture. */
 void hdback_forget (void);

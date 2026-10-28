@@ -1738,18 +1738,18 @@ static struct { char s[64]; int w, h; GLuint tex, glow; } sign[2];
 int hdtext_sign (int slot, const char *s, int w, int h, unsigned int *tex, unsigned int *glow)
 {
 	CFStringRef str;
-	CFMutableDictionaryRef at;
+	CFDictionaryRef at;
 	CFAttributedStringRef as;
 	CFNumberRef kern;
 	CTFontRef font;
-	CTLineRef line = NULL;
+	CTLineRef line;
 	CGContextRef g;
 	unsigned char *buf;
-	double cap = h * 0.46, size, tw = 0, kw;
-	int pass;
+	double cap = h * 0.46, size, tw, kw, sc;
 
 	if (slot < 0 || slot > 1 || !*s || w < 16 || h < 8 || w > 4096 || h > 1024) return 0;
-	if (sign[slot].tex && sign[slot].w == w && sign[slot].h == h && !strcmp (sign[slot].s, s))
+	/* kept, made or not: a sign that failed is not tried every frame */
+	if (sign[slot].w == w && sign[slot].h == h && !strcmp (sign[slot].s, s))
 		goto done;
 	if (sign[slot].tex) glDeleteTextures (1, &sign[slot].tex);
 	if (sign[slot].glow) glDeleteTextures (1, &sign[slot].glow);
@@ -1762,40 +1762,38 @@ int hdtext_sign (int slot, const char *s, int w, int h, unsigned int *tex, unsig
 		if (str) CFRelease (str);
 		return 0;
 	}
-	/* the cap height near half the panel; smaller if the text is too wide */
-	for (pass = 0; pass < 2; pass++) {
-		size = faces[F_TITLE].size100 * cap / 100;
-		kw = size * 0.08;
-		font = face_font (F_TITLE, size);
-		kern = CFNumberCreate (NULL, kCFNumberDoubleType, &kw);
-		at = CFDictionaryCreateMutable (NULL, 0, &kCFTypeDictionaryKeyCallBacks,
-						&kCFTypeDictionaryValueCallBacks);
-		CFDictionarySetValue (at, kCTFontAttributeName, font);
-		CFDictionarySetValue (at, kCTForegroundColorFromContextAttributeName, kCFBooleanTrue);
-		CFDictionarySetValue (at, kCTKernAttributeName, kern);
-		as = CFAttributedStringCreate (NULL, str, at);
-		line = CTLineCreateWithAttributedString (as);
-		CFRelease (as);
-		CFRelease (at);
-		CFRelease (kern);
-		CFRelease (font);
-		tw = CTLineGetTypographicBounds (line, NULL, NULL, NULL) - kw;
-		if (pass || tw <= w * 0.84) break;
-		cap *= w * 0.84 / tw;
-		CFRelease (line);
+	/* the cap height near half the panel, letter-spaced; squeezed to fit */
+	size = faces[F_TITLE].size100 * cap / 100;
+	kw = size * 0.08;
+	font = face_font (F_TITLE, size);
+	kern = CFNumberCreate (NULL, kCFNumberDoubleType, &kw);
+	{
+		const void *k[3] = { kCTFontAttributeName, kCTForegroundColorFromContextAttributeName, kCTKernAttributeName };
+		const void *v[3] = { font, kCFBooleanTrue, kern };
+		at = CFDictionaryCreate (NULL, k, v, 3, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
 	}
+	as = CFAttributedStringCreate (NULL, str, at);
+	line = CTLineCreateWithAttributedString (as);
+	CFRelease (as);
+	CFRelease (at);
+	CFRelease (kern);
+	CFRelease (font);
 	CFRelease (str);
+	tw = CTLineGetTypographicBounds (line, NULL, NULL, NULL) - kw;
+	sc = tw > w * 0.84 ? w * 0.84 / tw : 1;
 	buf = calloc ((size_t) w * h, 2);
 	g = buf ? CGBitmapContextCreate (buf, w, h, 8, w, NULL, kCGImageAlphaOnly) : NULL;
 	if (g) {
 		CGContextSetShouldAntialias (g, true);
 		CGContextSetGrayFillColor (g, 1.0, 1.0);
-		CGContextSetTextPosition (g, (w - tw) / 2, (h - cap) / 2);
+		CGContextTranslateCTM (g, w / 2.0, h / 2.0);
+		CGContextScaleCTM (g, sc, sc);
+		CGContextSetTextPosition (g, -tw / 2, -cap / 2);
 		CTLineDraw (line, g);
 		CGContextRelease (g);
 		/* the glow: the same, blurred */
 		memcpy (buf + (size_t) w * h, buf, (size_t) w * h);
-		box_blur (buf + (size_t) w * h, w, h, (int) (cap * 0.16) + 1);
+		box_blur (buf + (size_t) w * h, w, h, (int) (cap * sc * 0.16) + 1);
 		sign[slot].tex = alpha_texture (buf, w, h);
 		sign[slot].glow = alpha_texture (buf + (size_t) w * h, w, h);
 	}

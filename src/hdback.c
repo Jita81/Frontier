@@ -49,6 +49,7 @@ extern unsigned short MainPalette[256];	/* ST $0rgb words, read only */
 #define OBJ_INDEX		93	/* byte: its own index */
 #define OBJ_SEED		118	/* long */
 #define OBJ_TEMP		182	/* word: kelvin */
+#define OBJ_NAME		246	/* its name, NUL-ended (GetFmtStr writes it) */
 #define OBJ_FLAGS		280	/* byte */
 
 #define STATE_DOCKED		0x54
@@ -324,17 +325,22 @@ static GLuint frost_tex;
 static int frost_tw, frost_th;
 
 static GLuint conc_tex;		/* the concourse's picture, its own */
-static char conc_file[64];
+static const char *conc_file;
 
-void hdback_forget (void)
+static void forget_page (void)
 {
-	if (conc_tex) glDeleteTextures (1, &conc_tex);
-	conc_tex = 0;
-	conc_file[0] = 0;
 	if (tex) glDeleteTextures (1, &tex);
 	if (frost_tex) glDeleteTextures (1, &frost_tex);
 	tex = frost_tex = 0;
 	tex_file[0] = 0;
+}
+
+void hdback_forget (void)
+{
+	forget_page ();
+	if (conc_tex) glDeleteTextures (1, &conc_tex);
+	conc_tex = 0;
+	conc_file = NULL;
 }
 
 static int pow2 (int n)
@@ -470,41 +476,48 @@ static void make_frost (const unsigned char *rgba, int w, int h)
 	free (out);
 }
 
-static int load (const char *file)
+/* art/rel into *t (its picture w x h at the top left of a tw x th
+ * texture); the pixels, for the caller to free, NULL if unreadable */
+static unsigned char *upload (const char *rel, GLuint *t, int *w, int *h, int *tw, int *th)
 {
-	char rel[96];
-	unsigned char *rgba;
+	unsigned char *rgba = art_load_rgba (rel, w, h);
 	GLint bound;
-	int w, h;
 
-	if (!strcmp (file, tex_file)) return tex != 0;
-	hdback_forget ();
-	snprintf (tex_file, sizeof tex_file, "%s", file);
-	snprintf (rel, sizeof rel, "backdrops/%s", file);
-	rgba = art_load_rgba (rel, &w, &h);
 	if (!rgba) {
 		fprintf (stderr, "hdback: cannot read %s\n", art_path (rel));
-		return 0;
+		return NULL;
 	}
-	img_w = w;
-	img_h = h;
-	tex_w = pow2 (w);
-	tex_h = pow2 (h);
+	*tw = pow2 (*w);
+	*th = pow2 (*h);
 	glGetIntegerv (GL_TEXTURE_BINDING_2D, &bound);
-	glGenTextures (1, &tex);
-	glBindTexture (GL_TEXTURE_2D, tex);
-	glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA, tex_w, tex_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+	glGenTextures (1, t);
+	glBindTexture (GL_TEXTURE_2D, *t);
+	glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA, *tw, *th, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
 	glPixelStorei (GL_UNPACK_ALIGNMENT, 1);
-	glTexSubImage2D (GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+	glTexSubImage2D (GL_TEXTURE_2D, 0, 0, 0, *w, *h, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
 	glPixelStorei (GL_UNPACK_ALIGNMENT, 4);
 	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	glBindTexture (GL_TEXTURE_2D, (GLuint) bound);
+	return rgba;
+}
+
+static int load (const char *file)
+{
+	char rel[96];
+	unsigned char *rgba;
+
+	if (!strcmp (file, tex_file)) return tex != 0;
+	forget_page ();
+	snprintf (tex_file, sizeof tex_file, "%s", file);
+	snprintf (rel, sizeof rel, "backdrops/%s", file);
+	rgba = upload (rel, &tex, &img_w, &img_h, &tex_w, &tex_h);
+	if (!rgba) return 0;
 	/* the frost is for hdui's glass, and hdui is off under --classic-ui
 	 * (set once, at start): no frost to make there */
-	make_frost (rgba, w, h);
+	make_frost (rgba, img_w, img_h);
 	free (rgba);
 	return 1;
 }
@@ -597,10 +610,10 @@ static void log_where (const struct where *w, int page,
 	char buf[512];
 
 	snprintf (buf, sizeof buf,
-		  "hdback: state=$%02x view=$%02x mode=$%02x bgcol=%d pal14=$%03x page=%d port=#%d model=$%02x flags=$%02x %s"
+		  "hdback: state=$%02x mode=$%02x bgcol=%d pal14=$%03x page=%d port=#%d model=$%02x flags=$%02x %s"
 		  " body=#%d model=$%02x %dK class=%s chain=%s star=#%d model=$%02x light=%s"
 		  " -> key %s-%s-%s %s%s%s",
-		  w->state, rb (A6 + A6_VIEW_MODE), rb (A6 + A6_SPACE_MODE), fe2_bgcol, MainPalette[PAGE_COLOUR], page,
+		  w->state, rb (A6 + A6_SPACE_MODE), fe2_bgcol, MainPalette[PAGE_COLOUR], page,
 		  w->port_idx, w->port_model, w->port_flags, kind_name[w->kind],
 		  w->body_idx, w->body_model, w->body_temp, w->cls ? w->cls : "-", w->chain,
 		  w->star_idx, w->star_model, light_name[w->light],
@@ -727,102 +740,80 @@ void hdback_draw (int fb_w, int fb_h)
 
 /* --- the concourse ----------------------------------------------------
  *
- * Docked or landed, looking out of the ship (front or rear view): the
- * station's arrivals concourse instead of the 3D bay, behind hdui's
- * station-home cards, with the port's name and the date lit on its two
- * blank signs.  Cross-fades back to the 3D view on a launch or another
- * view.  art/hangar/manifest.txt: the pictures, where their signs and
- * ceiling are, and which goes where (docs/hd/hangar.md). */
+ * Docked or landed at a port, looking out of the ship (front or rear
+ * view), nothing else on the view: the port's arrivals concourse instead
+ * of the 3D bay, behind hdui's station-home cards, with the port's own
+ * name and the date lit on its two blank signs.  Cross-fades back to the
+ * 3D view on a launch or another view; gone at once for a page or a map.
+ * Four pictures (art/hangar, docs/hd/hangar.md), the opening in their
+ * ceilings tinted to the star's light. */
 
 #define CONC_FADE	0.3f	/* seconds */
-#define MAX_CPIC	8
-#define MAX_CUSE	32
 
-static struct cpic { char file[64]; float ceil, sign[2][8]; } cpics[MAX_CPIC];
-static struct cuse { char kind[16], cls[16], light[16]; int pic; float rgb[3]; } cuses[MAX_CUSE];
-static int n_cpic, n_cuse, conc_read;
+enum { C_ORBITAL, C_TERRAN, C_AIRLESS, C_DUSK };
+
+/* each picture: where its ceiling opening ends, and its signs' corners,
+ * x,y of TL TR BR BL, the yellow then the blue (fractions of it) */
+static const struct cpic { const char *file; float ceil, sign[2][8]; } cpics[] = {
+	{ "concourse-orbital.jpg", 0.17f,
+	  { { .4695f, .3833f, .6047f, .3819f, .6055f, .4472f, .4695f, .4500f },
+	    { .6562f, .3819f, .7945f, .3806f, .7953f, .4458f, .6562f, .4472f } } },
+	{ "concourse-terran.jpg", 0.20f,
+	  { { .4555f, .3139f, .5969f, .3139f, .5977f, .4264f, .4547f, .4250f },
+	    { .6711f, .3125f, .8117f, .3139f, .8125f, .4222f, .6703f, .4250f } } },
+	{ "concourse-airless.jpg", 0.22f,
+	  { { .4906f, .3333f, .6586f, .3208f, .6586f, .3958f, .4906f, .4042f },
+	    { .7320f, .3181f, .8961f, .3097f, .8961f, .3833f, .7312f, .3917f } } },
+	{ "concourse-dusk.jpg", 0.25f,
+	  { { .4250f, .3653f, .6102f, .3653f, .6102f, .4292f, .4250f, .4306f },
+	    { .6813f, .3653f, .8586f, .3653f, .8586f, .4306f, .6813f, .4306f } } },
+};
+
+/* orbital; on the ground: airless, a dusk (a red star, or a thick or
+ * thin poisonous sky), else a blue sky with a city */
+static const struct cpic *conc_pick (const struct where *w, float *rgb)
+{
+	static const float red[3] = { 1.00f, 0.72f, 0.62f };
+	const char *c = w->cls ? w->cls : "-";
+	int pic = C_ORBITAL;
+	const float *t;
+
+	if (w->kind == K_SURFACE)
+		pic = !strcmp (c, "airless") ? C_AIRLESS :
+		      w->light == L_RED || !strcmp (c, "corrosive") || !strcmp (c, "methane") ||
+		      !strcmp (c, "rocky") ? C_DUSK : C_TERRAN;
+	/* the backdrops' grading for the star's light; a red sun, red light
+	 * (a dusk is red already) */
+	if (!manifest_read) read_manifest ();
+	t = w->light != L_RED ? tint[w->light] : pic == C_ORBITAL ? red : tint[L_NONE];
+	memcpy (rgb, t, sizeof (float[3]));
+	return &cpics[pic];
+}
+
+/* the port's own name, from its object (read only) */
+static void port_name (char *s, int max)
+{
+	unsigned int port = rl (A6 + A6_PORT_PTR);
+	int i, ch;
+
+	for (i = 0; i < max - 1 && sane (port) && (ch = rb (port + OBJ_NAME + i)) >= ' ' && ch != 0x7f; i++)
+		s[i] = (char) ch;
+	s[i] = 0;
+}
+
 static int conc_tw, conc_th, conc_iw, conc_ih;
-
-static void read_concourse (void)
-{
-	FILE *f = fopen (art_path ("hangar/manifest.txt"), "r");
-	char line[512], d[64];
-	struct cpic *p;
-	struct cuse *u;
-	float *g;
-	int i, n;
-
-	conc_read = 1;
-	if (!f) return;
-	while (fgets (line, sizeof line, f)) {
-		p = &cpics[n_cpic];
-		g = p->sign[0];
-		u = &cuses[n_cuse];
-		if (n_cpic < MAX_CPIC && sscanf (line,
-		    "pic %63s %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f",
-		    p->file, &p->ceil, g, g + 1, g + 2, g + 3, g + 4, g + 5, g + 6, g + 7,
-		    g + 8, g + 9, g + 10, g + 11, g + 12, g + 13, g + 14, g + 15) == 18)
-			n_cpic++;
-		else if (n_cuse < MAX_CUSE && (n = sscanf (line, "use %15s %15s %15s %63s %f %f %f",
-			   u->kind, u->cls, u->light, d, u->rgb, u->rgb + 1, u->rgb + 2)) >= 4) {
-			if (n < 7) u->rgb[0] = u->rgb[1] = u->rgb[2] = 1.0f;
-			for (u->pic = -1, i = 0; i < n_cpic; i++)
-				if (!strcmp (cpics[i].file, d)) u->pic = i;
-			if (u->pic >= 0) n_cuse++;
-		}
-	}
-	fclose (f);
-}
-
-static int field_is (const char *pat, const char *s)
-{
-	return !strcmp (pat, "*") || (s && !strcmp (pat, s));
-}
-
-static const struct cuse *conc_pick (const struct where *w)
-{
-	int i;
-
-	if (!conc_read) read_concourse ();
-	for (i = 0; w->kind && i < n_cuse; i++)
-		if (field_is (cuses[i].kind, kind_name[w->kind]) && field_is (cuses[i].cls, w->cls) &&
-		    field_is (cuses[i].light, light_name[w->light]))
-			return &cuses[i];
-	return NULL;
-}
 
 static int conc_load (const char *file)
 {
 	char rel[96];
-	unsigned char *rgba;
-	GLint bound;
 
-	if (!strcmp (file, conc_file)) return conc_tex != 0;
+	if (file == conc_file) return conc_tex != 0;
 	if (conc_tex) glDeleteTextures (1, &conc_tex);
 	conc_tex = 0;
-	snprintf (conc_file, sizeof conc_file, "%s", file);
+	conc_file = file;
 	snprintf (rel, sizeof rel, "hangar/%s", file);
-	rgba = art_load_rgba (rel, &conc_iw, &conc_ih);
-	if (!rgba) {
-		fprintf (stderr, "hdback: cannot read %s\n", art_path (rel));
-		return 0;
-	}
-	conc_tw = pow2 (conc_iw);
-	conc_th = pow2 (conc_ih);
-	glGetIntegerv (GL_TEXTURE_BINDING_2D, &bound);
-	glGenTextures (1, &conc_tex);
-	glBindTexture (GL_TEXTURE_2D, conc_tex);
-	glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA, conc_tw, conc_th, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-	glPixelStorei (GL_UNPACK_ALIGNMENT, 1);
-	glTexSubImage2D (GL_TEXTURE_2D, 0, 0, 0, conc_iw, conc_ih, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
-	glPixelStorei (GL_UNPACK_ALIGNMENT, 4);
-	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-	glBindTexture (GL_TEXTURE_2D, (GLuint) bound);
-	free (rgba);
-	return 1;
+	free (upload (rel, &conc_tex, &conc_iw, &conc_ih, &conc_tw, &conc_th));
+	return conc_tex != 0;
 }
 
 /* a texture over the quad q (x,y of TL TR BR BL, pixels), in perspective:
@@ -868,39 +859,41 @@ static void sign_text (int k, const char *s, const float *q, float fade)
 	sign_quad (q, t);
 }
 
-void hdback_concourse (int fb_w, int fb_h)
+/* out: the screen hdui and the rest have edited, before it is drawn */
+void hdback_concourse (int fb_w, int fb_h, unsigned char *out)
 {
 	static float fade, rgb[3];
 	static const struct cpic *p;
 	static Uint32 last;
-	static char name[64], date[32];
-	const struct cuse *use = NULL;
-	const char *nm, *dt;
+	static char name[24], date[32];
+	const char *dt;
 	struct where w;
 	Uint32 now = SDL_GetTicks ();
 	float dts = last ? (now - last) / 1000.0f : 0, s, dw, dh, x0, y0, u, v, y, c, q[8], ph;
-	int px, py, pw, ph_i, top, k, i;
+	int px, py, pw, ph_i, top, k, i, bare;
 
 	last = now;
 	if (dts > 0.1f) dts = 0.1f;
 	if (off < 0) read_env ();
 	if (pixel_art || classic_ui || off) return;
+	bare = hdui_concourse (&dt);
 	locate (&w);
-	if (w.kind && hdui_concourse (&nm, &dt) && rb (A6 + A6_VIEW_MODE) <= 1 &&
-	    (rb (A6 + A6_SPACE_MODE) & 0x01))
-		use = conc_pick (&w);
-	if (use) {
-		p = &cpics[use->pic];
-		memcpy (rgb, use->rgb, sizeof rgb);
-		snprintf (name, sizeof name, "%s", nm);
+	if (bare == 2 && w.kind && w.state != STATE_LANDED_ROUGH && rb (A6 + A6_VIEW_MODE) <= 1 &&
+	    (rb (A6 + A6_SPACE_MODE) & 0x01)) {
+		p = conc_pick (&w, rgb);
+		port_name (name, sizeof name);
 		snprintf (date, sizeof date, "%s", dt);
-	}
-	fade += (use ? dts : -dts) / CONC_FADE;
+		fade += dts / CONC_FADE;
+	} else
+		/* a launch: fades; a page or a map: gone at once */
+		fade = bare && (rb (A6 + A6_SPACE_MODE) & 0x01) ? fade - dts / CONC_FADE : 0;
 	if (fade > 1) fade = 1;
 	if (fade <= 0 || !p || !conc_load (p->file)) {
-		fade = fade < 0 ? 0 : fade;
+		fade = 0;
 		return;
 	}
+	if (fade > 0.5f)	/* the gunsight off the signs and the door */
+		for (i = 60; i < 108; i++) memset (out + i * ST_W + 136, CLEAR, 48);
 
 	/* over the 3D view and the bars beside it, down to the console */
 	gl_picture_rect (&px, &py, &pw, &ph_i);
@@ -912,12 +905,12 @@ void hdback_concourse (int fb_w, int fb_h)
 	dw = conc_iw * s;
 	dh = conc_ih * s;
 	x0 = (pw - dw) * 0.5f;
-	y0 = (ph - dh) * 0.5f;
+	y0 = (ph - dh) * 0.35f;	/* a wide screen keeps more ceiling */
 	u = (float) conc_iw / conc_tw;
 	v = (float) conc_ih / conc_th;
 
 	glPushAttrib (GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_TEXTURE_BIT |
-		      GL_VIEWPORT_BIT | GL_CURRENT_BIT | GL_TRANSFORM_BIT | GL_LIGHTING_BIT);
+		      GL_VIEWPORT_BIT | GL_CURRENT_BIT | GL_TRANSFORM_BIT);
 	glViewport (0, top, pw, (int) ph);
 	glMatrixMode (GL_PROJECTION);
 	glPushMatrix ();
@@ -948,20 +941,6 @@ void hdback_concourse (int fb_w, int fb_h)
 			glTexCoord2f (u, ys[i] * v); glVertex2f (x0 + dw, y);
 		}
 		glEnd ();
-	}
-
-	/* life: a slow shimmer along the wall's light strips */
-	{
-		float t = (now % 9000) / 9000.0f * 1.6f - 0.3f, b0 = y0 + (p->ceil + 0.08f) * dh;
-		float b1 = y0 + 0.62f * dh, xa = x0 + (t - 0.12f) * dw, xm = x0 + t * dw, xb = x0 + (t + 0.12f) * dw;
-		glDisable (GL_TEXTURE_2D);
-		glBlendFunc (GL_DST_COLOR, GL_ONE);
-		glBegin (GL_QUAD_STRIP);
-		glColor4f (0, 0, 0, 1); glVertex2f (xa, b0); glVertex2f (xa, b1);
-		glColor4f (0.10f * fade, 0.09f * fade, 0.06f * fade, 1); glVertex2f (xm, b0); glVertex2f (xm, b1);
-		glColor4f (0, 0, 0, 1); glVertex2f (xb, b0); glVertex2f (xb, b1);
-		glEnd ();
-		glEnable (GL_TEXTURE_2D);
 	}
 
 	/* the signs: the port's name on the yellow one, the date on the blue */

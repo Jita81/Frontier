@@ -119,8 +119,6 @@ static unsigned int text_rgb (unsigned int c)
 #define H_CASH		0x962530d2u	/* the cargo panel's cash label */
 #define H_DOCKED	0xf5e33b2bu	/* the console's flight status: docked */
 #define H_LANDED	0xbb34a54du	/* ... landed */
-#define H_FRONT_VIEW	0xca93b499u	/* the console's view: front */
-#define H_REAR_VIEW	0xa4555626u	/* ... rear */
 
 static const unsigned int prefs_heads[] = {
 	0xdfb0e074u, 0x0662faa5u, 0x9f9c4fd4u, 0xfa2e3895u, 0xd9893ebfu
@@ -2914,9 +2912,11 @@ static void svc_seen (const struct hdtext_run *lab, int tx, int ty)
 	svc_label[i][o] = 0;
 }
 
-static int docked_view (void)
+/* nothing over the 3D view but the console.  0: not bare; 2: bare and
+ * the console says docked (or landed); 1: bare. */
+static int bare_view (int landed)
 {
-	int i, docked = 0;
+	int i, st = 1;
 
 	if (n_btn) return 0;
 	/* a page's 3D view; not a comms face down in the console */
@@ -2924,12 +2924,13 @@ static int docked_view (void)
 		if (fr_ca[i][1] < CTRL_Y - 2) return 0;
 	for (i = 0; i < n_runs; i++) {
 		const struct hdtext_run *r = &runs[i];
-		if (r->hash == H_DOCKED && r->y >= CTRL_Y - 2 && r->y <= CTRL_Y + 4 && r->x0 >= 240)
-			docked = 1;
+		if ((r->hash == H_DOCKED || (landed && r->hash == H_LANDED)) &&
+		    r->y >= CTRL_Y - 2 && r->y <= CTRL_Y + 4 && r->x0 >= 240)
+			st = 2;
 		else if (ON_PAGE (r) && r->y < FOOT_Y)
 			return 0;
 	}
-	return docked;
+	return st;
 }
 
 /* a card on the view: icon, label (run i), chevron; a click goes to the
@@ -2957,81 +2958,62 @@ static void dock_card (float x0, float y0, float x1, float y1, int icon, int i, 
 	if (h >= 0) hot[h].chain = chain;
 }
 
-/* the speed line's last part: after its colon, the name of what the ship
- * is relative to (the port, docked); its length, 0 if none */
-static int speed_name (char *name, int max, int *col)
-{
-	char c[96];
-	unsigned char sp[96];
-	int i, k, n, o = 0;
-
-	for (i = n_runs - 1; i >= 0; i--) {
-		struct hdtext_run *r = &runs[i];
-		if (!ON_PAGE (r) || r->y < FOOT_Y || r->x0 < 160) continue;
-		n = hdtext_chars (r, c, sp, sizeof (c));
-		for (k = 0; k < n - 1 && c[k] != ':'; k++)
-			;
-		if (k >= n - 1) return 0;
-		for (k++; k < n && o < max - 2; k++) {
-			if (o && sp[k]) name[o++] = ' ';
-			name[o++] = c[k];
-		}
-		name[o] = 0;
-		*col = r->col;
-		break;
-	}
-	return o;
-}
-
-/* For hdback's concourse (hdui.h), from the last frame: the console says
- * docked or landed and the front or rear view, with no page up */
+/* For hdback's concourse (hdui.h), from this frame */
 static int conc_ok;
-static char conc_name[100], conc_date[32];
+static char conc_date[32];
 
 static void concourse_scan (void)
 {
 	char c[32];
 	unsigned char sp[32];
-	int i, k, n, col, status = 0, view = 0;
+	int i, k, n, o = 0;
 
-	conc_ok = 0;
-	if (n_btn || (page != P_NONE && page != P_DOCK)) return;
-	conc_date[0] = 0;
-	for (i = 0; i < n_runs; i++) {
+	conc_ok = page == P_DOCK ? 2 : page == P_NONE ? bare_view (1) : 0;
+	for (i = 0; conc_ok == 2 && i < n_runs; i++) {
 		const struct hdtext_run *r = &runs[i];
-		if (r->y < CTRL_Y - 2) continue;
-		if ((r->hash == H_DOCKED || r->hash == H_LANDED) && r->y <= CTRL_Y + 4 && r->x0 >= 240)
-			status = 1;
-		else if ((r->hash == H_FRONT_VIEW || r->hash == H_REAR_VIEW) && r->x0 >= 240)
-			view = 1;
-		else if (r->y <= CTRL_Y + 4 && r->x0 < 60 && r->letters >= 8) {
-			/* the clock and date: the date after the first space */
-			n = hdtext_chars (r, c, sp, sizeof (c));
-			for (k = 1; k < n && !sp[k]; k++)
-				;
-			if (k < n) {
-				memcpy (conc_date, c + k, n - k);
-				conc_date[n - k] = 0;
-			}
+		/* the console's clock and date: the date after the first space */
+		if (r->y < CTRL_Y - 2 || r->y > CTRL_Y + 4 || r->x0 >= 60 || r->letters < 8) continue;
+		n = hdtext_chars (r, c, sp, sizeof (c));
+		for (k = 1; k < n && !sp[k]; k++)
+			;
+		for (; k < n && o < (int) sizeof (conc_date) - 2; k++) {
+			if (o && sp[k]) conc_date[o++] = ' ';
+			conc_date[o++] = c[k];
 		}
+		break;
 	}
-	conc_ok = status && view && speed_name (conc_name, sizeof (conc_name), &col);
+	conc_date[o] = 0;
 }
 
-int hdui_concourse (const char **name, const char **date)
+int hdui_concourse (const char **date)
 {
-	*name = conc_name;
 	*date = conc_date;
 	return conc_ok;
 }
 
 static void layout_dock (void)
 {
-	char name[100];
-	int k, o, ni = -1, li[N_SVC], col = 0;
+	char c[96], name[100];
+	unsigned char sp[96];
+	int i, k, n, o = 0, ni = -1, li[N_SVC], col = 0;
 	float x0 = 4, y0 = 4, y1 = 22, w, x1, wmax;
 
-	o = speed_name (name, sizeof (name), &col);
+	/* the speed line's last part: after its colon, the name of what the ship is relative to */
+	for (i = n_runs - 1; i >= 0; i--) {
+		struct hdtext_run *r = &runs[i];
+		if (!ON_PAGE (r) || r->y < FOOT_Y || r->x0 < 160) continue;
+		n = hdtext_chars (r, c, sp, sizeof (c));
+		for (k = 0; k < n - 1 && c[k] != ':'; k++)
+			;
+		if (k >= n - 1) return;
+		for (k++; k < n && o < (int) sizeof (name) - 2; k++) {
+			if (o && sp[k]) name[o++] = ' ';
+			name[o++] = c[k];
+		}
+		name[o] = 0;
+		col = r->col;
+		break;
+	}
 	if (!o) return;
 	svc_find_labels ();
 	ni = hdtext_add (name, 0, 2, col);
@@ -3210,7 +3192,8 @@ void hdui_frame (const unsigned char *raster, unsigned char *out,
 	n_runs = hdtext_runs (&runs);
 	find_buttons (raster);
 	page = classify ();
-	if (page == P_NONE && docked_view ()) page = P_DOCK;
+	if (page == P_NONE && bare_view (0) == 2) page = P_DOCK;
+	concourse_scan ();	/* before layout_dock adds its runs */
 	switch (page) {
 	case P_DOCK: layout_dock (); if (!n_el) page = P_NONE; break;
 	case P_STATION: layout_station (raster, out); break;
@@ -3218,7 +3201,6 @@ void hdui_frame (const unsigned char *raster, unsigned char *out,
 	case P_PREFS: layout_prefs (pal); break;
 	case P_START: layout_start (); break;
 	}
-	concourse_scan ();
 	for (i = 0; i < n_btn; i++)
 		if (btn[i].used) take_out (raster, out, &btn[i]);
 	if (page == P_STATION || page == P_F3 || page == P_PREFS) text_bg_out (raster, out);
