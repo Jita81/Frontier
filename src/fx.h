@@ -3,6 +3,7 @@
 #define _FX_H
 
 extern int flat_fx;	/* --flat-fx: none of this, the base HD look */
+extern int flat_explosions;	/* --flat-explosions: the base explosions only */
 
 /* Put side (ST memory is only read).  fx_tag_for: 1 when the object being
  * drawn has effects; tag (kind, aux, rec) then goes in front of its
