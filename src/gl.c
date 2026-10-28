@@ -620,6 +620,7 @@ static void galmap_update (void)
 	int m = classic_ui ? 0 : STMemory_ReadByte (__DL5eb6_a6_base + A6_GALMAP_MODE) & 0xff;
 
 	hdtext_map = m == 0xff || m == 2;
+	hdtext_focus_x = -1;	/* until the selected star is drawn */
 	galmap = use_renderer != R_GL ? 0 : m == 0xff ? 1 : m == 2 ? 2 : 0;
 }
 
@@ -3601,6 +3602,16 @@ void Nu_DrawCircle (void **data)
 		float R = (unsigned char) r / 255.0f, G = (unsigned char) g / 255.0f,
 		      B = (unsigned char) b / 255.0f;
 		if ((short) dreg2 >= 8) {
+			/* where its name is, for hdtext (ST pixels) */
+			GLdouble mv[16], pm[16], wx, wy, wz;
+			GLint vp[4];
+			glGetDoublev (GL_MODELVIEW_MATRIX, mv);
+			glGetDoublev (GL_PROJECTION_MATRIX, pm);
+			glGetIntegerv (GL_VIEWPORT, vp);
+			if (gluProject (v1[0], v1[1], v1[2], mv, pm, vp, &wx, &wy, &wz)) {
+				hdtext_focus_x = (wx - pic_x) * 320 / pic_w;
+				hdtext_focus_y = (pic_y + pic_h - wy) * 200 / pic_h;
+			}
 			soft_ring (v1, size, R, G, B);
 		} else {
 			soft_disc (v1, 0, 0, 0.3f * size, 2.4f * size, R, G, B, 0.35f);
@@ -3924,17 +3935,15 @@ void Nu_PutLine ()
 	znode_wrcolor (GetReg (REG_D6));
 }
 /* The 'you are here' label (the game's own stroke text) drawn like the
- * HD labels: a dark halo, a magenta glow and a light core, each pass over
- * all the strokes so no stroke's halo dims another's core; round points
+ * HD labels: a dark halo and a light grey core, the halo pass over all
+ * the strokes first so no stroke's halo dims another's core; round points
  * at the ends make round caps and joins.  The label shrinks as the map
  * zooms out, and its strokes thin with it. */
 static int here_seg[64][6], here_n;
-static unsigned char here_rgb[3];
 
 static void here_draw (void)
 {
-	static const float wid[3] = { 4.2f, 3.0f, 1.6f };
-	const unsigned char *c = here_rgb;
+	static const float wid[2] = { 2.4f, 0.8f };
 	float w = px_scale (), lo = 1e9f, hi = -1e9f;
 	GLdouble pm[16];
 	int i, k;
@@ -3952,10 +3961,9 @@ static void here_draw (void)
 	else if (hi - lo < 5 * w) w *= hi - lo < 1.25f * w ? 0.25f : (hi - lo) / (5 * w);
 	glEnable (GL_POINT_SMOOTH);
 	/* too small to read with a halo: just the strokes */
-	for (k = w < 0.5f * px_scale () ? 2 : 0; k < 3; k++) {
-		if (k == 0) glColor4f (0, 0, 0, 0.55f);
-		else if (k == 1) glColor4ub (c[0], c[1], c[2], 120);
-		else glColor4ub ((c[0] + 510) / 3, (c[1] + 510) / 3, (c[2] + 510) / 3, 255);
+	for (k = w < 0.5f * px_scale (); k < 2; k++) {
+		if (k == 0) glColor4f (0, 0, 0, 0.6f);
+		else glColor4ub (222, 222, 222, 255);
 		glLineWidth (wid[k] * w);
 		glPointSize (wid[k] * w);
 		glBegin (GL_LINES);
@@ -3970,6 +3978,7 @@ static void here_draw (void)
 	}
 	glDisable (GL_POINT_SMOOTH);
 	glLineWidth (1.0f);
+	glPointSize (1.0f);
 	here_n = 0;
 }
 
@@ -3987,7 +3996,6 @@ void Nu_DrawLine (void **data)
 		if (here_n < 64) {
 			memcpy (here_seg[here_n], v1, sizeof v1);
 			memcpy (here_seg[here_n++] + 3, v2, sizeof v2);
-			here_rgb[0] = r; here_rgb[1] = g; here_rgb[2] = b;
 		}
 		return;
 	}

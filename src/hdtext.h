@@ -33,6 +33,10 @@ extern int hdtext_map;
  * kept apart from each other (no name runs into another). */
 extern int hdtext_queue;
 
+/* Where gl.c drew the map's selected star this frame, ST pixels (x < 0:
+ * not on the map): its name keeps its place first. */
+extern float hdtext_focus_x, hdtext_focus_y;
+
 /* DrawStr drew glyph chr of font (the 10 byte a glyph bitmap font
  * DrawChar draws with) (character code - 0x20) with its top left
  * at ST pixel (x, y) in palette colour col, with a shadow at (x+1, y+1)

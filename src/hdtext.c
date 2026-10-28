@@ -54,6 +54,7 @@ static struct ent slots[ST_W * ST_H][2];
 static unsigned char listed[ST_W * ST_H];
 static int active[MAX_ACTIVE], n_active;
 int hdtext_map, hdtext_queue;
+float hdtext_focus_x = -1, hdtext_focus_y;
 /* the ink of the names gl.c drew over the screen this frame */
 static unsigned char over[ST_W * ST_H];
 
@@ -125,7 +126,10 @@ void hdtext_glyph (const unsigned char *font, int x, int y, int col, int chr,
 		s[0] = s[1];
 		s[1] = t;
 	} else if (!((s[0].flags & F_USED) && s[0].chr == chr && s[0].col == col && s[0].flags == flags)) {
-		s[1] = s[0];
+		/* a name passing over text that stays (the sector line) takes
+		 * the place of the last frame's name, not of that text */
+		if (!((flags & F_QUEUED) && (s[0].flags & F_QUEUED) && s[0].age && (s[1].flags & F_USED)))
+			s[1] = s[0];
 		s[0].chr = chr;
 		s[0].col = col;
 		s[0].flags = flags;
@@ -1383,7 +1387,7 @@ static void place_run (int i, float sx, float sy, const unsigned int *pal, const
 		p->drop = floorf (ro->drop * cap + 0.5f);
 		if (p->drop < 1) p->drop = 1;
 		/* text over the map: a halo, so it reads over stars and lines */
-		p->halo = hdtext_map && r->y + 8 < CTRL_Y ? ceilf (0.08f * cap) : 0;
+		p->halo = hdtext_map && r->y + r->dy + 8 <= CTRL_Y ? ceilf (0.08f * cap) : 0;
 		pen += (adv * k + ro->track * cap) * z * sq;
 	}
 }
@@ -1589,9 +1593,9 @@ static void draw_vector_icons (const unsigned int *pal, const unsigned int *ctrl
 }
 
 /* On the map, names that would overlap: text that is not a name, then
- * the name nearer the middle, keeps its place; the other moves a line
- * down or up if that is clear, or is left out, as a printed map leaves
- * out what it has no room for. */
+ * the name nearer the selected star (or the middle), keeps its place; the
+ * other moves a line down or up if that is clear and still on the map, or
+ * is left out, as a printed map leaves out what it has no room for. */
 static float clutter_key[MAX_RUNS];
 
 static int cmp_clutter (const void *a, const void *b)
@@ -1605,12 +1609,15 @@ static void declutter (void)
 	static short order[MAX_RUNS];
 	static float box[MAX_RUNS][4];
 	static const float move[3] = { 0, 8, -8 };
-	int i, j, k, m, n = 0, kept = 0;
+	int i, j, k, m, n = 0, kept = 0, focus = hdtext_focus_x >= 0;
 
 	for (i = 0; i < n_runs; i++) {
 		const struct hdtext_run *r = &runs[i];
-		float cx = (r->ink0 + r->ink1) / 2.0f - ST_W / 2, cy = r->y - CTRL_Y / 2;
-		if (r->hide || r->y + 8 >= CTRL_Y || (r->kind & HDT_K_ICON)) continue;
+		/* a name starts beside its star */
+		float cx = r->ink0 - (focus ? hdtext_focus_x : ST_W / 2),
+		      cy = r->y + 4 - (focus ? hdtext_focus_y : CTRL_Y / 2);
+		if (run_name[i] && r->y >= CTRL_Y) runs[i].hide = 1;	/* under the console */
+		if (r->hide || (r->kind & HDT_K_ICON) || r->y + (run_name[i] ? 0 : 8) >= CTRL_Y) continue;
 		clutter_key[i] = run_name[i] ? 1 + cx * cx + cy * cy : 0;
 		order[n++] = i;
 	}
@@ -1623,6 +1630,7 @@ static void declutter (void)
 		x0 += r->dx;
 		for (m = 0; m < (run_name[order[k]] ? 3 : 1); m++) {
 			float y0 = r->y + r->dy + move[m];
+			if (run_name[order[k]] && (y0 < 0 || y0 + 8 > CTRL_Y)) continue;
 			for (j = 0; j < kept; j++)
 				if (x0 < box[j][2] && box[j][0] < x0 + w &&
 				    y0 < box[j][3] && box[j][1] < y0 + 8)
