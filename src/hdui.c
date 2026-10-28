@@ -2710,9 +2710,19 @@ static int on_sheet (const struct hdtext_run *r, float right)
 	return ON_PAGE (r) && r->y >= 10 && r->x0 < right && !(r->kind & HDT_K_ICON) && !(r->col == BG && !r->shadow);
 }
 
+/* A heading: in the page colour by its shadow, or all capitals without
+ * figures, but not after a row's label on its line (that is the row's
+ * value, whatever its case) */
 static int is_head (const struct hdtext_run *r)
 {
-	return (r->col == BG && r->shadow) || ((r->kind & HDT_K_CAPS) && !(r->kind & HDT_K_NUMERIC));
+	int k;
+
+	if (r->col == BG && r->shadow) return 1;
+	if (!(r->kind & HDT_K_CAPS) || (r->kind & HDT_K_NUMERIC)) return 0;
+	for (k = 0; k < n_runs; k++)
+		if (runs[k].y == r->y && (runs[k].kind & HDT_K_COLON) && runs[k].x0 < r->x0 && ON_PAGE (&runs[k]))
+			return 0;
+	return 1;
 }
 
 static void f3_sheet (float right)
@@ -2901,7 +2911,7 @@ static void layout_f3 (unsigned char *out)
 			r->align = HDT_LEFT;
 			r->ax = 8;
 			r->maxw = right - 12;
-		} else if ((r->kind & HDT_K_CAPS) && !(r->kind & HDT_K_NUMERIC)) {
+		} else if (is_head (r)) {
 			style (r, HDT_SECTION, C_ACCENT);
 			if (r->y > top_head) {
 				for (k = 0; k < i; k++)
