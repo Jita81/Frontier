@@ -1769,11 +1769,11 @@ static int classify (void)
 		    fr_ca[i][3] >= 120 && fr_ca[i][3] <= 140)
 			return P_F3;
 	if (heads >= 2 || (n_btn >= 10 && colons >= 2)) return P_PREFS;
-	/* a star's information page: its keys in the panel (the trade
-	 * graph's is on no other) */
+	/* a star's information page: its keys in the panel (the market's
+	 * is on no other) */
 	{
 		struct hdstill_panel p;
-		if (hdstill_panel (&p) && p.slot[7] == G_TRADE) return P_INFO;
+		if (hdstill_panel (&p) && p.slot[7] == G_MARKET) return P_INFO;
 	}
 	return P_NONE;
 }

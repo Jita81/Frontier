@@ -41,10 +41,11 @@ void hdstill_draw (const unsigned int *pal, const unsigned int *ctrl_pal);
 enum {
 	G_ABSENT, G_EMPTY, G_FRONT, G_REAR, G_EXT, G_GALMAP, G_SYSMAP, G_SHIP,
 	G_CARGO, G_CMDR, G_PHONE, G_TARGET, G_CROSS, G_WRENCH, G_HYPER,
-	G_PERSON, G_LAUNCH, G_LIST, G_ARM, G_BEAM, G_BURST, G_ORRERY,
+	G_PERSON, G_LAUNCH, G_LIST, G_ENGINES_OFF, G_BEAM, G_BURST, G_ORRERY,
 	G_LOAD, G_SAVE, G_DELETE, G_EXIT, G_SECTOR, G_ROUTE, G_TAKEOFF,
-	G_DOC, G_ALPHA, G_TRADE
-};
+	G_DOC, G_ALPHA, G_AUTOPILOT, G_GEAR, G_JUMP, G_MARKET, G_PEOPLE,
+	G_STARS, G_ROSTER
+};	/* G_BURST: the map's pick, drawn as a reticle */
 #define G_OFF		0x80	/* with an icon: drawn crossed out */
 
 #define F_MAPKEYS	1	/* the map's time keys where the second display is */
