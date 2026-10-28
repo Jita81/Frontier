@@ -28,10 +28,12 @@ enum RENDERERS {
 extern enum RENDERERS use_renderer;
 extern int flat_hulls;
 extern int flat_sky;
+extern int flat_planets;
 extern int pixel_text;
 extern int pixel_art;
 extern int pixel_faces;
 extern int classic_ui;
+extern int hull_style;
 
 /* palette length changes as dynamic colours change */
 extern int len_main_palette;
