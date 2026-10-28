@@ -30,6 +30,7 @@
 #include "shortcut.h"
 #include "oracle.h"
 #include "bindings.h"
+#include "ini.h"
 
 
 #define FORCE_WORKING_DIR                 /* Set default directory to cwd */
@@ -117,9 +118,7 @@ void Main_EventHandler()
    switch( event.type )
    {
     case SDL_QUIT:
-       bQuitProgram = TRUE;
-       SDL_Quit ();
-       exit (0);
+       Main_Quit (0);
        break;
     case SDL_MOUSEMOTION:               /* Read/Update internal mouse position */
        input.motion_x += event.motion.xrel;
@@ -287,7 +286,30 @@ void Main_Init(void)
   if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_JOYSTICK) < 0)
   {
     fprintf(stderr, "Could not initialize the SDL library:\n %s\n", SDL_GetError() );
-    exit(-1);
+    Main_Quit(-1);
+  }
+
+  /* --size: at least 640x480, at most the desktop less the menu bar, title
+   * bar and dock (128 points, as gl.c's pick_window_size); too big shrinks
+   * keeping its shape */
+  if (screen_w > 0 && screen_h > 0)
+  {
+    const SDL_VideoInfo *vi = SDL_GetVideoInfo();
+    int w = screen_w, h = screen_h, mw = vi ? vi->current_w : 0, mh = vi ? vi->current_h - 128 : 0;
+    if (mw > 0 && mh > 0 && (w > mw || h > mh))
+    {
+      double s = (double) mw / w < (double) mh / h ? (double) mw / w : (double) mh / h;
+      w = (int) (w * s);
+      h = (int) (h * s);
+    }
+    if (w < 640) w = 640;
+    if (h < 480) h = 480;
+    if (mw >= 640 && w > mw) w = mw;
+    if (mh >= 480 && h > mh) h = mh;
+    if (w != screen_w || h != screen_h)
+      fprintf(stderr, "--size %dx%d clamped to %dx%d (640x480 to %dx%d)\n", screen_w, screen_h, w, h, mw, mh);
+    screen_w = w;
+    screen_h = h;
   }
   
   Screen_Init();
@@ -296,10 +318,7 @@ void Main_Init(void)
   Keymap_Init();
 
   if(bQuitProgram)
-  {
-    SDL_Quit();
-    exit(-2);
-  }
+    Main_Quit(-2);
 }
 
 
@@ -354,24 +373,67 @@ static int vbl_run (void *unused)
 
 /*-----------------------------------------------------------------------*/
 /*
-  Un-Initialise emulation
+  Every way out (the window's close button, Ctrl-Q, the end of main, a
+  failed start): the VBL thread is stopped and waited for and the audio
+  closed before SDL_Quit, so no thread of ours runs on while SDL and the
+  C library shut down.  A second call while quitting goes straight out.
 */
-void Main_UnInit(void)
+static volatile sig_atomic_t quitting;
+
+void Main_Quit(int code)
 {
+  if (quitting)
+    _exit(code);
+  quitting = 1;
+  bQuitProgram = TRUE;
   if (vbl_thread) {
     vbl_quit = 1;
     SDL_WaitThread (vbl_thread, NULL);
+    vbl_thread = NULL;
   }
   Keymap_UnInit();
   Audio_UnInit();
   Screen_UnInit();
-
-  /* SDL uninit: */
   SDL_Quit();
+  exit(code);
+}
+
+/* frontier.ini keeps one thing: the renderer Ctrl-E last chose.  It is
+ * read before the command line, so --old-renderer still wins; an oracle
+ * run neither reads nor writes it. */
+#define SETTINGS_FILE "frontier.ini"
+
+static void Main_LoadSettings(void)
+{
+  struct INI *ini;
+  const char *name, *key, *val;
+  size_t len, lkey, lval;
+
+  if (oracle.active || !(ini = ini_open(SETTINGS_FILE)))
+    return;
+  while (ini_next_section(ini, &name, &len) > 0)
+    while (ini_read_pair(ini, &key, &lkey, &val, &lval) > 0)
+      if (lkey == 8 && !strncasecmp(key, "RENDERER", 8) && lval == 3 && !strncasecmp(val, "old", 3))
+        use_renderer = R_OLD;
+  ini_close(ini);
+}
+
+void Main_SaveSettings(void)
+{
+  FILE *f;
+
+  if (oracle.active || !(f = fopen(SETTINGS_FILE ".tmp", "w")))
+    return;
+  fprintf(f, "; Frontier settings, written by the game (Ctrl-E). Delete it for the defaults.\n"
+          "[Display]\nRENDERER=%s\n", use_renderer == R_OLD ? "old" : "hd");
+  if (fclose(f) != 0 || rename(SETTINGS_FILE ".tmp", SETTINGS_FILE) != 0)
+    perror(SETTINGS_FILE);
 }
 
 void sig_handler (int signum)
 {
+	if (quitting)		/* a late signal while shutting down */
+		_exit (0);
 	if (signum == SIGSEGV) {
 		printf ("Segfault! All is lost! Abandon ship!\n");
 		Call_DumpDebug ();
@@ -392,6 +454,8 @@ int main(int argc, char *argv[])
 
   /* Oracle flags (docs/07); strips them, does nothing when none given */
   oracle_parse_args(&argc, argv);
+
+  Main_LoadSettings();
 
   /* Check for any passed parameters */
   Main_ReadParameters(argc, argv);
@@ -416,7 +480,7 @@ int main(int argc, char *argv[])
   Start680x0();                 /* Start emulation */
 
   /* Un-init emulation system */
-  Main_UnInit();
+  Main_Quit(0);
 
   return(0);
 }

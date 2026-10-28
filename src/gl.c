@@ -618,10 +618,17 @@ static void pop_ortho ()
 	glPopMatrix ();
 }
 
+/* Ctrl-E: HD and the old software renderer.  The wireframe debug view
+ * joins the cycle only with FE2_WIREFRAME=1. */
 void Screen_ToggleRenderer ()
 {
-	use_renderer++;
-	if (use_renderer >= R_MAX) use_renderer = 0;
+	const char *w = getenv ("FE2_WIREFRAME");
+
+	if (w && *w && *w != '0') {
+		use_renderer++;
+		if (use_renderer >= R_MAX) use_renderer = 0;
+	} else
+		use_renderer = use_renderer == R_GL ? R_OLD : R_GL;
 }
 
 static void draw_control_panel ()
