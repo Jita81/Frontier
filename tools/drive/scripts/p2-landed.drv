@@ -1,0 +1,40 @@
+# p2-landed.drv - Phase 2 tour: landed at an atmospheric surface port.
+#
+# Verifies: X1 (c) landed views: sky, ground, the port's pad and buildings.
+# Run:  tools/p2shots --routes landed --base BASE --branch BRANCH
+# Expect: 01 the cockpit view from the pad, 02-03 the next two views of the
+#         view cycle (the ship from outside), each paused.
+# Each shot pauses the game (Esc) and resumes it at 1x (Shift+F1); the
+# pointer is parked off the controls so no hover tip is drawn.
+
+wait 6000
+key space
+wait 2000
+key 2             # start position 2: landed at a surface port with an atmosphere
+wait 11000
+mouse 2 120
+wait 500
+sdlkey esc
+wait 600
+shot 01-front
+sdlkey f1 shift
+mouse 8 193       # the view icon cycles the views
+wait 300
+click
+wait 2500
+mouse 2 120
+wait 300
+sdlkey esc
+wait 600
+shot 02-view2
+sdlkey f1 shift
+mouse 8 193
+wait 300
+click
+wait 2500
+mouse 2 120
+wait 300
+sdlkey esc
+wait 600
+shot 03-view3
+quit
