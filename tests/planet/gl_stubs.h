@@ -81,5 +81,21 @@ void glVertex3d (GLdouble x, GLdouble y, GLdouble z) { (void) x; (void) y; (void
 void glVertex3dv (const GLdouble *v) { (void) v[2]; vertex_count++; }
 void glBlendFunc (GLenum a, GLenum b) { (void) a; (void) b; }
 void glDepthMask (GLboolean a) { (void) a; }
+void glPushAttrib (GLbitfield a) { (void) a; }
+void glPopAttrib (void) { }
+void glMultiTexCoord2d (GLenum u, GLdouble s, GLdouble t) { (void) u; pixel_sum += (s == s) + (t == t); }
+void glMultiTexCoord3dv (GLenum u, const GLdouble *v) { (void) u; pixel_sum += (v[0] == v[0]) + (v[2] == v[2]); }
+
+/* procfx layer 2: test_render.c runs both paths, smooth and exact */
+int flat_planets;
+static int planet_shader = 1;
+int procfx_planet_begin (const float lo[4], const float hi[4], float soft,
+			 const float rim[4], const float look[3], unsigned int seed)
+{
+	(void) lo; (void) hi; (void) soft; (void) rim; (void) look; (void) seed;
+	return planet_shader && !flat_planets;
+}
+void procfx_planet_bind (int unit, unsigned int tex) { (void) unit; glBindTexture (GL_TEXTURE_2D, tex); }
+void procfx_planet_end (void) { }
 
 #endif
