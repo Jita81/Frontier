@@ -775,6 +775,7 @@ int hdtext_add (const char *s, int x, int y, int col)
 		shown[n_shown].chr = c - 0x20;
 		shown[n_shown].col = col;
 		shown[n_shown].shadow = 0;
+		shown[n_shown].name = 0;
 		shown[n_shown].dx = 0;
 		x += font[(c - 0x20) * 10 + 9];
 		n_shown++;
