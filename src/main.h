@@ -191,5 +191,7 @@ extern int Main_Message(char *lpText, char *lpCaption /*, unsigned int uType*/);
 extern void Main_PauseEmulation(void);
 extern void Main_UnPauseEmulation(void);
 extern void Main_EventHandler();
+extern void Main_Quit(int code);
+extern void Main_SaveSettings(void);
 
 #endif /* ifndef HATARI_MAIN_H */
