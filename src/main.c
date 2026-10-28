@@ -160,6 +160,17 @@ void Main_EventHandler()
          Input_MouseRelease (event.button.button);
        break;
     case SDL_KEYDOWN:
+       if (event.key.keysym.sym == SDLK_h && (event.key.keysym.mod & KMOD_CTRL)
+           && (event.key.keysym.mod & KMOD_SHIFT)) {
+          /* hull look, 0 to 5, then off (--flat-hulls), and round again
+           * (see --hull-style) */
+          if (flat_hulls) flat_hulls = 0, hull_style = 0;
+          else if (hull_style >= 5) flat_hulls = 1;
+          else hull_style++;
+          if (flat_hulls) fprintf (stderr, "hull style off, flat\n");
+          else fprintf (stderr, "hull style %d\n", hull_style);
+          break;
+       }
        Keymap_KeyDown(&event.key.keysym);
        break;
     case SDL_KEYUP:
@@ -206,11 +217,16 @@ void Main_ReadParameters(int argc, char *argv[])
 			   "  --old-renderer        Start with the old renderer.\n"
                "  --flat-hulls          Flat ship faces, no hull plating.\n"
                "  --flat-sky            The game's flat Milky Way band (no star clouds).\n"
+               "  --flat-planets        Hard light zones and flat atmosphere rings.\n"
                "  --pixel-text          Keep the original bitmap font (no HD text;\n"
                "                        FE2_HD_FONT=<PostScript name> picks the font).\n"
                "  --pixel-art           Keep the game's own bitmaps (no HD stills).\n"
                "  --pixel-faces         Keep the game's own faces (no HD portraits).\n"
                "  --classic-ui          Keep the game's own flat 2D screens.\n"
+               "  --hull-style N        Hull look, 0 plating, 1 big texture, 2 panels,\n"
+               "                        3 bump and weathering, 4 per model, 5 a material\n"
+               "                        per class of ship (default).\n"
+               "                        Ctrl+Shift+H steps through them and off.\n"
               );
         exit(0);
       }
@@ -228,6 +244,8 @@ void Main_ReadParameters(int argc, char *argv[])
 		flat_hulls = 1;
 	  else if (!strcmp(argv[i], "--flat-sky"))
 		flat_sky = 1;
+	  else if (!strcmp(argv[i], "--flat-planets"))
+		flat_planets = 1;
 	  else if (!strcmp(argv[i], "--pixel-text"))
 		pixel_text = 1;
 	  else if (!strcmp(argv[i], "--pixel-art"))
@@ -236,6 +254,10 @@ void Main_ReadParameters(int argc, char *argv[])
 		pixel_faces = 1;
 	  else if (!strcmp(argv[i], "--classic-ui"))
 		classic_ui = 1;
+	  else if (!strcmp(argv[i], "--hull-style") && i + 1 < argc) {
+		hull_style = atoi (argv[++i]);
+		if (hull_style < 0 || hull_style > 5) hull_style = 5;
+	  }
       else if ( !strcmp(argv[i],"--size") )
       {
 	screen_h = 0;
