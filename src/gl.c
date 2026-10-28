@@ -627,8 +627,10 @@ static void draw_control_panel ()
 	if (!pixel_text || !pixel_art || !pixel_faces || !classic_ui) {
 		hdtext_frame (font_bmp, VideoRaster, hd_screen);
 		hdui_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
-		hdstill_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
+		/* before hdstill: the face parts and the message thumbnail
+		 * it takes out are hdstill's to leave be (and log deferred) */
 		hdface_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
+		hdstill_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
 		hdback_frame (VideoRaster, hd_screen);
 		scr = hd_screen;
 	}
