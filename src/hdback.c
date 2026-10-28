@@ -14,6 +14,7 @@
 #include "hdback.h"
 #include "hdui.h"
 #include "art.h"
+#include "procfx.h"
 #include "hdtext.h"
 #include <SDL.h>
 #include "../m68000.h"
@@ -61,7 +62,6 @@ extern unsigned short MainPalette[256];	/* ST $0rgb words, read only */
 enum kind { K_NONE, K_ORBITAL, K_SURFACE };
 static const char *kind_name[] = { "none", "orbital", "surface" };
 
-enum light { L_NONE, L_RED, L_ORANGE, L_YELLOW, L_WHITE, L_BLUE, L_MAX };
 static const char *light_name[] = { "none", "red", "orange", "yellow", "white", "blue" };
 
 struct where {
@@ -95,32 +95,6 @@ static unsigned int obj_ptr (int idx)
 	if (idx < 0 || idx >= OBJ_SLOTS || !sane (big)) return 0;
 	p = big + (short) rw (OBJ_OFFSETS + 2 * idx);
 	return sane (p) ? p : 0;
-}
-
-static int is_star (int model) { return model >= 0x98 && model <= 0xae; }
-
-static enum light star_light (int model)
-{
-	switch (model) {
-	case 0x98:		/* brown dwarf */
-	case 0x9a:		/* M dwarfs */
-	case 0x9c:		/* red giant */
-		return L_RED;
-	case 0x9e:		/* K */
-		return L_ORANGE;
-	case 0xa0:		/* G */
-		return L_YELLOW;
-	case 0xa2:		/* F */
-	case 0xa4:		/* A */
-	case 0xa8:		/* bright giant */
-	case 0xaa:		/* supergiant */
-	case 0xae:		/* white dwarf */
-		return L_WHITE;
-	case 0xa6:		/* B */
-	case 0xac:		/* blue supergiant */
-		return L_BLUE;
-	}
-	return L_NONE;
 }
 
 /* the class any port falls back to: a body outside the table, or one
