@@ -20,6 +20,9 @@
 /* --pixel-text: keep the original 8x8 bitmap font */
 extern int pixel_text;
 
+/* DrawStr starts a string (the glyphs that follow are its) */
+void hdtext_string (void);
+
 /* The galaxy map is up (not under --classic-ui): 1, its names are found
  * though the grid and other names cross them; 2 (the GL renderer), they
  * also get a halo and are kept apart (declutter). */
@@ -104,11 +107,17 @@ struct hdtext_run {
 	float scale;		/* of the role's size; 0: 1 */
 	unsigned int rgb;	/* 0xff000000 | 0xBBGGRR: drawn in this colour; 0: the game's */
 	float alpha;		/* 0: 1 */
+	unsigned char money;	/* a sum: set as -$1,234.5 from the game's own figures */
 };
 
 /* After hdtext_frame: the runs it found, top to bottom and left to right
  * on each line, for hdui to style.  Valid until the next hdtext_frame. */
 int hdtext_runs (struct hdtext_run **runs);
+
+/* After hdtext_frame: drop the game's frame counter (its F key) from the
+ * runs.  Returns how many of its glyphs were dropped; then call
+ * hdtext_runs again. */
+int hdtext_hide_counter (void);
 
 /* Run r's glyphs as ASCII ('?' for anything else), and whether a word
  * space comes before each; returns how many (at most max). */

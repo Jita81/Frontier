@@ -48,6 +48,7 @@ typedef void (*_GLUfuncptr)();
 #include "hull.h"
 #include "art.h"
 #include "hdback.h"
+#include "fx.h"
 #include "procfx.h"
 #include "bindings.h"
 #include "hdtip.h"
@@ -160,10 +161,15 @@ void CALLBACK combineCallback(GLdouble coords[3],
                      GLdouble *vertex_data[4],
                      GLfloat weight[4], GLdouble **dataOut );
 
+/* The 3D view, framebuffer pixels: the picture's top 168 rows, or wider
+ * (wide_3d) while draw_wide_flight draws a flight view past the picture. */
+static int wide_3d, v3d_x, v3d_y, v3d_w, v3d_h;
+
 static void set_main_viewport ()
 {
 	int ctrl_h = 32*pic_h/200;
-	glViewport (pic_x, pic_y + ctrl_h, pic_w, pic_h - ctrl_h);
+	if (wide_3d) glViewport (v3d_x, v3d_y, v3d_w, v3d_h);
+	else glViewport (pic_x, pic_y + ctrl_h, pic_w, pic_h - ctrl_h);
 }
 
 static void set_ctrl_viewport ()
@@ -259,6 +265,7 @@ static void change_vidmode ()
 	hdui_forget ();
 	controls_page_forget ();
 	hdback_forget ();
+	fx_forget ();
 	if (galaxy_tex) {
 		glDeleteTextures (1, &galaxy_tex);
 		galaxy_tex = 0;
@@ -564,6 +571,7 @@ int DrawStr (int xpos, int ypos, int col, unsigned char *str, bool shadowed)
 	y = ypos;
 	
 	if ((y > 192) || (y<0)) return x;
+	hdtext_string ();
 set_line:
 	screen = LOGSCREEN2;
 	screen += SCREENBYTES_LINE * y;
@@ -1172,8 +1180,15 @@ enum NuPrimitive {
 	NU_ATMOSPHERE,
 	NU_SKYBAND,
 	NU_COMPLEX_OVAL,
+	NU_FX,		/* fx.c's tag for the primitive that follows */
 	NU_MAX
 };
+/* the next primitive belongs to a weapon, missile, explosion...: say which (fx.c) */
+static void put_fx (void)
+{
+	unsigned int tag[3];
+	if (use_renderer == R_GL && fx_tag_for (tag)) { znode_wrlong (NU_FX); znode_wrblock (tag, sizeof (tag)); }
+}
 
 static inline void end_node ()
 {
@@ -1338,6 +1353,7 @@ void Nu_InsertZNode ()
 
 void Nu_3DViewInit ()
 {
+	fx_frame_begin ();
 	queued_string_pos = 0;
 	//printf ("3dviewinit()\n");
 	znode_buf_pos = 0;
@@ -1564,6 +1580,7 @@ static void put_complex_start_4real ()
 		znode_wrlong (NU_SKYBAND);
 		znode_wrblock (complex_sky_m, sizeof complex_sky_m);
 	}
+	put_fx ();
 	znode_wrlong (NU_COMPLEX_START);
 	znode_wrcolor (complex_col_rgb444);
 	hull_put_cctx ();
@@ -2466,7 +2483,7 @@ static void hull_end (void)
 /* Plating for this polygon: 1 with st filled in, 0 to draw it flat */
 static int hull_use (double p[][3], int n, float st[][2])
 {
-	if (flat_hulls || !hull_coords (p, n, st)) {
+	if (flat_hulls || fx_tagged () || !hull_coords (p, n, st)) {	/* fx objects stay unplated */
 		hull_end ();
 		return 0;
 	}
@@ -3622,7 +3639,7 @@ static int hull_paint (double p[][3], int n, int have_ctx, const struct HullCtx 
 	 * hull_models[]: anything else (the intro's titles and banners,
 	 * text, planets, buildings, missiles, debris, cargo) is drawn flat,
 	 * as with --flat-hulls */
-	if (flat_hulls || !have_ctx || !hull_key_listed (cx->key)) {
+	if (flat_hulls || fx_tagged () || !have_ctx || !hull_key_listed (cx->key)) {
 		hull_end ();
 		return 0;
 	}
@@ -3702,7 +3719,7 @@ static int hull_complex_begin (GLdouble c[][3], int n, void **data)
 	if (hull_ctx != 2) return 0;	/* no model being read: no word after it */
 	calm = hull_chain || hull_decal_host (data);
 	hull_chain = calm;
-	if (!hull_cc_on || hull_style < 5 || flat_hulls || n < 3) return 0;
+	if (!hull_cc_on || hull_style < 5 || flat_hulls || fx_tagged () || n < 3) return 0;
 	cls = hull_class_of_key (hull_cc.key, &sc, off);
 	mx = mn = c8[0];
 	for (k = 1; k < 3; k++) {
@@ -3819,6 +3836,7 @@ static void hull_complex_end (void)
 void Nu_PutTriangle ()
 {
 	if (use_renderer == R_OLD) return;
+	put_fx ();
 	znode_wrlong (NU_TRIANGLE);
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrvertex (GetReg (REG_A1)+4);
@@ -3837,6 +3855,7 @@ void Nu_DrawTriangle (void **data)
 	znode_rdvertexf (data, v3);
 	znode_rdcolorv (data, rgb);
 	if (hull_ctx) hull_rdctx (data, &cx, 3);
+	if (fx_tri (v1, v2, v3)) return;
 	glColor3ub (rgb[0], rgb[1], rgb[2]);
 	if (use_renderer == R_GLWIRE) {
 		glBegin (GL_LINE_STRIP);
@@ -3866,6 +3885,8 @@ void Nu_DrawTriangle (void **data)
 void Nu_PutQuad ()
 {
 	if (use_renderer == R_OLD) return;
+	if (use_renderer == R_GL && fx_laser_quad ()) return;	/* a laser beam: fx draws it */
+	put_fx ();	/* a missile's body: flat, never plated */
 	znode_wrlong (NU_QUAD);
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrvertex (GetReg (REG_A1)+4);
@@ -5315,7 +5336,7 @@ static int circle_slices (double size, double z)
 
 	if (z >= 0.0 || size <= 0.0) return 32;
 	glGetDoublev (GL_PROJECTION_MATRIX, pm);
-	rpx = size / -z * pm[0] * pic_w * 0.5;
+	rpx = size / -z * pm[0] * (wide_3d ? v3d_w : pic_w) * 0.5;
 	if (rpx * 2.0 * M_PI / 16.0 <= 32.0) return 32;
 	if (rpx * 2.0 * M_PI / 16.0 >= 256.0) return 256;
 	return (int) (rpx * 2.0 * M_PI / 16.0);
@@ -5324,6 +5345,7 @@ static int circle_slices (double size, double z)
 void Nu_PutCircle ()
 {
 	if (use_renderer == R_OLD) return;
+	put_fx ();
 	znode_wrlong (NU_CIRCLE);
 	znode_wrlong (GetReg (REG_D2));
 	znode_wrvertex (GetReg (REG_A0)+4);
@@ -5392,6 +5414,7 @@ void Nu_DrawCircle (void **data)
 	dreg2 = znode_rdlong (data);
 	znode_rdvertex (data, v1);
 	znode_rdcolor (data, &r, &g, &b);
+	if (fx_circle (v1, dreg2, r, g, b)) return;	/* an explosion's fireball */
 	
 	glColor3ub (r, g, b);
 
@@ -5559,7 +5582,7 @@ static int oval_steps (const GLdouble c[3], double r)
 	if (-c[2] <= r) return OVAL_STEPS_MAX;	/* at or around the eye */
 	if (use_renderer == R_GL) pm[0] = tessProjMatrix[0];
 	else glGetDoublev (GL_PROJECTION_MATRIX, pm);
-	rpx = r / -c[2] * pm[0] * pic_w * 0.5;
+	rpx = r / -c[2] * pm[0] * (wide_3d ? v3d_w : pic_w) * 0.5;
 	n = rpx * 2.0 * M_PI / 16.0;
 	if (n <= OVAL_STEPS_MIN) return OVAL_STEPS_MIN;
 	if (n >= OVAL_STEPS_MAX) return OVAL_STEPS_MAX;
@@ -5648,6 +5671,7 @@ void Nu_DrawOval (void **data)
 void Nu_PutBlob ()
 {
 	if (use_renderer == R_OLD) return;
+	put_fx ();
 	znode_wrlong (NU_BLOB);
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrlong (GetReg (REG_D0));
@@ -5665,6 +5689,7 @@ void Nu_DrawBlob (void **data)
 	split_rgb444i (c, &r, &g, &b);
 	rad = znode_rdlong (data) & 0xffff;
 	edges = rad+4;
+	if (fx_blob (v1, rad, r >> 24, g >> 24, b >> 24)) return;
 	
 	if (galmap == 1 && rad >= 3) {
 		/* the map: where you are (magenta) as a ring, a nebula as a
@@ -5728,6 +5753,7 @@ void Nu_DrawPoint (void **data)
 void Nu_PutLine ()
 {
 	if (use_renderer == R_OLD) return;
+	put_fx ();
 	znode_wrlong (NU_LINE);
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrvertex (GetReg (REG_A1)+4);
@@ -5837,19 +5863,20 @@ void Nu_GLClearArea ()
 	y1 = GetReg (1)&0xffff;
 	x2 = GetReg (2)&0xffff;
 	y2 = GetReg (3)&0xffff;
-	hdui_clear_area (x1, y1, x2, y2);
-	
-	push_ortho ();
-	set_ctrl_viewport ();
-	glColor3f (0.0f, 0.0f, 0.0f);
-	glBegin (GL_TRIANGLE_STRIP);
-		glVertex3f (x1, 200-y1, 0);
-		glVertex3f (x2, 200-y1, 0);
-		glVertex3f (x1, 200-y2, 0);
-		glVertex3f (x2, 200-y2, 0);
-	glEnd ();
-	set_main_viewport ();
-	pop_ortho ();
+	/* black behind the view, unless the HD layer has given it a card */
+	if (!hdui_clear_area (x1, y1, x2, y2)) {
+		push_ortho ();
+		set_ctrl_viewport ();
+		glColor3f (0.0f, 0.0f, 0.0f);
+		glBegin (GL_TRIANGLE_STRIP);
+			glVertex3f (x1, 200-y1, 0);
+			glVertex3f (x2, 200-y1, 0);
+			glVertex3f (x1, 200-y2, 0);
+			glVertex3f (x2, 200-y2, 0);
+		glEnd ();
+		set_main_viewport ();
+		pop_ortho ();
+	}
 
 	/* and then we wipe the bit of the ST framebuffer (on both buffers)
 	 * to transparent/unset */
@@ -5869,6 +5896,53 @@ void Nu_GLClearArea ()
 }
 
 typedef void (*NU_DRAWFUNC) (void **);
+
+/*
+ * Widescreen flight (wide_3d): the core sends a planet only while its disc
+ * overlaps its own 4:3 picture (L3cd9c_ProjectPlanet), so a planet whose
+ * disc runs on into a side strip would vanish there as a whole disc the
+ * moment its rim leaves the picture. Instead it fades out over the last
+ * PLANET_FADE_PX of overlap (and in again the same way), with the surface
+ * and its atmosphere layers alike. A planet well inside, and any 4:3 window,
+ * is drawn exactly as before.
+ */
+#define PLANET_FADE_PX	(24.0 * pic_h / 720.0)
+
+static void planet_faded (NU_DRAWFUNC draw, void **data)
+{
+	const struct PlanetPrim *p = *data;
+	double t = tan (36.5 * M_PI / 360.0), lim[2] = { 1.9*t, t };
+	double z = p->centre[2], R2 = p->R * p->R, a = 1.0;
+	/* pixels per unit of x/z and y/z, as in draw_wide_flight */
+	double px[2] = { pic_w/2.0/lim[0], (pic_h - 32*pic_h/200)/2.0/lim[1] };
+	int i;
+
+	if (!wide_3d || z <= 0.0 || z*z <= R2) {
+		draw (data);
+		return;
+	}
+	for (i = 0; i < 2; i++) {
+		/* the disc's extent in x/z (y/z): the tangent planes */
+		double c = p->centre[i], q = p->R * sqrt (c*c + z*z - R2);
+		double s0 = (c*z - q) / (z*z - R2), s1 = (c*z + q) / (z*z - R2);
+		a = MIN (a, MIN (lim[i] - s0, s1 + lim[i]) * px[i] / PLANET_FADE_PX);
+	}
+	if (a >= 1.0) {
+		draw (data);
+	} else if (a <= 0.0) {
+		*data += sizeof (struct PlanetPrim);
+	} else {
+		glPushAttrib (GL_COLOR_BUFFER_BIT);
+		glEnable (GL_BLEND);
+		glBlendColor (0.0f, 0.0f, 0.0f, (GLfloat) a);
+		glBlendFunc (GL_CONSTANT_ALPHA, GL_ONE_MINUS_CONSTANT_ALPHA);
+		draw (data);
+		glPopAttrib ();
+	}
+}
+static void Nu_DrawPlanetFaded (void **data) { planet_faded (Nu_DrawPlanet, data); }
+static void Nu_DrawAtmosphereFaded (void **data) { planet_faded (Nu_DrawAtmosphere, data); }
+
 NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	NULL,
 	&Nu_DrawTriangle,
@@ -5882,7 +5956,7 @@ NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	&Nu_DrawComplexStartInner, // 9
 	&Nu_DrawComplexBezier,
 	&Nu_DrawTwinklyCircle,
-	&Nu_DrawPlanet,
+	&Nu_DrawPlanetFaded,
 	&Nu_DrawCircle,
 	&Nu_DrawCylinder,
 	&Nu_DrawBlob,
@@ -5890,9 +5964,10 @@ NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	&Nu_DrawPoint,
 	&Nu_Draw2DLine,
 	NULL,	/* NU_SUBTREE, see Nu_DrawPrimitive */
-	&Nu_DrawAtmosphere,
+	&Nu_DrawAtmosphereFaded,
 	&Nu_DrawSkyBand,
-	&Nu_DrawComplexOval
+	&Nu_DrawComplexOval,
+	&fx_draw_tag
 };
 
 /*
@@ -5917,6 +5992,7 @@ static void Nu_DrawPrimitive (void *data)
 			continue;
 		}
 		nu_drawfuncs[fnum] (&data);
+		if (fnum != NU_FX) fx_prim_done (fnum == NU_COMPLEX_START ? 1 : fnum == NU_COMPLEX_END ? 2 : 0);
 	}
 }
 
@@ -5972,6 +6048,105 @@ static void set_gl_clear_col (int rgb)
 }
 
 /*
+ * A flight view in a window wider (or taller) than 4:3: the 3D view goes
+ * on past the picture where the black bars were, and the console's glass
+ * past the panel.
+ *
+ * One pass through a wider frustum with the same centre and scale, so the
+ * picture keeps its place and size and there is no seam to see. The core
+ * hands over every object inside its cull cone (L39646_3DObjClipOffscreen:
+ * |x| <= z, 2|y| <= z, less the object's size), which is wider than the
+ * picture, and the star blobs too (Nu_PutBlob comes before the core's
+ * 320x168 test, which only feeds its own 2D list): ships, stations,
+ * planets and stars all carry on into the strips. The view stops at that
+ * cone, so nothing pops in at the window's edge; a window wider than about
+ * 2.1:1 keeps the rest of its bars. Only what the core drops one primitive
+ * at a time off its 320x168 screen never reaches us: a circle whose centre
+ * is off it (L3a93c_project_real_circle: the small lights) and a line
+ * wholly off it (L3ace2_project_line).
+ *
+ * The console: beside the panel and under the picture, dark glass in
+ * hdui's base colours (C_BG1 at the top to C_BG0), the panel's top line
+ * run on.
+ */
+static int draw_wide_flight (void)
+{
+	int ctrl_h = 32*pic_h/200, i;
+	int ox = pic_x, oy = pic_y + ctrl_h, ow = pic_w, oh = pic_h - ctrl_h;
+	double t = tan (36.5 * M_PI / 360.0);		/* gluPerspective's */
+	double cx = ox + ow/2.0, cy = oy + oh/2.0, hx = ow/2.0, hy = oh/2.0;
+	int x0 = MAX (0, (int) ceil (cx - hx/(1.9*t)));
+	int x1 = MIN (fb_w, (int) floor (cx + hx/(1.9*t)));
+	int y1 = MIN (fb_h, (int) floor (cy + hy*0.5/t));
+	int e = MAX (1, pic_h/400);
+	/* the sky left, right and above the picture; the glass left and
+	 * right of the panel and below the picture */
+	int r[6][4] = {
+		{ x0, oy, ox - x0, y1 - oy }, { ox + ow, oy, x1 - ox - ow, y1 - oy },
+		{ ox, oy + oh, ow, y1 - oy - oh },
+		{ 0, 0, ox, oy }, { ox + ow, 0, fb_w - ox - ow, oy }, { ox, 0, ow, pic_y } };
+	double sx = 320.0/fb_w, sy = 200.0/fb_h;
+	GLdouble proj[16];
+
+	if (pic_w >= fb_w && pic_h >= fb_h) return 0;
+	glEnable (GL_SCISSOR_TEST);
+	/* the sky colour (still the clear colour) past the picture only */
+	for (i = 0; i < 3; i++) {
+		if (r[i][2] <= 0 || r[i][3] <= 0) continue;
+		glScissor (r[i][0], r[i][1], r[i][2], r[i][3]);
+		glClear (GL_COLOR_BUFFER_BIT);
+	}
+	glScissor (x0, oy, x1 - x0, y1 - oy);
+	glGetDoublev (GL_PROJECTION_MATRIX, proj);
+	glMatrixMode (GL_PROJECTION);
+	glLoadIdentity ();
+	glFrustum (1.9*t*GL_NEAR_PLANE*(x0 - cx)/hx, 1.9*t*GL_NEAR_PLANE*(x1 - cx)/hx,
+		   -t*GL_NEAR_PLANE, t*GL_NEAR_PLANE*(y1 - cy)/hy,
+		   GL_NEAR_PLANE, GL_FAR_PLANE);
+	glMatrixMode (GL_MODELVIEW);
+	wide_3d = 1;
+	v3d_x = x0; v3d_y = oy; v3d_w = x1 - x0; v3d_h = y1 - oy;
+	set_main_viewport ();
+	draw_3dview (znode_start);
+	hull_end ();
+	glDisable (GL_SCISSOR_TEST);
+	wide_3d = 0;
+	glMatrixMode (GL_PROJECTION);
+	glLoadMatrixd (proj);
+	glMatrixMode (GL_MODELVIEW);
+
+	glViewport (0, 0, fb_w, fb_h);
+	push_ortho ();
+	glPushAttrib (GL_ENABLE_BIT | GL_LIGHTING_BIT);
+	glDisable (GL_LIGHTING);
+	glDisable (GL_TEXTURE_2D);
+	glDisable (GL_BLEND);
+	glShadeModel (GL_SMOOTH);
+	glBegin (GL_QUADS);
+	for (i = 3; i < 6; i++) {
+		int *q = r[i];
+		if (q[2] <= 0 || q[3] <= 0) continue;
+		glColor3ub (0x0b, 0x10, 0x16);
+		glVertex2d (q[0]*sx, 0);
+		glVertex2d ((q[0] + q[2])*sx, 0);
+		glColor3ub (0x14, 0x1c, 0x26);
+		glVertex2d ((q[0] + q[2])*sx, q[3]*sy);
+		glVertex2d (q[0]*sx, q[3]*sy);
+		if (i == 5) continue;
+		glColor3ub (0x36, 0x3f, 0x49);
+		glVertex2d (q[0]*sx, (oy - e)*sy);
+		glVertex2d ((q[0] + q[2])*sx, (oy - e)*sy);
+		glVertex2d ((q[0] + q[2])*sx, oy*sy);
+		glVertex2d (q[0]*sx, oy*sy);
+	}
+	glEnd ();
+	glPopAttrib ();
+	pop_ortho ();
+	set_main_viewport ();
+	return 1;
+}
+
+/*
  * There is deliberately no backdrop drawing here.
  *
  * Nothing paints the backdrop under GL: Fn_Draw3DView, the engine's 2D
@@ -5982,56 +6157,9 @@ static void set_gl_clear_col (int rgb)
  * come from the planet primitive itself - see draw_ground_dome.
  */
 
-void Nu_DrawScreen ()
+/* the next frame: its clear, the backdrops under it */
+static void begin_frame (void)
 {
-	/* build RGB palettes */
-	_BuildRGBPalette (MainRGBPalette, MainPalette, len_main_palette);
-	_BuildRGBPalette (CtrlRGBPalette, CtrlPalette, 16);
-	
-	//fprintf (stderr, "Render: ");
-	if (znode_cur) end_node ();
-	//printf ("Frame: %d znodes.\n", znode_buf_pos);
-	planet_ground_seen = 0;
-	galmap_update ();
-	if (scene_overflow) {
-		/* S-6: the display lists are cut short somewhere: drop this
-		 * frame's 3D view rather than walk them */
-		if ((scene_overflows++ & 255) == 0)
-			fprintf (stderr, "GL: 3D scene too big for the scene buffers, frame dropped (%u so far)\n",
-				 scene_overflows);
-	} else if (galmap == 1) {
-		/* the map's grid and stalks: thin smooth lines, not pixel wide */
-		glEnable (GL_LINE_SMOOTH);
-		glEnable (GL_BLEND);
-		draw_3dview (znode_start);
-		here_draw ();
-		glDisable (GL_BLEND);
-		glDisable (GL_LINE_SMOOTH);
-	} else {
-		Uint32 t = hull_log_on () ? SDL_GetTicks () : 0;
-		hangar_faces = 0;
-		draw_3dview (znode_start);
-		if (t) hull_log_frame (t);
-	}
-	hull_end ();
-	if (hangar_faces) hull_hangar_grade ();
-	//fprintf (stderr, "\n");
-
-#if PRIM_DEBUG
-	prim_debug_frame_end ();
-#endif
-
-	if (mouse_shown) {
-		SDL_ShowCursor (SDL_ENABLE);
-		mouse_shown = 0;
-	} else {
-		SDL_ShowCursor (SDL_DISABLE);
-	}
-	draw_control_panel ();
-	glFlush ();
-	
-	SDL_GL_SwapBuffers ();
-
 	/* frontier background color... */
 	if (use_renderer == R_GLWIRE) {
 		glClearColor (0,0,0,0);
@@ -6063,4 +6191,80 @@ void Nu_DrawScreen ()
 	if (galmap == 1) galmap_backdrop ();
 	/* the game-over backdrop, under the tombstone */
 	endcard_frame ();
+}
+
+static int stalled;	/* host updates since the last frame */
+
+void Nu_DrawScreen ()
+{
+	stalled = 0;
+	/* build RGB palettes */
+	_BuildRGBPalette (MainRGBPalette, MainPalette, len_main_palette);
+	_BuildRGBPalette (CtrlRGBPalette, CtrlPalette, 16);
+	
+	//fprintf (stderr, "Render: ");
+	if (znode_cur) end_node ();
+	//printf ("Frame: %d znodes.\n", znode_buf_pos);
+	planet_ground_seen = 0;
+	galmap_update ();
+	if (scene_overflow) {
+		/* S-6: the display lists are cut short somewhere: drop this
+		 * frame's 3D view rather than walk them */
+		if ((scene_overflows++ & 255) == 0)
+			fprintf (stderr, "GL: 3D scene too big for the scene buffers, frame dropped (%u so far)\n",
+				 scene_overflows);
+	} else if (galmap == 1) {
+		/* the map's grid and stalks: thin smooth lines, not pixel wide */
+		glEnable (GL_LINE_SMOOTH);
+		glEnable (GL_BLEND);
+		draw_3dview (znode_start);
+		here_draw ();
+		glDisable (GL_BLEND);
+		glDisable (GL_LINE_SMOOTH);
+	} else {
+		Uint32 t = hull_log_on () ? SDL_GetTicks () : 0;
+		hangar_faces = 0;
+		/* a flight view with the panel up and no HD backdrop */
+		if (use_renderer != R_GL || classic_ui || !znode_start
+		    || !STMemory_ReadByte (__DL60cf_hblank_do_pal) || hdback_active ()
+		    || !bindings_in_flight_view (0, 0) || !draw_wide_flight ())
+			draw_3dview (znode_start);
+		if (t) hull_log_frame (t);
+	}
+	hull_end ();
+	fx_frame_end ();	/* beams and flashes that outlive the frame they were put in */
+	if (hangar_faces) hull_hangar_grade ();
+	//fprintf (stderr, "\n");
+
+#if PRIM_DEBUG
+	prim_debug_frame_end ();
+#endif
+
+	if (mouse_shown) {
+		SDL_ShowCursor (SDL_ENABLE);
+		mouse_shown = 0;
+	} else {
+		SDL_ShowCursor (SDL_DISABLE);
+	}
+	draw_control_panel ();
+	glFlush ();
+	
+	SDL_GL_SwapBuffers ();
+
+	begin_frame ();
+}
+
+/* The game draws no frames while it waits for a name typed on the save
+ * page (it draws each letter straight to the screen) or a file chosen:
+ * there, from the third host update with no frame, show the screen as it
+ * is each update.  Only the HD layers' picture of it is redrawn: nothing
+ * writes ST memory (the queued strings, which would, hold it back). */
+void Screen_Stalled (void)
+{
+	if (stalled < 3) stalled++;	/* no further: it would wrap */
+	if (stalled < 3 || queued_string_pos || !hdui_still_page ()) return;
+	draw_control_panel ();
+	glFlush ();
+	SDL_GL_SwapBuffers ();
+	begin_frame ();
 }
