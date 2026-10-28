@@ -14,6 +14,10 @@
 #include <signal.h>
 
 #include <SDL.h>
+#ifdef __APPLE__
+#include <pthread.h>
+#include <sys/qos.h>
+#endif
 
 #include "main.h"
 #include "audio.h"
@@ -202,6 +206,7 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --size w h            Start at specified window size.\n"
 			   "  --old-renderer        Start with the old renderer.\n"
                "  --flat-hulls          Flat ship faces, no hull plating.\n"
+               "  --flat-sky            The game's flat Milky Way band (no star clouds).\n"
                "  --pixel-text          Keep the original bitmap font (no HD text;\n"
                "                        FE2_HD_FONT=<PostScript name> picks the font).\n"
                "  --pixel-art           Keep the game's own bitmaps (no HD stills).\n"
@@ -222,6 +227,8 @@ void Main_ReadParameters(int argc, char *argv[])
 		use_renderer = R_OLD;
 	  else if (!strcmp(argv[i], "--flat-hulls"))
 		flat_hulls = 1;
+	  else if (!strcmp(argv[i], "--flat-sky"))
+		flat_sky = 1;
 	  else if (!strcmp(argv[i], "--pixel-text"))
 		pixel_text = 1;
 	  else if (!strcmp(argv[i], "--pixel-art"))
@@ -277,24 +284,71 @@ void Main_Init(void)
 }
 
 
+/* The VBL, 50 a second as on a PAL ST or Amiga.  The game's clock is counted
+ * in VBLs (its handler adds a fixed step per VBL at 1x), so 1x is real time
+ * only if 50 VBLs really arrive each second.  SDL's timer cannot keep that
+ * rate: under sdl12-compat it fires on a coarse ~10 ms grid, so a callback
+ * asking for 20 ms runs every 25-35 ms and the VBL ran at 30-40 a second.
+ *
+ * So a thread of its own keeps the deadlines on SDL_GetTicks' clock, sleeping
+ * with SDL_Delay, and flags one VBL per deadline, within a few ms of it (on
+ * macOS at user-interactive QoS, so a busy machine does not starve it).  It
+ * never flags two at once: the game ends each frame by waiting for one VBL
+ * (L41bc4_LimitFrameRate), and two together let the frame after the wait take
+ * both steps of time and the next frame none, so that frame redraws nothing
+ * that tracks the time (the clock) and shows the other buffer's old picture,
+ * and motion jerks.  If it falls behind it catches up one VBL every VBL_GAP
+ * ms.  A backlog longer than VBL_MAX_BACKLOG VBLs (5 s) means the host was
+ * stopped (sleep, a debugger): that gap is dropped, as if the machine had been
+ * switched off.  Not started under the oracle, which steps VBLs itself. */
+#define VBL_MS			20
+#define VBL_GAP			5
+#define VBL_MAX_BACKLOG		250
+static SDL_Thread *vbl_thread;
+static volatile int vbl_quit;
+
+static int vbl_run (void *unused)
+{
+	Uint32 next = SDL_GetTicks () + VBL_MS;
+
+	(void) unused;
+#ifdef __APPLE__
+	pthread_set_qos_class_self_np (QOS_CLASS_USER_INTERACTIVE, 0);
+#endif
+	while (!vbl_quit) {
+		Uint32 now = SDL_GetTicks ();
+		Sint32 wait = (Sint32) (next - now);
+
+		if (wait > 0) {
+			SDL_Delay (wait);
+			continue;
+		}
+		if (-wait >= VBL_MS * VBL_MAX_BACKLOG)
+			next = now;
+		next += VBL_MS;
+		FlagException (0);
+		SDL_Delay (VBL_GAP);
+	}
+	return 0;
+}
+
+
 /*-----------------------------------------------------------------------*/
 /*
   Un-Initialise emulation
 */
 void Main_UnInit(void)
 {
+  if (vbl_thread) {
+    vbl_quit = 1;
+    SDL_WaitThread (vbl_thread, NULL);
+  }
   Keymap_UnInit();
   Audio_UnInit();
   Screen_UnInit();
 
   /* SDL uninit: */
   SDL_Quit();
-}
-
-static Uint32 vbl_callback ()
-{
-	FlagException (0);
-	return 20;
 }
 
 void sig_handler (int signum)
@@ -336,7 +390,7 @@ int main(int argc, char *argv[])
   oracle_install();             /* no-op unless an oracle flag was given */
 
   if (!oracle_lockstep())
-    SDL_AddTimer (20, &vbl_callback, NULL);
+    vbl_thread = SDL_CreateThread (vbl_run, NULL);
   
   /* Run emulation */
   Main_UnPauseEmulation();

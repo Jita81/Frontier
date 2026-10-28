@@ -40,6 +40,7 @@ typedef void (*_GLUfuncptr)();
 #include "hdface.h"
 #include "hdui.h"
 #include "hdback.h"
+#include "procfx.h"
 #include "bindings.h"
 /* MEM_SIZE, and the engine's variables by label address (__D<label>) */
 #include "../host.h"
@@ -236,6 +237,7 @@ static void change_vidmode ()
 	hdui_forget ();
 	controls_page_forget ();
 	hdback_forget ();
+	procfx_forget ();
 	if (screen_tex) {
 		glDeleteTextures (1, &screen_tex);
 		screen_tex = 0;
@@ -981,6 +983,8 @@ enum NuPrimitive {
 	NU_2DLINE,
 	NU_SUBTREE,
 	NU_ATMOSPHERE,
+	NU_SKYBAND,
+	NU_COMPLEX_OVAL,
 	NU_MAX
 };
 
@@ -1333,7 +1337,7 @@ void CALLBACK vertexCallback(GLvoid *vertex, GLvoid *poly_data)
  * Nu_DrawComplexStart) instead of a malloc nothing ever freed. When the
  * pool runs out we return NULL, which makes GLU report
  * GLU_TESS_NEED_COMBINE_CALLBACK and drop the polygon. */
-#define MAX_COMBINE_VERTICES	1024
+#define MAX_COMBINE_VERTICES	4096
 static GLdouble combine_vertices[MAX_COMBINE_VERTICES][3];
 static int combine_vpos;
 
@@ -1354,7 +1358,10 @@ void CALLBACK combineCallback(GLdouble coords[3],
    vertex[2] = coords[2];
    *dataOut = vertex;
 }
-#define MAX_TESS_VERTICES	400
+/* Room for one complex shape. Curves and circles get more segments the
+ * bigger they are on screen (bezier_steps, oval_steps), so a shape that
+ * fills the view can use far more than the 10 per curve it used to. */
+#define MAX_TESS_VERTICES	4096
 static GLdouble tess_vertices[MAX_TESS_VERTICES][3];
 static int tess_vpos;
 
@@ -1372,9 +1379,18 @@ static bool complex_aborted;
  * Nu_ComplexStart), 0 if there is no shape */
 static unsigned int complex_st_start;
 
+/* procfx sky band: complex_sky when Nu_ComplexStart meets the background
+ * object; sky_pending when the next polygon drawn is the Milky Way */
+static int complex_sky, sky_pending, sky_active;
+static float complex_sky_m[9], sky_m[9];
+
 static void put_complex_start_4real ()
 {
 	complex_data_start = obj_data_pos;
+	if (complex_sky) {	/* in the shape's data, so an abort forgets it too */
+		znode_wrlong (NU_SKYBAND);
+		znode_wrblock (complex_sky_m, sizeof complex_sky_m);
+	}
 	znode_wrlong (NU_COMPLEX_START);
 	znode_wrcolor (complex_col_rgb444);
 	no_znodes_kthx = TRUE;
@@ -1475,7 +1491,7 @@ static int clip_contour_near (GLdouble in[][3], int n, GLdouble out[][3], int ma
 static void flush_contour ()
 {
 	static GLdouble clipped[MAX_TESS_VERTICES+1][3];
-	int n, i;
+	int n, i, first = tess_vpos;
 
 	n = clip_contour_near (contour_v, contour_n, clipped, MAX_TESS_VERTICES+1);
 	contour_n = 0;
@@ -1495,6 +1511,7 @@ static void flush_contour ()
 		tess_vpos++;
 		gluTessVertex (tobj, d, d);
 	}
+	if (sky_active) procfx_sky_feather (tess_vertices + first, tess_vpos - first);
 }
 
 void Nu_ComplexSNext ()
@@ -1533,7 +1550,15 @@ void Nu_ComplexStart ()
 	complex_aborted = FALSE;
 	complex_st_start = STMemory_ReadLong (__DL385c8_primitives_end);
 	complex_starts++;
+	complex_sky = procfx_sky_put (complex_sky_m);
 }
+void Nu_DrawSkyBand (void **data)
+{
+	memcpy (sky_m, *data, sizeof sky_m);
+	*data += sizeof sky_m;
+	sky_pending = 1;
+}
+
 void Nu_DrawComplexStart (void **data)
 {
 	tess_vpos = 0;
@@ -1558,6 +1583,7 @@ void Nu_DrawComplexStart (void **data)
 		gluTessBeginPolygon (tobj, NULL);
 		gluTessBeginContour (tobj);
 		contour_n = 0;
+		if (sky_pending) sky_active = procfx_sky_begin (sky_m, tessProjMatrix, tessViewport);
 	} else {
 		glBegin (GL_LINE_STRIP);
 	}
@@ -1598,6 +1624,8 @@ void Nu_DrawComplexEnd (void **data)
 		glVertex3dv (tess_vertices[0]);
 		glEnd ();
 	}
+	if (sky_active) procfx_sky_end ();
+	sky_pending = sky_active = 0;
 }
 
 void Nu_ComplexStartInner ()
@@ -1664,6 +1692,39 @@ void Nu_ComplexBezier ()
 	znode_wrvertex (GetReg (REG_A2)+4);
 	znode_wrvertex (GetReg (REG_A3)+4);
 }
+/*
+ * Segments for one curve of a complex shape: 10 (as before) for a small
+ * curve, then one per 12 pixels of its control polygon on screen, at most
+ * BEZIER_STEPS_MAX. The intro's FRONTIER logo ring is two such curves a
+ * shape across most of the picture, and at a fixed 10 its ends showed
+ * corners 80-200 pixels apart. Only the GL renderer has the projection
+ * (tessProjMatrix, kept by Nu_DrawComplexStart: the ortho one is loaded
+ * by then); a curve reaching behind the near plane gets the maximum.
+ */
+#define BEZIER_STEPS_MAX	64
+static int bezier_steps_for (GLfloat cp[4][3])
+{
+	GLdouble w[4][3], len = 0.0;
+	int i, n;
+
+	if (use_renderer != R_GL) return BEZIER_STEPS;
+	for (i = 0; i < 4; i++) {
+		if (cp[i][2] > -(double) GL_NEAR_PLANE) return BEZIER_STEPS_MAX;
+		if (!gluProject (cp[i][0], cp[i][1], cp[i][2],
+				 tessModelMatrix, tessProjMatrix, tessViewport,
+				 &w[i][0], &w[i][1], &w[i][2]))
+			return BEZIER_STEPS_MAX;
+	}
+	for (i = 1; i < 4; i++) {
+		double dx = w[i][0] - w[i-1][0], dy = w[i][1] - w[i-1][1];
+		len += sqrt (dx*dx + dy*dy);
+	}
+	n = (int) (len / 12.0);
+	if (n <= BEZIER_STEPS) return BEZIER_STEPS;
+	if (n >= BEZIER_STEPS_MAX) return BEZIER_STEPS_MAX;
+	return n;
+}
+
 void Nu_DrawComplexBezier (void **data)
 {
 	int i, bezier_steps;
@@ -1676,12 +1737,7 @@ void Nu_DrawComplexBezier (void **data)
 	znode_rdvertexf (data, ctrlpoints[2]);
 	znode_rdvertexf (data, ctrlpoints[3]);
 	
-	/*float poo = MAX (abs (ctrlpoints[0][0]-ctrlpoints[3][0]),
-			 abs (ctrlpoints[0][1]-ctrlpoints[3][1]));
-	poo /= MIN (ctrlpoints[0][2], ctrlpoints[3][2]);
-	bezier_steps = MIN (6 - 20*poo, 16);*/
-	//printf ("%d ", bezier_steps);
-	bezier_steps = 10;
+	bezier_steps = bezier_steps_for (ctrlpoints);
 	
 	/* S-6: was an assert. The GL path is bounded in
 	 * push_contour_vertex; the wireframe one stores one vertex below */
@@ -1738,7 +1794,7 @@ void Nu_PutTeardrop ()
 }
 void Nu_DrawTeardrop (void **data)
 {
-	int i;
+	int i, k;
 	float delta;
 	GLfloat ctrlpoints[4][3];
 	GLfloat eng[3], dir[3], ppd[3], sight[3];
@@ -1830,6 +1886,7 @@ void Nu_DrawBezierLine (void **data)
 	znode_rdcolor (data, &r, &g, &b);
 	
 	delta = 1.0f/20;
+	glLineWidth (px_scale ());	/* as Nu_DrawLine */
 	glColor3ub (r, g, b);
 	glBegin (GL_LINE_STRIP);
 	for (i=0; i<=20; i++) {
@@ -1837,6 +1894,7 @@ void Nu_DrawBezierLine (void **data)
 		glVertex3dv (out);
 	}
 	glEnd ();
+	glLineWidth (1.0f);
 }
 
 /*
@@ -3329,6 +3387,26 @@ void Nu_PutPlanet ()
 	}
 }
 
+/*
+ * Edges for a filled circle of eye-space radius size at depth z: 32 (as
+ * before) up to a radius of about 80 pixels, then one edge per 16 pixels
+ * of rim, at most 256. Circles are drawn outside complex shapes, so the
+ * projection loaded here is the perspective one. The intro's blue star fills the screen
+ * (about 800 pixels radius at 1600 wide) and was a visible 32-gon.
+ */
+static int circle_slices (double size, double z)
+{
+	GLdouble pm[16];
+	double rpx;
+
+	if (z >= 0.0 || size <= 0.0) return 32;
+	glGetDoublev (GL_PROJECTION_MATRIX, pm);
+	rpx = size / -z * pm[0] * pic_w * 0.5;
+	if (rpx * 2.0 * M_PI / 16.0 <= 32.0) return 32;
+	if (rpx * 2.0 * M_PI / 16.0 >= 256.0) return 256;
+	return (int) (rpx * 2.0 * M_PI / 16.0);
+}
+
 void Nu_PutCircle ()
 {
 	if (use_renderer == R_OLD) return;
@@ -3358,7 +3436,7 @@ void Nu_DrawCircle (void **data)
 	/* billboard: this is used for distant planets/stars rendered as a
 	 * flat shaded dot, which must always face the camera. */
 	billboard_begin (v1[0], v1[1], v1[2]);
-	gluDisk (qobj, 0.0, size, 32, 1);
+	gluDisk (qobj, 0.0, size, circle_slices (size, v1[2]), 1);
 	billboard_end ();
 }
 
@@ -3430,25 +3508,44 @@ void Nu_DrawCylinder (void **data)
 }
 
 /*
- * NU_OVALTHINGY is used by the 68k code to draw planet rings (see
- * fe2.s: L3d648_PutPlanetRings / L3b9aa_FilledOvalThingy /
- * L37fb2_ProjectOvalXYZ, and the "gas giant ring colours" comment
- * nearby). The hostcall never passes an actual colour register, so
- * previously this always drew a solid black filled disc. We now draw
- * a translucent, neutral-tinted *annulus* (hollow in the middle, like
- * a real ring) instead.
+ * Filled circles: fe2.s L3b9aa_FilledOvalThingy -> L37fb2_ProjectOvalXYZ,
+ * which hcalls Nu_PutOval. The only user seen is the intro's FRONTIER logo
+ * (its planet, the planet's lighter face and the orbit ring).
  *
- * (d, e) are BAM-style angles (32768 = half turn) used to orient the
- * ring's tilt, matching the angle convention used elsewhere in this
- * file. (f) looked like a third rotation in the same family, but a
- * flat, uniformly coloured, rotationally-symmetric ring is invariant
- * under rotation around its own normal, so it has no visible effect
- * here and is intentionally not applied. If this still looks wrong
- * in-game, the sign/axis of (d, e) is the first thing to try flipping.
+ * The hcall gets a circle in viewing coordinates: its centre in d0-d2 (the
+ * same as 4(a0)), the normal of its plane in d3-d5 (words, length 32768)
+ * and its radius in d6. The ST turns it into two Bezier half circles
+ * (ProjectOvalXYZ: axis A = (-ny, nx, 0)*r/|nxy|, B = n x A at 4/3 r) and
+ * puts them into the complex shape the model has started, so they are
+ * filled with that shape's colour by its even-odd rule: two circles in
+ * one shape make the orbit ring an annulus.
+ *
+ * So inside a complex shape the circle is one more contour of it
+ * (NU_COMPLEX_OVAL). This used to be a black disc facing the camera
+ * whatever the shape's colour (no colour comes with the hcall): the
+ * intro's logo planet came out black.
+ *
+ * Outside a complex shape there is no colour to fill with; that case has
+ * not been seen and keeps the old disc (NU_OVALTHINGY).
  */
 void Nu_PutOval ()
 {
 	if (use_renderer == R_OLD) return;
+	if (complex_st_start) {
+		complex_check_abort ();
+		if (complex_aborted) return;
+		if (do_start_complex) { put_complex_start_4real (); do_start_complex = FALSE; }
+		znode_wrlong (NU_COMPLEX_OVAL);
+		/* viewing -> GL eye coordinates: z flips, as in znode_wrvertex */
+		znode_wrlong (GetReg (REG_D0));
+		znode_wrlong (GetReg (REG_D1));
+		znode_wrlong (-GetReg (REG_D2));
+		znode_wrlong ((short) GetReg (REG_D3));
+		znode_wrlong ((short) GetReg (REG_D4));
+		znode_wrlong (-(short) GetReg (REG_D5));
+		znode_wrlong ((short) GetReg (REG_D6));
+		return;
+	}
 	znode_wrlong (NU_OVALTHINGY);
 	znode_wrvertex (GetReg (REG_A0)+4);
 	
@@ -3458,6 +3555,82 @@ void Nu_PutOval ()
 
 	znode_wrlong (GetReg (REG_D6));
 }
+
+/* Segments per circle: one per 16 pixels of rim, from 64 up to 180. The
+ * orbit ring passes the camera wider than the picture, where a fixed
+ * 64-gon showed its corners. An oval is always drawn inside a complex
+ * shape, where Nu_DrawComplexStart has loaded an ortho projection: the
+ * perspective one is the copy it kept in tessProjMatrix (GL renderer;
+ * the wireframe one leaves the perspective loaded). */
+#define OVAL_STEPS_MIN	64
+#define OVAL_STEPS_MAX	180
+
+static int oval_steps (const GLdouble c[3], double r)
+{
+	GLdouble pm[16];
+	double rpx, n;
+
+	if (-c[2] <= r) return OVAL_STEPS_MAX;	/* at or around the eye */
+	if (use_renderer == R_GL) pm[0] = tessProjMatrix[0];
+	else glGetDoublev (GL_PROJECTION_MATRIX, pm);
+	rpx = r / -c[2] * pm[0] * pic_w * 0.5;
+	n = rpx * 2.0 * M_PI / 16.0;
+	if (n <= OVAL_STEPS_MIN) return OVAL_STEPS_MIN;
+	if (n >= OVAL_STEPS_MAX) return OVAL_STEPS_MAX;
+	return (int) n;
+}
+
+void Nu_DrawComplexOval (void **data)
+{
+	GLdouble c[3], n[3], u[3], w[3], v[3];
+	double len, lxy, r;
+	int i, k, steps;
+
+	znode_rdvertexd (data, c);
+	znode_rdvertexd (data, n);
+	r = fabs ((double) znode_rdlong (data));
+	steps = oval_steps (c, r);
+
+	len = sqrt (n[0]*n[0] + n[1]*n[1] + n[2]*n[2]);
+	if (len <= 0.0) { n[0] = 0.0; n[1] = 0.0; n[2] = 1.0; len = 1.0; }
+	for (k = 0; k < 3; k++) n[k] /= len;
+	/* the ST's first axis, (-ny, nx, 0); face on, any will do */
+	lxy = sqrt (n[0]*n[0] + n[1]*n[1]);
+	if (lxy < 1e-6) { u[0] = 1.0; u[1] = 0.0; }
+	else { u[0] = -n[1]/lxy; u[1] = n[0]/lxy; }
+	u[2] = 0.0;
+	/* w = n x u */
+	w[0] = n[1]*u[2] - n[2]*u[1];
+	w[1] = n[2]*u[0] - n[0]*u[2];
+	w[2] = n[0]*u[1] - n[1]*u[0];
+
+	if (use_renderer == R_GL && contour_n > 0) {
+		/* a contour of its own */
+		flush_contour ();
+		gluTessEndContour (tobj);
+		gluTessBeginContour (tobj);
+	} else if (use_renderer == R_GLWIRE) {
+		/* its own line loop, not joined to the outline before it */
+		glEnd ();
+		glBegin (GL_LINE_STRIP);
+	}
+	for (i = 0; i <= steps; i++) {
+		double a = 2.0 * M_PI * (i % steps) / steps;
+		double ca = r * cos (a), sa = r * sin (a);
+		for (k = 0; k < 3; k++) v[k] = c[k] + ca*u[k] + sa*w[k];
+		if (use_renderer == R_GLWIRE) glVertex3dv (v);
+		else if (i < steps) push_contour_vertex (v);
+	}
+	if (use_renderer == R_GL) {
+		flush_contour ();
+		gluTessEndContour (tobj);
+		gluTessBeginContour (tobj);
+	} else if (use_renderer == R_GLWIRE) {
+		glEnd ();
+		glBegin (GL_LINE_STRIP);
+	}
+}
+
 void Nu_DrawOval (void **data)
 {
 	int v1[3];
@@ -3570,11 +3743,16 @@ void Nu_DrawLine (void **data)
 	znode_rdvertex (data, v2);
 	znode_rdcolor (data, &r, &g, &b);
 	
+	/* the engine's lines (lasers, aerials, wires) are one ST pixel wide;
+	 * keep them the same share of the view at any picture size, as the
+	 * points are, instead of a hairline at 1600x1200 */
+	glLineWidth (px_scale ());
 	glColor3ub (r, g, b);
 	glBegin (GL_LINES);
 		glVertex3iv (v1);
 		glVertex3iv (v2);
 	glEnd ();
+	glLineWidth (1.0f);
 }
 
 void Nu_IsGLRenderer ()
@@ -3649,7 +3827,9 @@ NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	&Nu_DrawPoint,
 	&Nu_Draw2DLine,
 	NULL,	/* NU_SUBTREE, see Nu_DrawPrimitive */
-	&Nu_DrawAtmosphere
+	&Nu_DrawAtmosphere,
+	&Nu_DrawSkyBand,
+	&Nu_DrawComplexOval
 };
 
 /*

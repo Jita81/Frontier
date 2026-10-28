@@ -121,16 +121,17 @@ Body class, by the model the game draws the body with:
 
 | Model | Class | Look |
 |---|---|---|
-| $7a, $80 | airless | bare rock, no air |
-| $7e | rocky | thin dusty air, desert |
+| $7a, $7c, $80 | airless | bare rock, no air ($7c: asteroids) |
+| $7e, $82 | rocky | thin dusty air, desert ($82: hot rock, as at Sirius) |
 | $84 | corrosive | thick unbroken cloud |
 | $86 | methane | cold orange smog |
-| $88, $8a | terran | oxygen, oceans, cloud |
+| $88, $8a, $90 | terran | oxygen, oceans, cloud ($90: Earth) |
 | $8c | ice | oxygen but frozen |
 | $8e | ocean | corrosive water world |
 | $92-$96 | gasgiant | banded giant (orbiting stations only) |
 
-A surface port on a gas giant or a star gets no picture.
+Any other body, and a surface port on a gas giant or a star, falls back
+to the default class, airless, so every docked page gets a picture.
 
 The code walks up the parents to the first star (models $98-$ae). If the
 body's own parent is a gas giant, the body is a **moon**, and the giant is
@@ -263,8 +264,8 @@ turning ship.
 
 - **White and blue stars** use the yellow pictures, tinted. They have no
   pictures of their own yet.
-- **Classes outside the table** keep the flat colour. So do surface ports
-  on unusual bodies.
+- **Classes outside the table** fall back to the airless pictures. So do
+  surface ports on unusual bodies.
 - **Pages with a different fill** get no backdrop. These are pages filled
   with black, and the F3 page's 3D ship box, which the game draws black.
 - **Only the three starts were checked in the game.** Other locations rely
@@ -272,8 +273,8 @@ turning ship.
 - **Body models not yet seen in the game.** The checked runs met models $88,
   $8a and $8c. The readings of the others are not yet checked against the
   game's own view. $7e (rocky) and $8e (ocean) may each cover more than one
-  kind of world. $7c, $82 and $90 are not in the table, so a port on such a
-  body keeps the flat colour.
+  kind of world. $7c, $82 and $90 are read from the game's own groupings
+  (asteroid, hot rock, Earth); London ($90) and Sirius ($82) were checked.
 - **One moon picture.** Only a frozen moon under a red star shows its giant
   in the sky. Other moons use the plain picture of their class.
 - **Palette fades.** The picture does not follow a palette fade. The page
