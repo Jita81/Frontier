@@ -65,6 +65,9 @@
 /* gl.c: --classic-ui keeps the game's own faces, box and thumbnail (the
  * old look), as --pixel-faces does */
 extern int classic_ui;
+/* hdui.c: where its card has the portrait start (ST y), above the game's
+ * box, so it sits flush with the card's top; 0 when it has no card */
+extern float hdui_face_top;
 
 #define ST_W		320
 #define ST_H		200
@@ -856,7 +859,7 @@ static void rr_outline (float x0, float y0, float x1, float y1, float ex, float 
  * the shape the rectangle has on the screen: the sides lose the same, the
  * top a quarter of what goes and the bottom the rest (the head stays).
  * framed: the thumbnail's frame round it, else square. */
-static void draw_portrait (int i, int x0, int y0, int x1, int y1,
+static void draw_portrait (int i, float x0, float y0, float x1, float y1,
 			   float sx0, float sy0, float sx1, float sy1, float bright, int framed)
 {
 	portrait_t *p = &pool[i];
@@ -894,13 +897,13 @@ static void draw_portrait (int i, int x0, int y0, int x1, int y1,
 	if (!framed || vp[2] <= 0 || vp[3] <= 0) {
 		glBegin (GL_TRIANGLE_STRIP);
 			glTexCoord2f (u0, v1);
-			glVertex2i (x0, ST_H - y1);
+			glVertex2f (x0, ST_H - y1);
 			glTexCoord2f (u1, v1);
-			glVertex2i (x1, ST_H - y1);
+			glVertex2f (x1, ST_H - y1);
 			glTexCoord2f (u0, v0);
-			glVertex2i (x0, ST_H - y0);
+			glVertex2f (x0, ST_H - y0);
 			glTexCoord2f (u1, v0);
-			glVertex2i (x1, ST_H - y0);
+			glVertex2f (x1, ST_H - y0);
 		glEnd ();
 	} else {
 		float ex = 320.0f / vp[2], ey = 200.0f / vp[3], in[2 * RR_N], out[2 * RR_N], rim[2 * RR_N];
@@ -957,7 +960,8 @@ void hdface_draw (const unsigned int *pal, const unsigned int *ctrl_pal)
 	if (pixel_faces || classic_ui) return;
 	/* the whole portrait, head and shoulders */
 	if (shown >= 0)
-		draw_portrait (shown, BX0, BY0, BX1, BY1, 0.0f, 0.0f, 1.0f, 1.0f, shade, 0);
+		draw_portrait (shown, BX0, hdui_face_top > 0 && hdui_face_top < BY0 ? hdui_face_top : BY0,
+			       BX1, BY1, 0.0f, 0.0f, 1.0f, 1.0f, shade, 0);
 	/* the thumbnail is the size of a stamp: the head */
 	if (thumb_shown >= 0)
 		draw_portrait (thumb_shown, thumb.overlay ? OVER_X : THUMB_X, TY0, PX1, TY1,

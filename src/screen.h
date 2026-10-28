@@ -28,6 +28,7 @@ enum RENDERERS {
 extern enum RENDERERS use_renderer;
 extern int flat_hulls;
 extern int flat_sky;
+extern int flat_planets;
 extern int pixel_text;
 extern int pixel_art;
 extern int pixel_faces;
