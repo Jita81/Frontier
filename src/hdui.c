@@ -43,6 +43,8 @@
 #include "hdui.h"
 #include "hdtext.h"
 #include "hdback.h"
+#include "../m68000.h"
+#include "../fixups.h"
 
 /* screen.h's renderers (it needs SDL): only what this file uses */
 enum RENDERERS { R_OLD, R_GLWIRE, R_GL, R_MAX };
@@ -144,7 +146,7 @@ enum { E_QUAD, E_GLASS, E_CARD, E_ROW, E_BTN, E_CHECK, E_RADIO, E_PILL, E_FRAME,
 /* line icons */
 enum { I_NONE, I_LAUNCH, I_SHIP, I_DOC, I_MARKET, I_SHIELD, I_CHIP, I_WRENCH, I_SWAP,
        I_BACK, I_MORE, I_PLUS, I_MINUS, I_EYE, I_CHEVRON, I_CHECK, I_DROP, I_SPEECH, I_EJECT,
-       I_STATION, I_UP };
+       I_STATION, I_UP, I_GUN };
 
 /* element flags */
 #define F_TL		1	/* glass: rounded corners */
@@ -568,6 +570,7 @@ static int find_blob (const unsigned char *out, int x0, int y0, int x1, int y1, 
 
 static int fbx, fby;	/* the picture's bottom-left corner in the framebuffer */
 static int fbw = 1600, fbh = 1200;	/* the picture: the game's 4:3 screen, no letterbox bars */
+float hdui_face_top;	/* hdface.c: where the card's portrait starts, 0 for none */
 static float sx = 5, sy = 6, uu = 1;	/* pixels per ST pixel; the design unit (a pixel at 1200 high) */
 static unsigned int frame_no;
 
@@ -827,10 +830,18 @@ static void icon (CGContextRef g, int which, float cx, float cy, float s, float 
 		M (3.5, 10); L (7, 10); M (3.5, 14); L (7, 14);
 		M (17, 10); L (20.5, 10); M (17, 14); L (20.5, 14);
 		break;
-	case I_WRENCH:
-		M (4.5, 19.5); L (12.5, 11.5);
-		CGContextAddArc (g, 15.5, 8.5, 4.6, 2.36, 2.36 + 5.2, 0);
-		M (4.5, 19.5); L (6.5, 21.5);
+	case I_WRENCH:	/* an open-end spanner: a jaw, its slot facing away
+			 * from the handle, and the handle */
+		{
+			float cx = 15, cy = 9, R = 6, w = 2.6f, ph = -0.785398f, a = asinf (w / R);
+			float ux = cosf (ph), uy = sinf (ph), nx = -uy, ny = ux, t = sqrtf (R * R - w * w);
+			M (cx + R * cosf (ph + a), cy + R * sinf (ph + a));
+			CGContextAddArc (g, cx, cy, R, ph + a, ph + 2 * 3.141593f - a, 0);
+			L (cx - w * nx, cy - w * ny);
+			CGContextAddArc (g, cx, cy, w, ph - 1.570796f, ph - 4.712389f, 1);
+			L (cx + t * ux + w * nx, cy + t * uy + w * ny);
+			M (cx - R * ux, cy - R * uy); L (4, 20);
+		}
 		break;
 	case I_SWAP:	/* one ship for another */
 		M (4, 8); L (19.5, 8);
@@ -866,6 +877,13 @@ static void icon (CGContextRef g, int which, float cx, float cy, float s, float 
 		break;
 	case I_CHECK:
 		M (5, 12.5); L (10, 17.5); L (19, 7);
+		break;
+	case I_GUN:	/* a turret on its deck, the barrel raised */
+		M (3.5, 20.5); L (20.5, 20.5);
+		M (6, 20.5); L (6, 16);
+		CGContextAddArc (g, 11, 16, 5, 3.141593f, 2 * 3.141593f, 0);
+		L (16, 20.5);
+		M (13.5, 12); L (20, 5.5);
 		break;
 	case I_DROP:	/* fuel */
 		M (12, 3);
@@ -1797,25 +1815,6 @@ static int classify (void)
 	return P_NONE;
 }
 
-/* A box at the foot of a page with its label (go back): a pill */
-static void foot_pill (struct button *b)
-{
-	struct hdtext_run *lab = label_of (b, 6, 16);
-	float x1 = lab ? lab->ink1 + 5 : b->x + 14;
-	struct elem *e = add (E_PILL, L_UNDER, b->x - 2.5f, b->y - 1.5f, x1, b->y + 10);
-
-	e->icon = lab && lab->hash == H_GO_BACK ? I_BACK : I_CHEVRON;
-	e->a = b->x + 4.5f;
-	e->b = b->y + 4.25f;
-	e->c = 26;
-	e->hot = add_hot (e->x0, e->y0, e->x1, e->y1, b->x + 4, b->y + 4, 1);
-	if (lab) {
-		style (lab, HDT_LABEL, C_TEXT);
-		lab->align = HDT_LEFT;
-	}
-	b->used = 1;
-}
-
 /* The station's pages.  Across the top a header bar: the station's emblem
  * and the page's title on the left, the cash on the right.  Under it on
  * the left a tall card: the picture and the cargo panel.  On the right
@@ -1834,6 +1833,30 @@ static void foot_pill (struct button *b)
 #define HEAD_Y1		13.5f	/* the header bar's foot */
 #define BODY_Y0		15.5f	/* the cards' top */
 #define FOOT_Y		150	/* a page's foot: go back, more */
+
+/* A box at the foot of a page with its label (go back): a pill.  Go back
+ * is moved to the column's left edge (dx from the game's place, when
+ * left is set); a click on it still goes to the game's box. */
+static void foot_pill (struct button *b, int left)
+{
+	struct hdtext_run *lab = label_of (b, 6, 16);
+	int back = lab && lab->hash == H_GO_BACK;
+	float dx = back && left ? COL_X0 + 1 - (b->x - 2.5f) : 0;
+	float x1 = (lab ? lab->ink1 + 5 : b->x + 14) + dx;
+	struct elem *e = add (E_PILL, L_UNDER, b->x - 2.5f + dx, b->y - 1.5f, x1, b->y + 10);
+
+	e->icon = back ? I_BACK : I_CHEVRON;
+	e->a = b->x + 4.5f + dx;
+	e->b = b->y + 4.25f;
+	e->c = 26;
+	e->hot = add_hot (e->x0, e->y0, e->x1, e->y1, b->x + 4, b->y + 4, 1);
+	if (lab) {
+		style (lab, HDT_LABEL, C_TEXT);
+		lab->align = HDT_LEFT;
+		lab->dx = dx;
+	}
+	b->used = 1;
+}
 
 static float my_d0, my_s0, my_k = 1;
 
@@ -1919,7 +1942,7 @@ static float split_words (void)
 
 /* A service's card in the grid: its icon large, its name under it and
  * its description under that in lines that fit */
-static void grid_card (struct button *b, float x0, float y0, float x1, float y1, float space, int next)
+static void grid_card (struct button *b, float x0, float y0, float x1, float y1, float space, int next, int ic)
 {
 	struct hdtext_run *lab = label_of (b, 12, 20);
 	int i, j, nw = 0, idx[48], nl = 0, brk[8], hard[48], lasty = -1;
@@ -1995,7 +2018,7 @@ static void grid_card (struct button *b, float x0, float y0, float x1, float y1,
 
 	e = add (E_CARD, L_UNDER, x0, y0, x1, y1);
 	e->flags = F_BIG;
-	e->icon = lab ? card_icon (lab->hash) : I_DOC;
+	e->icon = ic ? ic : lab ? card_icon (lab->hash) : I_DOC;
 	e->a = cx;
 	e->b = top + Ih / 2;
 	e->c = Ih * 6;
@@ -2079,7 +2102,8 @@ static unsigned char cut_row[200];
  * or one space between): cut where the next column starts (or, with no
  * column to go by, before the second '$'), so each piece goes in its
  * column, and look again at what is left on the right */
-static void split_merged (void)
+#define FIG(ch)	(isdigit ((unsigned char) (ch)) || (ch) == '.' || (ch) == ',')
+static void split_merged (int ships)
 {
 	int i, j, k, n;
 	char c[64];
@@ -2087,15 +2111,30 @@ static void split_merged (void)
 
 	for (i = n_runs - 1; i >= 0; i--) {
 		const struct hdtext_run *r = &runs[i];
-		int X = -1;
+		int X = -1, H;
 		if (!ON_PAGE (r) || r->x0 < 118 || r->y < 8 || r->y >= FOOT_Y || !(r->kind & HDT_K_NUMERIC)) continue;
 		for (j = 0; j < n_runs; j++)
 			if (runs[j].y != r->y && runs[j].x0 > r->x0 + 4 && runs[j].x0 < r->ink1 && (X < 0 || runs[j].x0 < X) && column_at (runs[j].x0) >= 3)
 				X = runs[j].x0;
 		n = hdtext_chars (r, c, sp, 64);
+		/* nothing below it starts inside it: a head over it may (a
+		 * figure and the next column's, one word space apart) */
+		H = -1;
+		for (j = 0; j < n_runs && X < 0; j++)
+			if (runs[j].y <= 4 && runs[j].x0 > r->x0 + 4 && runs[j].x0 < r->ink1 && (H < 0 || runs[j].x0 < H))
+				H = runs[j].x0;
 		for (k = 1; k < n; k++)
-			if (X >= 0 ? hdtext_glyph_x (r, k) >= X : c[k] == '$' && isalnum ((unsigned char) c[k - 1]))
+			if (X >= 0 ? hdtext_glyph_x (r, k) >= X :
+			    H >= 0 ? sp[k] && hdtext_glyph_x (r, k) >= H - 6 :
+			    c[k] == '$' && isalnum ((unsigned char) c[k - 1]))
 				break;
+		/* on the ships pages the column below may be a ship's
+		 * details, starting inside a figure: never cut a figure in
+		 * two (all that is right of the cut being figures) */
+		if (k < n && X >= 0 && ships && FIG (c[k - 1])) {
+			for (j = k; j < n && FIG (c[j]); j++);
+			if (j == n) continue;
+		}
 		if (k < n && hdtext_split (i, k)) {
 			n_runs = hdtext_runs (&runs);
 			cut_row[runs[i].y] = 1;
@@ -2185,15 +2224,20 @@ static void more_pager (const unsigned char *raster, unsigned char *out, struct 
 			int more, int mx, int my)
 {
 	float h = 9.5f, w = h * sy / sx, cy = my + 4.75f, y0 = my - 1.5f, y1 = my + 11;
-	float x0 = mx - 2.5f, cd = x0 + (y1 - y0) / 2 * sy / sx, cu = cd + (h + 1.5f) * sy / sx, tw;
+	float x0, cd, cu, tw;
 	struct elem *e, *pill;
 	int down = more & MORE_DOWN, back = more & MORE_BACK, hh;
 
 	take_out_more (raster, out, mx, my, more);
 	lab->align = HDT_LEFT;
-	lab->ax = cu + w / 2 + 3;
 	lab->maxw = 60;
 	tw = hdtext_measure (lab);
+	/* on the column's right edge, go back being on its left; a click
+	 * still goes to the game's arrows */
+	x0 = COL_X1 - 1 - ((y1 - y0) / 2 * sy / sx + (h + 1.5f) * sy / sx + w / 2 + 3 + tw + 5);
+	cd = x0 + (y1 - y0) / 2 * sy / sx;
+	cu = cd + (h + 1.5f) * sy / sx;
+	lab->ax = cu + w / 2 + 3;
 	centre_y (lab, cy);
 	pill = add (E_PILL, L_UNDER, x0, y0, lab->ax + tw + 5, y1);
 	pill->flags = F_NOICON;
@@ -2213,12 +2257,180 @@ static void more_pager (const unsigned char *raster, unsigned char *out, struct 
 	pill->hot = down ? hh : -1;
 }
 
+/* The sums on a station page (the cash, a price, a column under a head
+ * with a '$'): set with their thousands marked and the minus first, a
+ * debt in the caution colour.  The figures stay the game's. */
+static void money_runs (void)
+{
+	float h0[8], h1[8];
+	int nh = 0, i, k, n, cur, neg, dig, other, pass;
+	char c[48];
+	unsigned char sp[48];
+
+	for (pass = 0; pass < 2; pass++)
+		for (i = 0; i < n_runs; i++) {
+			struct hdtext_run *r = &runs[i];
+			if (!ON_PAGE (r) || r->hide || (pass == 0) != (r->y <= 4 && r->x0 >= 118)) continue;
+			n = hdtext_chars (r, c, sp, 48);
+			cur = neg = dig = other = 0;
+			for (k = 0; k < n; k++)
+				if (c[k] == '$') cur = 1;
+				else if (c[k] == '-') neg = 1;
+				else if (c[k] >= '0' && c[k] <= '9') dig++;
+				else if (c[k] != '.' && c[k] != ',') other = 1;
+			if (pass == 0) {
+				if (cur && nh < 8) {
+					h0[nh] = r->x0;
+					h1[nh++] = r->x1;
+				}
+				continue;
+			}
+			if (!dig || other || n >= 48) continue;
+			for (k = 0; k < nh && !cur; k++)
+				if (r->x0 >= 118 && r->y < FOOT_Y && r->ink1 > h0[k] && r->ink0 < h1[k]) cur = 1;
+			if (!cur) continue;
+			r->money = 1;
+			if (neg && r->role) r->rgb = text_rgb (C_AMBER);
+		}
+}
+
+/* The game's list on a page (the market's goods, the shipyard's
+ * upgrades), read and never written.  L76018 adds an entry: 24 bytes
+ * from 10602(a6) (movem.l d0-4/a0), the count in 11724(a6); L75d10 shows
+ * them from the one at 11722(a6).  The market's (L782e8) have $9831 in
+ * d0's low word and $8e00 + the good in a0's; the upgrades' (L76a76)
+ * $986e and $9873 + the row of L7655c. */
+#define A6		__DL5eb6_a6_base
+#define A6_LIST		10602
+#define A6_LIST_FIRST	11722
+#define A6_LIST_COUNT	11724
+#define A6_CABINS	740	/* word: the cabins fitted (L76c02) */
+#define A6_SHIP		674	/* long: the player's ship (L76b0e) */
+#define LIST_MARKET	0x9831
+#define LIST_UPGRADES	0x986e
+#define LIST_MOUNTS	0x986f	/* L76c90: an entry a gun mount, $986f on */
+#define UPG_ROW0	0x9873
+#define UPG_TAB		__DL7655c	/* 12 bytes a row: +8 its kind, +10 its bit or id */
+#define ST_MEM_SIZE	0x110000
+
+static int st_ok (unsigned int a, unsigned int n) { return a >= 0x400 && a < ST_MEM_SIZE && n <= ST_MEM_SIZE - a; }
+static int st_b (unsigned int a) { return STMemory_ReadByte (a) & 0xff; }
+static int st_w (unsigned int a) { return STMemory_ReadWord (a) & 0xffff; }
+
+/* which list the page shows (LIST_MARKET, LIST_UPGRADES, LIST_MOUNTS; 0 if none),
+ * its first entry shown and how many there are */
+static int game_list (int *first, int *count)
+{
+	unsigned int a = A6 + A6_LIST;
+	int i, n, f, kind, lo, hi;
+
+	if (!st_ok (A6 + A6_LIST_FIRST, 4) || !st_ok (a, 45 * 24)) return 0;
+	f = st_w (A6 + A6_LIST_FIRST);
+	n = st_w (A6 + A6_LIST_COUNT);
+	if (n < 1 || n > 45 || f >= n) return 0;
+	kind = st_w (a + 2);
+	if (kind == LIST_MOUNTS) {
+		if (n > 4) return 0;
+		for (i = 0; i < n; i++)
+			if (st_w (a + 24 * i + 2) != LIST_MOUNTS + i) return 0;
+		*first = f;
+		*count = n;
+		return kind;
+	}
+	if (kind == LIST_MARKET) lo = 0x8e00, hi = 0x8e1e;
+	else if (kind == LIST_UPGRADES) lo = UPG_ROW0, hi = UPG_ROW0 + 44;
+	else return 0;
+	for (i = 0; i < n; i++)
+		if (st_w (a + 24 * i + 2) != kind || st_w (a + 24 * i + 22) < lo || st_w (a + 24 * i + 22) > hi) return 0;
+	*first = f;
+	*count = n;
+	return kind;
+}
+
+/* how many of upgrade entry i the ship has fitted, as the removal code
+ * (L76b92's) finds them; -1 for a kind not known here */
+static int upg_fitted (int i)
+{
+	unsigned int row = UPG_TAB + 12 * (st_w (A6 + A6_LIST + 24 * i + 22) - UPG_ROW0), ship;
+	int kind, id, n = 0, m;
+
+	if (!st_ok (row, 12) || !st_ok (A6 + A6_SHIP, 4)) return -1;
+	kind = st_b (row + 8);
+	id = st_b (row + 10);
+	ship = (unsigned int) STMemory_ReadLong (A6 + A6_SHIP);
+	if (!st_ok (ship, 184)) return -1;
+	switch (kind) {
+	case 0:		/* L76d5c: a bit of 158(a0) */
+		return (STMemory_ReadLong (ship + 158) >> (id & 31)) & 1;
+	case 2:		/* L76d84: the cabins */
+		return st_w (A6 + A6_CABINS);
+	case 4:		/* L76da2: a laser on any of the 167(a0) mounts at 168(a0) */
+		if (!id) return -1;
+		for (m = 0; m < st_b (ship + 167) && m < 4; m++)
+			n += st_b (ship + 168 + m) == id;
+		return n;
+	case 6:		/* L76dac: the drive, 166(a0) */
+		return id && st_b (ship + 166) == id;
+	case 8:		/* L76de6: $40 a time in 182(a0) */
+		return st_w (ship + 182) / 0x40;
+	case 0xa:	/* L76dfe: the eight pylons at 172(a0) */
+		if (!id) return -1;
+		for (m = 0; m < 8; m++)
+			n += st_b (ship + 172 + m) == id;
+		return n;
+	}
+	return -1;
+}
+
+/* a number on the page: its digits and point ('-' alone is none: 0);
+ * NAN if the run is not one */
+static float page_num (const struct hdtext_run *r)
+{
+	char c[48];
+	unsigned char sp[48];
+	int n = r ? hdtext_chars (r, c, sp, 48) : 0, k, dig = 0, neg = 0, pt = 0;
+	float v = 0, f = 0.1f;
+
+	for (k = 0; k < n; k++)
+		if (c[k] >= '0' && c[k] <= '9') {
+			if (pt) {
+				v += (c[k] - '0') * f;
+				f /= 10;
+			} else
+				v = v * 10 + (c[k] - '0');
+			dig = 1;
+		} else if (c[k] == '.')
+			pt = 1;
+		else if (c[k] == '-')
+			neg = 1;
+		else if (c[k] == 't' && dig)
+			break;
+		else if (c[k] != '$' && c[k] != ',')
+			return NAN;
+	return dig ? (neg ? -v : v) : neg && n == 1 ? 0 : NAN;
+}
+
+/* the runs of a table's row right of its name, left to right */
+static int row_cells (int y, struct hdtext_run **cell, int max)
+{
+	int i, n = 0;
+	for (i = 0; i < n_runs && n < max; i++)
+		if (ON_PAGE (&runs[i]) && runs[i].y == y && runs[i].x0 >= 200 && runs[i].x0 < 318) {
+			int k = n++;
+			for (; k > 0 && cell[k - 1]->x0 > runs[i].x0; k--)
+				cell[k] = cell[k - 1];
+			cell[k] = &runs[i];
+		}
+	return n;
+}
+
 static void layout_station (const unsigned char *raster, unsigned char *out)
 {
 	enum { CARDS, TABLE, ROWS, PLAIN } mode;
 	static unsigned char cover[CTRL_Y][ST_W];
 	int i, j, k, x, y, n124 = 0, n136 = 0, pitch = 999, prev = -1000, first = -1, last = -1;
-	int heads = 0, ships = 0, foot = 0, more = 0, mx = 0, my = 0, stray = 0, inplace = 0, grid = 0;
+	int heads = 0, ships = 0, foot = 0, more = 0, mx = 0, my = 0, stray = 0, inplace = 0, grid = 0, pic, odd_more = 0;
+	int mounts = 0, yard = 0;
 	float bb[4], space = 1.3f, s0 = 1000, s1 = -1000, tmin = 1000, tmax = -1000, title_x, panel_y = 136.5f;
 	struct hdtext_run *cash = NULL, *cash_lab = NULL;
 	struct elem *e;
@@ -2281,15 +2493,24 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 			if (b->x < 122 || b->x > 126 || b->y >= FOOT_Y) continue;
 			lab = label_of (b, 12, 20);
 			if (!lab || !card_icon (lab->hash)) grid = 0;
+			else if (lab->hash == H_YARD_FIT || lab->hash == H_YARD_REPAIR || lab->hash == H_YARD_SHIPS ||
+				 lab->hash == H_YARD_POLICE)
+				yard = 1;
 		}
 		if (grid) space = split_words ();
+	}
+	/* the gun mounts to choose from (L76c90's list): a card each, as
+	 * the grid's, the game's own boxes their clicks */
+	if (mode != TABLE && !grid && !inplace && !heads && !foot) {
+		int f, n;
+		if (game_list (&f, &n) == LIST_MOUNTS && f == 0 && n == n124) mounts = 1;
 	}
 	/* two tall rows that are not the grid: a conversation's answers,
 	 * read as rows, not cards (the bulletin board has three or more) */
 	if (mode == CARDS && !grid && n124 < 3) mode = ROWS;
 	memset (cut_row, 0, sizeof cut_row);
 	if (mode == TABLE && !grid) {
-		split_merged ();
+		split_merged (ships);
 		split_heads ();
 	}
 
@@ -2331,10 +2552,21 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 	 * pixel from it, and its frame needs the room */
 	e = add (E_GLASS, L_BACK, 0, 0.5f, inplace ? 120.5f : COL_X1, HEAD_Y1);
 	e->flags = F_ALL;
-	e = add (E_ICON, L_UNDER, 3, 2, 13, 12);
+	/* the shipyard and its mount chooser: back to the services, as the
+	 * console's comms icon goes (the game has no box for it) */
+	title_x = 0;
+	if (yard || mounts) {
+		float h = 9, w = h * sy / sx;
+		e = add (E_BTN, L_UNDER, 3, 7 - h / 2, 3 + w, 7 + h / 2);
+		e->icon = I_BACK;
+		e->flags = F_ROUND;
+		e->hot = add_hot (2, 1, 4 + w, 13, 57, 193, 1);
+		title_x = w + 3;
+	}
+	e = add (E_ICON, L_UNDER, 3 + title_x, 2, 13 + title_x, 12);
 	e->icon = I_STATION;
-	quad (L_BACK, 16, 11.75f, 46, 12.25f, C_ACCENT, 0.9f);
-	title_x = 16;
+	quad (L_BACK, 16 + title_x, 11.75f, 46 + title_x, 12.25f, C_ACCENT, 0.9f);
+	title_x += 16;
 	for (i = 0; i < n_runs; i++) {
 		struct hdtext_run *r = &runs[i];
 		if (!ON_PAGE (r) || r->x0 >= 100 || r->y < 2 || r->y > 8 || hide_bg (r)) continue;
@@ -2354,7 +2586,11 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 		cash->ax = 314;
 		cash->maxw = 70;
 		centre_y (cash, 7);
+		/* measured as it is set (its thousands marked), and no
+		 * wider than it may be drawn, so the label's gap holds */
+		cash->money = 1;
 		vw = hdtext_measure (cash);
+		if (vw > cash->maxw) vw = cash->maxw;
 		style (cash_lab, HDT_SECTION, C_TEXT2);
 		cash_lab->align = HDT_RIGHT;
 		cash_lab->ax = 314 - vw - 3.5f;
@@ -2374,19 +2610,22 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 			for (y = fr_ca[i][1]; y < fr_ca[i][3] && y < CTRL_Y; y++)
 				if (out[y * ST_W + fr_ca[i][2]] == 0) out[y * ST_W + fr_ca[i][2]] = 255;
 		}
-	if (find_blob (out, 0, 15, 119, FOOT_Y - 1, bb)) {
+	pic = find_blob (out, 0, 15, 119, FOOT_Y - 1, bb);
+	if (pic) {
+		/* the picture flush with the card's top, as with its sides:
+		 * where the game left the screen over it empty, a matte as
+		 * dark as a portrait's backdrop, framed with it */
+		if (!inplace && bb[1] - BODY_Y0 - bb[0] >= 1 && bb[1] - BODY_Y0 < 12) {
+			quad (L_BACK, bb[0], BODY_Y0 + bb[0], bb[2], bb[1], 0x000000, 0.6f);
+			bb[1] = BODY_Y0 + bb[0];
+			/* a portrait starts there too, over the matte */
+			hdui_face_top = bb[1];
+		}
 		e = add (E_FRAME, L_OVER, bb[0], bb[1], bb[2], bb[3]);
 		e->a = 0;
 		e->c = 1;
 		/* the cargo panel: clear of the frame */
 		panel_y = bb[3] + 2;
-		/* the strip over the picture, where the game left the screen
-		 * empty: a band like the panel under it, so the picture sits
-		 * between the two instead of under a gap */
-		if (bb[1] - 2 - BODY_Y0 >= 2) {
-			quad (L_BACK, 1, BODY_Y0 + 0.5f, 119.5f, bb[1] - 2, 0xffffff, 0.03f);
-			rule (L_BACK, 4, 117, bb[1] - 2, 0xffffff, 0.10f);
-		}
 	}
 	quad (L_BACK, 1, panel_y, 119.5f, 165.5f, 0xffffff, 0.03f);
 	rule (L_BACK, 4, 117, panel_y, 0xffffff, 0.10f);
@@ -2415,26 +2654,49 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 	}
 
 	/* the right */
-	if (grid) {
+	if (grid || mounts) {
 		int nc = 0, rows, idx[6];
-		float cw = (COL_X1 - COL_X0 - 3) / 2, y1 = foot ? 149 : 166.5f, ch;
+		float cw = (COL_X1 - COL_X0 - 3) / 2, y1 = foot ? 149 : 166.5f, ch, in = mounts ? 2.5f : 0;
 		for (i = 0; i < n_btn && nc < 6; i++)
 			if (btn[i].x >= 122 && btn[i].x <= 126 && btn[i].y < FOOT_Y) idx[nc++] = i;
 		rows = (nc + 1) / 2;
-		ch = (y1 - BODY_Y0 - 3 * (rows - 1)) / rows;
+		/* the mounts: a short card each, at the top */
+		ch = mounts ? 44 : (y1 - BODY_Y0 - 3 * (rows - 1)) / rows;
+		/* ... in a panel, as the other pages' rows are */
+		if (mounts) {
+			e = add (E_GLASS, L_BACK, COL_X0, BODY_Y0, COL_X1, 166.5f);
+			e->flags = F_ALL;
+			cw -= in;
+		}
 		for (j = 0; j < nc; j++) {
 			struct button *b = &btn[idx[j]];
 			int next = j + 1 < nc ? btn[idx[j + 1]].y : FOOT_Y;
-			float x0 = COL_X0 + (j & 1) * (cw + 3), y0 = BODY_Y0 + (j / 2) * (ch + 3);
-			grid_card (b, x0, y0, x0 + cw, y0 + ch, space, next);
+			float x0 = COL_X0 + in + (j & 1) * (cw + 3), y0 = BODY_Y0 + in + (j / 2) * (ch + 3);
+			grid_card (b, x0, y0, x0 + cw, y0 + ch, space, next, mounts ? I_GUN : 0);
 		}
 	} else {
-		float colx[16], colmax[16];
-		int ncol = 0, row = 0, lasty = -1000;
+		float colx[16], colmax[16], money = NAN, room = NAN;
+		int one_ship = 0, ncol = 0, row = 0, lasty = -1000, list = 0, lfirst = 0, lcount = 0, no_plus = 0, no_minus = 0, fitted = -1;
 
 		e = add (E_GLASS, L_BACK, COL_X0, inplace ? 0.5f : BODY_Y0, COL_X1, 166.5f);
 		e->flags = F_ALL;
 		e->a = heads ? 11.5f : 0;
+		for (i = 0; i < n_btn && ships; i++)
+			one_ship += btn[i].x >= 118 && btn[i].x <= 126 && btn[i].y < FOOT_Y;
+		one_ship = one_ship == 1;
+
+		/* the one ship viewed: its row's figures, right of its name,
+		 * columns first (under the heads the list's are under), on
+		 * the list's grid in its face */
+		for (i = 0; i < n_runs && one_ship && mode == TABLE; i++) {
+			const struct hdtext_run *r = &runs[i];
+			if (!ON_PAGE (r) || r->x0 < 200 || r->y >= FOOT_Y || !(r->kind & HDT_K_DIGIT) || ncol >= 16) continue;
+			for (j = 0; j < n_btn && abs (btn[j].y + 1 - r->y) > 2; j++);
+			for (k = 0; k < ncol && colx[k] != r->x0; k++);
+			if (j == n_btn || k < ncol) continue;
+			colx[ncol] = r->x0;
+			colmax[ncol++] = r->ink1;
+		}
 
 		/* a table's numeric columns: right aligned on their widest, if
 		 * nothing on their right comes nearer */
@@ -2486,12 +2748,96 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 			if (r->y >= 8 && cut_row[r->y] && (r->kind & HDT_K_NUMERIC)) r->maxw = hdtext_measure (r) + 1;
 		}
 		place_heads (colx, ncol);
+		/* the view of one ship (the shipyard's): its details as a key
+		 * and value table, the keys at one indent, the values in one
+		 * face from one edge, where the game began them */
+		if (ships && !inplace) {
+			float kx = 1000, vx = 1000;
+			for (i = 0; i < n_runs; i++) {
+				const struct hdtext_run *r = &runs[i];
+				if (!ON_PAGE (r) || r->hide || r->x0 < 128 || r->x0 > 140 || r->y <= first + 8 || r->y >= 118) continue;
+				for (k = 0; k < n_btn && abs (btn[k].y + 1 - r->y) > 2; k++);
+				if (k < n_btn) continue;
+				for (j = 0; j < n_runs; j++)
+					if (runs[j].y == r->y && runs[j].x0 >= 200 && runs[j].x0 < vx) vx = runs[j].x0;
+				if (r->x0 < kx) kx = r->x0;
+			}
+			for (i = 0; i < n_runs && vx < 1000; i++) {
+				struct hdtext_run *r = &runs[i];
+				if (!ON_PAGE (r) || r->hide || r->x0 < 128 || r->y <= first + 8 || r->y >= 124) continue;
+				if (r->x0 <= 140) {
+					/* a key, or the head of what follows */
+					if (r->y < 118) style (r, HDT_BODY, C_TEXT2);
+					r->align = HDT_LEFT;
+					r->ax = kx;
+					r->maxw = (r->y < 118 ? vx - 4 : COL_X1 - 2) - kx;
+				} else if (r->x0 >= 200 && r->y < 118) {
+					style (r, HDT_VALUE, C_TEXT);
+					r->scale = 1;
+					r->align = HDT_LEFT;
+					r->ax = vx;
+					r->maxw = COL_X1 - 2.5f - vx;
+				}
+			}
+		}
+		/* the market's and the upgrades' rows: what the page says the
+		 * cash and the hold's room are, to show a + that cannot buy or
+		 * fit and a - with nothing to sell or take out as off (a click
+		 * on one still goes to the game, which says why) */
+		if (mode == TABLE && !inplace) list = game_list (&lfirst, &lcount);
+		if (list) {
+			for (i = 0; i < n_runs; i++)
+				if (runs[i].hash == H_STATS_ROOM && runs[i].y >= 144 && runs[i].y <= 152 && runs[i].ink0 <= 2) {
+					for (j = 0; j < n_runs; j++)
+						if (runs[j].y == runs[i].y && runs[j].x0 > runs[i].ink1 && runs[j].x0 < 56) {
+							room = page_num (&runs[j]);
+							break;
+						}
+					break;
+				}
+			money = page_num (cash);
+		}
 		if (mode == TABLE || mode == ROWS) {
 			for (i = 0; i < n_btn; i++) {
 				struct button *b = &btn[i];
 				float h, w, cx = b->x + 5, cy = map_y (b->y + 4.25f);
 				int hh;
 				if (b->x < 118 || b->y >= FOOT_Y) continue;
+				if (b->y != lasty && list) {
+					/* the row's cells: the market's price, stock and
+					 * cargo; the upgrades' prices and weight */
+					struct hdtext_run *cell[6], *name = NULL;
+					int nc = row_cells (b->y + 1, cell, 6), idx = lfirst + row;
+					float price = nc ? page_num (cell[0]) : NAN, end = nc ? page_num (cell[nc - 1]) : NAN;
+					no_plus = no_minus = 0;
+					fitted = -1;
+					if (idx >= lcount || nc < 2) list = 0;
+					else if (list == LIST_MARKET) {
+						/* none in stock ('-') the game will not sell */
+						no_plus = price > money || room == 0 || (nc >= 3 && page_num (cell[1]) == 0);
+						no_minus = end == 0;
+					} else {
+						fitted = upg_fitted (idx);
+						no_plus = price > money || end > room;
+						no_minus = fitted == 0;
+					}
+					/* a fitted upgrade: a tick after its name, a pip
+					 * for each one past the first */
+					for (j = 0; j < n_runs && fitted > 0 && list; j++)
+						if (ON_PAGE (&runs[j]) && runs[j].y == b->y + 1 && runs[j].x0 >= 146 && runs[j].x0 < 200) {
+							name = &runs[j];
+							break;
+						}
+					if (name) {
+						float nx = (name->ax > 0 ? name->ax : name->ink0) + name->dx + hdtext_measure (name) + 2.5f;
+						float ny = map_y (b->y + 4.25f), ih = 5.5f, iw = ih * sy / sx;
+						e = add (E_ICON, L_OVER, nx, ny - ih / 2, nx + iw, ny + ih / 2);
+						e->icon = I_CHECK;
+						for (k = 1; k < fitted && k < 8; k++)
+							quad (L_OVER, nx + iw + 0.5f + (k - 1) * 2.2f, ny - 0.6f, nx + iw + 1.7f + (k - 1) * 2.2f, ny + 0.6f,
+							      C_ACCENT, 0.9f);
+					}
+				}
 				if (b->y != lasty) {
 					float r0 = map_y (b->y - 1), r1 = map_y (b->y + 9);
 					lasty = b->y;
@@ -2520,7 +2866,17 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 				e->icon = mode == ROWS ? I_CHEVRON : b->x <= 126 ? I_PLUS : ships ? I_EYE : I_MINUS;
 				e->pressed = b->pressed;
 				e->hot = hh;
+				if (list && (b->x <= 126 ? no_plus : no_minus)) e->flags |= F_OFF;
 				b->used = 1;
+			}
+			/* a long list: where the rows shown are in it, a thin
+			 * bar on the column's right edge */
+			if (list && row && lcount > row) {
+				float t0 = map_y (first - 1), t1 = map_y (last + 9), k0, k1;
+				k0 = t0 + (t1 - t0) * lfirst / lcount;
+				k1 = t0 + (t1 - t0) * (lfirst + row < lcount ? lfirst + row : lcount) / lcount;
+				quad (L_OVER, COL_X1 - 2.6f, t0, COL_X1 - 1.6f, t1, 0xffffff, 0.08f);
+				quad (L_OVER, COL_X1 - 2.6f, k0, COL_X1 - 1.6f, k1, C_ACCENT, 0.85f);
 			}
 		} else if (mode == CARDS) {
 			/* cards the layout does not know (the bulletin board's) */
@@ -2542,13 +2898,38 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 				e->c = 64;
 				e->hot = add_hot (COL_X0, y0, COL_X1, y1, b->x + 4, b->y + 4, 1);
 				b->used = 1;
+				/* the advert's lines (and its icon with them) in the
+				 * card's middle, however many there are */
+				{
+					float t0 = 1e9f, t1 = -1e9f, d;
+					int nxt = FOOT_Y;
+					for (j = 0; j < n_btn; j++)
+						if (btn[j].x == b->x && btn[j].y > b->y && btn[j].y < nxt) nxt = btn[j].y;
+					for (j = 0; j < n_runs; j++) {
+						const struct hdtext_run *r = &runs[j];
+						if (!ON_PAGE (r) || r->hide || r->x0 < 128 || r->y < b->y - 3 || r->y >= nxt - 3) continue;
+						if (r->y < t0) t0 = r->y;
+						if (r->y + 7 > t1) t1 = r->y + 7;
+					}
+					if (t1 > t0) {
+						d = (y0 + y1) / 2 - (map_y (t0) + map_y (t1)) / 2;
+						for (j = 0; j < n_runs; j++) {
+							struct hdtext_run *r = &runs[j];
+							if (ON_PAGE (r) && !r->hide && r->x0 >= 128 && r->y >= b->y - 3 && r->y < nxt - 3) r->dy += d;
+						}
+						e->b += d;
+					}
+				}
 			}
 		}
 	}
 
-	/* the foot: go back, more */
+	/* the foot: go back on the left, more on the right (unless the game's
+	 * own arrows show, where a pill would be on the left) */
+	for (i = 0; i < n_runs; i++)
+		if (ON_PAGE (&runs[i]) && runs[i].y >= FOOT_Y && runs[i].x0 >= 118 && runs[i].hash == H_MORE && !more) odd_more = 1;
 	for (i = 0; i < n_btn; i++)
-		if (btn[i].x >= 118 && btn[i].y >= FOOT_Y) foot_pill (&btn[i]);
+		if (btn[i].x >= 118 && btn[i].y >= FOOT_Y) foot_pill (&btn[i], !odd_more && !inplace);
 	for (i = 0; i < n_runs; i++) {
 		struct hdtext_run *r = &runs[i];
 		if (!ON_PAGE (r) || r->y < FOOT_Y || r->x0 < 118) continue;
@@ -2567,8 +2948,11 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 			style_body (r);
 	}
 
-	/* the rest of the right column: nothing (where the game's boxes were) */
-	if (!inplace) add_hot (118, 0, ST_W, foot ? FOOT_Y : CTRL_Y, 1, 1, 1);
+	money_runs ();
+
+	/* the rest of the right column: nothing (where the game's boxes were);
+	 * the foot too, its pills having moved off the game's boxes */
+	if (!inplace) add_hot (118, 0, ST_W, foot && odd_more ? FOOT_Y : CTRL_Y, 1, 1, 1);
 }
 
 /* A label and its value the game printed as one string ("Name:value",
@@ -3365,6 +3749,7 @@ void hdui_frame (const unsigned char *raster, unsigned char *out,
 
 	memcpy (fr_ca, ca, sizeof (ca));
 	fr_ca_n = ca_n;
+	hdui_face_top = 0;
 	ca_n = 0;
 	n_el = n_hot = 0;
 	page = P_NONE;
