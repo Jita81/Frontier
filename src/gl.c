@@ -3790,6 +3790,53 @@ void Nu_GLClearArea ()
 }
 
 typedef void (*NU_DRAWFUNC) (void **);
+
+/*
+ * Widescreen flight (wide_3d): the core sends a planet only while its disc
+ * overlaps its own 4:3 picture (L3cd9c_ProjectPlanet), so a planet whose
+ * disc runs on into a side strip would vanish there as a whole disc the
+ * moment its rim leaves the picture. Instead it fades out over the last
+ * PLANET_FADE_PX of overlap (and in again the same way), with the surface
+ * and its atmosphere layers alike. A planet well inside, and any 4:3 window,
+ * is drawn exactly as before.
+ */
+#define PLANET_FADE_PX	(24.0 * pic_h / 720.0)
+
+static void planet_faded (NU_DRAWFUNC draw, void **data)
+{
+	const struct PlanetPrim *p = *data;
+	double t = tan (36.5 * M_PI / 360.0), lim[2] = { 1.9*t, t };
+	double z = p->centre[2], R2 = p->R * p->R, a = 1.0;
+	/* pixels per unit of x/z and y/z, as in draw_wide_flight */
+	double px[2] = { pic_w/2.0/lim[0], (pic_h - 32*pic_h/200)/2.0/lim[1] };
+	int i;
+
+	if (!wide_3d || z <= 0.0 || z*z <= R2) {
+		draw (data);
+		return;
+	}
+	for (i = 0; i < 2; i++) {
+		/* the disc's extent in x/z (y/z): the tangent planes */
+		double c = p->centre[i], q = p->R * sqrt (c*c + z*z - R2);
+		double s0 = (c*z - q) / (z*z - R2), s1 = (c*z + q) / (z*z - R2);
+		a = MIN (a, MIN (lim[i] - s0, s1 + lim[i]) * px[i] / PLANET_FADE_PX);
+	}
+	if (a >= 1.0) {
+		draw (data);
+	} else if (a <= 0.0) {
+		*data += sizeof (struct PlanetPrim);
+	} else {
+		glPushAttrib (GL_COLOR_BUFFER_BIT);
+		glEnable (GL_BLEND);
+		glBlendColor (0.0f, 0.0f, 0.0f, (GLfloat) a);
+		glBlendFunc (GL_CONSTANT_ALPHA, GL_ONE_MINUS_CONSTANT_ALPHA);
+		draw (data);
+		glPopAttrib ();
+	}
+}
+static void Nu_DrawPlanetFaded (void **data) { planet_faded (Nu_DrawPlanet, data); }
+static void Nu_DrawAtmosphereFaded (void **data) { planet_faded (Nu_DrawAtmosphere, data); }
+
 NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	NULL,
 	&Nu_DrawTriangle,
@@ -3803,7 +3850,7 @@ NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	&Nu_DrawComplexStartInner, // 9
 	&Nu_DrawComplexBezier,
 	&Nu_DrawTwinklyCircle,
-	&Nu_DrawPlanet,
+	&Nu_DrawPlanetFaded,
 	&Nu_DrawCircle,
 	&Nu_DrawCylinder,
 	&Nu_DrawBlob,
@@ -3811,7 +3858,7 @@ NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	&Nu_DrawPoint,
 	&Nu_Draw2DLine,
 	NULL,	/* NU_SUBTREE, see Nu_DrawPrimitive */
-	&Nu_DrawAtmosphere,
+	&Nu_DrawAtmosphereFaded,
 	&Nu_DrawSkyBand,
 	&Nu_DrawComplexOval
 };
