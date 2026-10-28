@@ -49,6 +49,8 @@ Some special keys:
 
 F11	- Toggle fullscreen.
 Ctrl-E	- Toggle hardware GL / original software renderers.
+	  The choice is kept in frontier.ini; FE2_WIREFRAME=1 adds the
+	  wireframe debug view to the cycle.
 Ctrl-M	- Toggle mouse grabbing.
 Ctrl-Q	- Quit.
 F	- Toggles some debug info & fps readout.

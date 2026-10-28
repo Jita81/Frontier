@@ -42,6 +42,7 @@ typedef void (*_GLUfuncptr)();
 #include "hdback.h"
 #include "procfx.h"
 #include "bindings.h"
+#include "hdtip.h"
 /* MEM_SIZE, and the engine's variables by label address (__D<label>) */
 #include "../host.h"
 #include "../fixups.h"
@@ -230,6 +231,7 @@ static void change_vidmode ()
 	controls_page_forget ();
 	hdback_forget ();
 	procfx_forget ();
+	hdtip_forget ();
 	if (screen_tex) {
 		glDeleteTextures (1, &screen_tex);
 		screen_tex = 0;
@@ -590,10 +592,17 @@ static void pop_ortho ()
 	glPopMatrix ();
 }
 
+/* Ctrl-E: HD and the old software renderer.  The wireframe debug view
+ * joins the cycle only with FE2_WIREFRAME=1. */
 void Screen_ToggleRenderer ()
 {
-	use_renderer++;
-	if (use_renderer >= R_MAX) use_renderer = 0;
+	const char *w = getenv ("FE2_WIREFRAME");
+
+	if (w && *w && *w != '0') {
+		use_renderer++;
+		if (use_renderer >= R_MAX) use_renderer = 0;
+	} else
+		use_renderer = use_renderer == R_GL ? R_OLD : R_GL;
 }
 
 static void draw_control_panel ()
@@ -627,8 +636,10 @@ static void draw_control_panel ()
 	if (!pixel_text || !pixel_art || !pixel_faces || !classic_ui) {
 		hdtext_frame (font_bmp, VideoRaster, hd_screen);
 		hdui_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
-		hdstill_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
+		/* before hdstill: the face parts and the message thumbnail
+		 * it takes out are hdstill's to leave be (and log deferred) */
 		hdface_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
+		hdstill_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
 		hdback_frame (VideoRaster, hd_screen);
 		scr = hd_screen;
 	}
@@ -699,7 +710,9 @@ static void draw_control_panel ()
 	hdface_draw (MainRGBPalette, CtrlRGBPalette);
 	hdtext_draw (font_bmp, MainRGBPalette, CtrlRGBPalette);
 	hdui_draw_over (MainRGBPalette, CtrlRGBPalette);
+	endcard_draw ();
 	controls_page_draw ();
+	hdtip_draw ();
 	
 	glDisable (GL_TEXTURE_2D);
 	
@@ -3950,4 +3963,6 @@ void Nu_DrawScreen ()
 	set_main_viewport ();
 	/* a 2D page's backdrop, under everything the next frame draws */
 	hdui_backdrop (MainRGBPalette, fe2_bgcol);
+	/* the game-over backdrop, under the tombstone */
+	endcard_frame ();
 }

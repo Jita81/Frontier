@@ -87,26 +87,19 @@ static int n_shown;
 
 static int debug = -1;
 
+/* the control panel as the last hdstill_frame found it (hdstill_panel) */
+static struct hdstill_panel panel_now;
+
 /* ------------------------------------------------------------------ */
 /* what each bitmap is */
 
-/* the icons in the function keys */
-enum {
-	G_ABSENT, G_EMPTY, G_FRONT, G_REAR, G_EXT, G_GALMAP, G_SYSMAP, G_SHIP,
-	G_CARGO, G_CMDR, G_PHONE, G_TARGET, G_CROSS, G_WRENCH, G_HYPER,
-	G_PERSON, G_LAUNCH, G_LIST, G_ARM, G_BEAM, G_BURST, G_ORRERY,
-	G_LOAD, G_SAVE, G_DELETE, G_EXIT, G_SECTOR, G_ROUTE, G_TAKEOFF,
-	G_DOC, G_ALPHA
-};
-#define G_OFF		0x80	/* with an icon: crossed out, not to be had now */
+/* the icons in the function keys (G_ in hdstill.h) */
 #define GX(g)		((g) | G_OFF)
 
 enum { K_PANEL, K_LOGO, K_MISSILE, K_SELECT, K_MORE, K_OPT_ON, K_OPT_OFF };
 #define ON_MAIN(k)	((k) >= K_SELECT)	/* in the main screen's rows, on its background */
 #define IS_OPT(k)	((k) >= K_OPT_ON)	/* an option's key, its own colours */
-#define F_MAPKEYS	1	/* the map's time keys where the second display is */
-#define F_SCANNER	2	/* the scanner in the bay */
-#define F_BUTTONS	4	/* the row of keys along the bay's floor */
+/* F_MAPKEYS, F_SCANNER, F_BUTTONS: hdstill.h */
 
 struct art {
 	u64 hash;
@@ -156,6 +149,12 @@ static const struct art arts[] = {
 	{ 0x96349724541eb108ULL, 16, 11, K_PANEL, 0, 1, { G_ROUTE }, "icon route" },
 	{ 0x38afdfb87c76cf68ULL, 16, 11, K_PANEL, 0, 1, { G_TAKEOFF }, "icon take off (landed)" },
 	{ 0x3fa31e1416775b84ULL, 16, 11, K_PANEL, 0, 1, { GX (G_LIST) }, "icon list crossed (landed)" },
+	/* a map option turned off: its key without the cross, over the strip */
+	{ 0x27098800ad01b1c9ULL, 16, 11, K_PANEL, 0, 1, { G_PERSON }, "icon person (option off)" },
+	{ 0x1aae938aed8b65ccULL, 16, 11, K_PANEL, 0, 1, { G_GALMAP }, "icon galaxy map (option off)" },
+	{ 0x2f8394d95032ca79ULL, 16, 11, K_PANEL, 0, 1, { G_ALPHA }, "icon alpha (option off)" },
+	{ 0x204ff007744c5988ULL, 16, 11, K_PANEL, 0, 1, { G_WRENCH }, "icon wrench (option off)" },
+	{ 0x02fb7f3f0820e6baULL, 16, 11, K_PANEL, 0, 1, { G_DOC }, "icon doc (option off)" },
 	{ 0x980ec8842f7b354bULL, 64, 11, K_PANEL, 0, 1, { G_TARGET, G_CROSS, G_WRENCH, G_HYPER }, "icons 7-10 galaxy map" },
 	{ 0xaa1cc440b258bd81ULL, 64, 11, K_PANEL, 0, 1, { G_TARGET, G_CROSS, G_EMPTY, G_SECTOR }, "icons 7-10 galaxy map zoomed out" },
 	{ 0x86a58df0cc99b241ULL, 64, 11, K_PANEL, 0, 1, { GX (G_PERSON), GX (G_GALMAP), GX (G_ROUTE), GX (G_ALPHA) }, "icons 7-10 galaxy map info" },
@@ -243,6 +242,14 @@ static float gs_k;		/* > 0: drawn this frame, faded so */
 static unsigned gs_at;		/* the frame speed was last read in */
 static struct tex gtex;
 static int gfail;		/* no texture: leave the game's lines */
+/* which function key is at (x, y): 1..4 left, 5..6 in the bay, 7..10 right */
+static int slot_at (int x, int y)
+{
+	if (y >= 186 && x >= 224 && x < 256) return 5 + (x - 224) / 16;
+	if (x < 64) return 1 + x / 16;
+	if (x >= 256) return 7 + (x - 256) / 16;
+	return 0;
+}
 
 /* ------------------------------------------------------------------ */
 /* the art, drawn in code */
@@ -1943,15 +1950,6 @@ static void logo (void)
 	}
 }
 
-/* which function key is at (x, y): 1..4 left, 5..6 in the bay, 7..10 right */
-static int slot_at (int x, int y)
-{
-	if (y >= 186 && x >= 224 && x < 256) return 5 + (x - 224) / 16;
-	if (x < 64) return 1 + x / 16;
-	if (x >= 256) return 7 + (x - 256) / 16;
-	return 0;
-}
-
 static void draw_art (const struct art *a, int x, int y)
 {
 	int i, s;
@@ -2451,6 +2449,37 @@ static void gauges_frame (unsigned char *out)
 		v = 3 * v + (v >> 1) - (v >> 4);
 		snprintf (gs.speed, sizeof gs.speed, "%lld.%lld km/h", v / 10, v % 10);
 	}
+/* hdstill_frame found r on the screen (newest first): what it shows of
+ * the control panel, unless a newer bitmap already said */
+static void note_panel (const struct rec *r)
+{
+	const struct art *a = &arts[r->art];
+	int i, s;
+
+	if (a->kind == K_MISSILE) {
+		panel_now.n_missiles++;
+		return;
+	}
+	if (a->kind != K_PANEL) return;
+	panel_now.valid = 1;
+	s = r->y >= CTRL_Y ? slot_at (r->x, r->y) : 0;
+	for (i = 0; i < 4 && s > 0 && s + i <= 10; i++)
+		if (a->g[i] != G_ABSENT && !panel_now.slot[s + i]) panel_now.slot[s + i] = a->g[i];
+	/* the bay (its middle) and the second display (the map's keys) */
+	if (!(panel_now.seen & 1) && r->x <= 160 && r->x + r->w > 160 && r->y <= 180 && r->y + r->h > 180) {
+		panel_now.seen |= 1;
+		panel_now.flags |= a->flags & F_SCANNER;
+	}
+	if (!(panel_now.seen & 2) && r->x <= 290 && r->x + r->w > 290 && r->y <= 181 && r->y + r->h > 181) {
+		panel_now.seen |= 2;
+		panel_now.flags |= a->flags & F_MAPKEYS;
+	}
+}
+
+int hdstill_panel (struct hdstill_panel *p)
+{
+	*p = panel_now;
+	return panel_now.valid;
 }
 
 void hdstill_frame (const unsigned char *raster, unsigned char *out,
@@ -2463,6 +2492,7 @@ void hdstill_frame (const unsigned char *raster, unsigned char *out,
 
 	n_shown = 0;
 	gs_k = 0;
+	memset (&panel_now, 0, sizeof (panel_now));
 	if (pixel_art) return;
 	if (debug < 0) debug = getenv ("FE2_HD_DEBUG") ? atoi (getenv ("FE2_HD_DEBUG")) : 0;
 	frame_no++;
@@ -2525,6 +2555,7 @@ void hdstill_frame (const unsigned char *raster, unsigned char *out,
 			continue;
 		}
 		r->misses = 0;
+		if (r->art >= 0) note_panel (r);
 		/* a layer before this one (the restyled screens) has taken
 		 * it out: theirs */
 		defer = taken * 100 > vis * DEFER_PCT;

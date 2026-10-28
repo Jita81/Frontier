@@ -113,5 +113,10 @@ int controls_page_mouse (int button, int down);
 void controls_page_draw (void);
 /* the GL context is going away: drop the page's textures */
 void controls_page_forget (void);
+/* The game-over card (hdcontrols.c, GL build only): once a frame before
+ * the 3D view (the backdrop while the tombstone is up), then the card
+ * itself in the panel pass, under the Controls page */
+void endcard_frame (void);
+void endcard_draw (void);
 
 #endif /* BINDINGS_H */

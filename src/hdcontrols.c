@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <math.h>
 #include <SDL.h>
 
@@ -31,6 +32,7 @@
 #include "keymap.h"
 #include "art.h"
 #include "hdui.h"
+#include "procfx.h"
 #include "../m68000.h"
 #include "../fixups.h"
 
@@ -1121,12 +1123,54 @@ static void quad (GLuint t, int tw, int th, int w, int h, float x0, float y0, fl
 	glEnd ();
 	glDisable (GL_TEXTURE_2D);
 }
+
+/* 2D drawing over the whole picture, (0, 0) its top left, premultiplied
+ * alpha; 0 (and nothing set) when the picture is too small */
+static int begin_picture (int *fw, int *fh)
+{
+	int fx, fy;
+
+	gl_picture_rect (&fx, &fy, fw, fh);
+	if (*fw < 32 || *fh < 32) return 0;
+	glPushAttrib (GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_VIEWPORT_BIT | GL_TEXTURE_BIT |
+		      GL_CURRENT_BIT | GL_DEPTH_BUFFER_BIT | GL_TRANSFORM_BIT | GL_POLYGON_BIT | GL_SCISSOR_BIT);
+	glViewport (fx, fy, *fw, *fh);
+	glMatrixMode (GL_PROJECTION);
+	glPushMatrix ();
+	glLoadIdentity ();
+	glOrtho (0, *fw, *fh, 0, -1, 1);
+	glMatrixMode (GL_MODELVIEW);
+	glPushMatrix ();
+	glLoadIdentity ();
+	glDisable (GL_DEPTH_TEST);
+	glDisable (GL_CULL_FACE);
+	glDisable (GL_LIGHTING);
+	glDisable (GL_ALPHA_TEST);
+	glDisable (GL_FOG);
+	glDisable (GL_SCISSOR_TEST);
+	glPolygonMode (GL_FRONT_AND_BACK, GL_FILL);
+	glEnable (GL_BLEND);
+	glBlendFunc (GL_ONE, GL_ONE_MINUS_SRC_ALPHA);	/* premultiplied */
+	glTexEnvf (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+	return 1;
+}
+
+static void end_picture (void)
+{
+	glMatrixMode (GL_PROJECTION);
+	glPopMatrix ();
+	glMatrixMode (GL_MODELVIEW);
+	glPopMatrix ();
+	glPopAttrib ();
+}
+
+static void endcard_forget (void);
 #endif
 
 void controls_page_draw (void)
 {
 #ifdef __APPLE__
-	int fx, fy, fw, fh, W, H;
+	int fw, fh, W, H;
 	float x, y;
 
 	/* the Esc that paused the game: let go after a few frames, and see
@@ -1159,30 +1203,8 @@ void controls_page_draw (void)
 	entry_shown = !is_open && game_menu_up ();
 	if (!is_open && !entry_shown) return;
 
-	gl_picture_rect (&fx, &fy, &fw, &fh);
-	if (fw < 32 || fh < 32) return;
+	if (!begin_picture (&fw, &fh)) return;
 	pointer (&x, &y);
-
-	glPushAttrib (GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_VIEWPORT_BIT | GL_TEXTURE_BIT |
-		      GL_CURRENT_BIT | GL_DEPTH_BUFFER_BIT | GL_TRANSFORM_BIT | GL_POLYGON_BIT | GL_SCISSOR_BIT);
-	glViewport (fx, fy, fw, fh);
-	glMatrixMode (GL_PROJECTION);
-	glPushMatrix ();
-	glLoadIdentity ();
-	glOrtho (0, fw, fh, 0, -1, 1);
-	glMatrixMode (GL_MODELVIEW);
-	glPushMatrix ();
-	glLoadIdentity ();
-	glDisable (GL_DEPTH_TEST);
-	glDisable (GL_CULL_FACE);
-	glDisable (GL_LIGHTING);
-	glDisable (GL_ALPHA_TEST);
-	glDisable (GL_FOG);
-	glDisable (GL_SCISSOR_TEST);
-	glPolygonMode (GL_FRONT_AND_BACK, GL_FILL);
-	glEnable (GL_BLEND);
-	glBlendFunc (GL_ONE, GL_ONE_MINUS_SRC_ALPHA);	/* premultiplied */
-	glTexEnvf (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 
 	if (is_open) {
 		W = fw;
@@ -1219,11 +1241,7 @@ void controls_page_draw (void)
 		      EP_X0 * fw / (float) DW + entry_w, EP_Y0 * fh / (float) DH + entry_h);
 	}
 
-	glMatrixMode (GL_PROJECTION);
-	glPopMatrix ();
-	glMatrixMode (GL_MODELVIEW);
-	glPopMatrix ();
-	glPopAttrib ();
+	end_picture ();
 #endif
 }
 
@@ -1237,5 +1255,227 @@ void controls_page_forget (void)
 	tex_w = tex_h = entry_tw = entry_th = 0;
 	pic_w = pic_h = 0;
 	entry_state = -1;
+	endcard_forget ();
+#endif
+}
+
+/* ---------------------------------------------------------------- */
+/* The game-over card
+ *
+ * While the game shows its tombstone (fe2.s L425a4_TombstoneLoop) the
+ * host puts a dark nebula behind it (procfx.c) and a frosted card in
+ * front, with the commander's name and the date, read from the game.
+ * The stone itself and its tumble stay the game's.
+ *
+ * The loop keeps the stone's object record on the stack, just under the
+ * stack base: model word 6, the commander's name copied in, z clamped to
+ * $88b8..$3d090, and a rotation it writes again every frame.  All of
+ * that has to hold, and the record has to have changed in the last two
+ * frames, so a stale copy left on the stack never counts. */
+
+#define A6_DAY		528		/* A6_day_since_epoch */
+#define A6_NAME		14400		/* A6_commander_name */
+#define A6_STACK_BASE	14478
+#define TOMB_REC	288		/* the record, under the stack base */
+#define TOMB_MODEL	6
+#define TOMB_NAME	246
+#define TOMB_Z		28
+#define END_NAME	32
+
+static int end_on, end_quiet = 99, end_prev;
+static unsigned char end_sig[22];
+static char end_name[END_NAME + 1];
+static unsigned long end_day;
+static Uint32 end_t0;
+
+static int st_ok (unsigned long a, unsigned long n)
+{
+	return a >= 0x400 && a < 0x110000 && n <= 0x110000 - a;
+}
+
+/* the tombstone is up: name and day filled in */
+static int tombstone (void)
+{
+	unsigned long rec = (unsigned long) STMemory_ReadLong (A6 + A6_STACK_BASE) - TOMB_REC;
+	unsigned long z;
+	int i, c;
+
+	if (!(rb (598) & 0x20) || !st_ok (rec, TOMB_REC)) return 0;
+	if ((STMemory_ReadWord (rec + 90) & 0xffff) != TOMB_MODEL) return 0;
+	z = (unsigned long) STMemory_ReadLong (rec + TOMB_Z);
+	if (z < 0x88b8 || z > 0x3d090) return 0;
+	for (i = 0; i < END_NAME; i++) {
+		c = STMemory_ReadByte (rec + TOMB_NAME + i) & 0xff;
+		if (c != rb (A6_NAME + i)) return 0;
+		end_name[i] = (char) (c >= 0x20 && c < 0x7f ? c : (c ? '?' : 0));
+		if (!c) break;
+	}
+	if (i == 0 || i == END_NAME) return 0;
+	end_day = rl (A6_DAY);
+	return 1;
+}
+
+/* 0..1 over the first half second */
+static float end_fade (void)
+{
+	Uint32 t = SDL_GetTicks () - end_t0;
+	return t >= 500 ? 1.0f : t / 500.0f;
+}
+
+/* once a frame, before the 3D view: the backdrop while the tombstone
+ * is up */
+void endcard_frame (void)
+{
+	unsigned char sig[22];
+	unsigned long rec;
+	int i, on = 0;
+
+	if (use_renderer == R_GL && !classic_ui && !pixel_art && !pixel_text && tombstone ()) {
+		rec = (unsigned long) STMemory_ReadLong (A6 + A6_STACK_BASE) - TOMB_REC;
+		for (i = 0; i < 18; i++) sig[i] = STMemory_ReadByte (rec + i);
+		for (i = 0; i < 4; i++) sig[18 + i] = STMemory_ReadByte (rec + TOMB_Z + i);
+		end_quiet = end_prev && memcmp (sig, end_sig, sizeof sig) == 0 ? end_quiet + 1
+			  : end_prev ? 0 : 99;
+		memcpy (end_sig, sig, sizeof sig);
+		end_prev = 1;
+		on = end_quiet <= 2;
+	} else {
+		end_prev = 0;
+		end_quiet = 99;
+	}
+	if (on && !end_on) end_t0 = SDL_GetTicks ();
+	end_on = on;
+	if (on) procfx_endgame_backdrop (end_fade ());
+}
+
+#ifdef __APPLE__
+/* the card, in design units, low in the 3D view (rows 0-167 of the
+ * picture's 200): two plaques either side of the middle, so the stone,
+ * which fills the view's height at its closest, is never covered */
+#define EC_PW	440		/* one plaque */
+#define EC_GAP	600		/* between them: wider than the stone face-on */
+#define EC_W	(2 * EC_PW + EC_GAP)
+#define EC_H	136
+#define EC_X	((DW - EC_W) / 2)
+#define EC_Y	(DH * 168 / 200 - 32 - EC_H)
+#define EC_M	48		/* room for the glass's shadow */
+
+static const char *const month[12] = {
+	"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+};
+
+/* the game's calendar (fe2.s L3e1c4): four-year cycles of 1461 days whose
+ * first year is the leap year; the year is absolute */
+static void game_date (unsigned long d, char *s, int n)
+{
+	static const int mdays[12] = { 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+	unsigned long y = d / 1461 * 4, r = d % 1461;
+	int m = 0;
+
+	if (r >= 366) {
+		r -= 366;
+		y += 1 + r / 365;
+		r %= 365;
+		if (r >= 59) r++;	/* no 29 Feb */
+	}
+	while (m < 11 && r >= (unsigned long) mdays[m]) r -= mdays[m++];
+	snprintf (s, n, "%lu %s %lu", r + 1, month[m], y);
+}
+
+static GLuint end_tex;
+static int end_tw, end_th, end_w, end_h;
+static char end_key[END_NAME + 48];
+
+static void render_end (int W, int H)
+{
+	unsigned char *buf;
+	CGContextRef g;
+	float k = H / (float) DH, sz;
+	int w = (int) ceilf ((EC_W + 2 * EC_M) * W / (float) DW), h = (int) ceilf ((EC_H + 2 * EC_M) * k);
+	char date[40];
+	int i;
+
+	load_faces ();
+	if (!rgb_space) rgb_space = CGColorSpaceCreateDeviceRGB ();
+	buf = calloc ((size_t) w * h, 4);
+	if (!buf) return;
+	g = CGBitmapContextCreate (buf, w, h, 8, w * 4, rgb_space,
+				   kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+	if (g) {
+		CGContextTranslateCTM (g, 0, h);
+		CGContextScaleCTM (g, W / (float) DW, -k);
+		CGContextTranslateCTM (g, EC_M, EC_M);
+		glass (g, 0, 0, EC_PW, EC_H, 22, 0.86f, 0.74f);
+		glass (g, EC_W - EC_PW, 0, EC_PW, EC_H, 22, 0.86f, 0.74f);
+		text (g, F_COND, 20, C_ACCENT, 1, EC_PW / 2, 46, "IN MEMORIAM", 1, 4);
+		sz = 46;
+		if (text_width (F_TITLE, sz, end_name) > EC_PW - 60)
+			sz *= (EC_PW - 60) / text_width (F_TITLE, sz, end_name);
+		text (g, F_TITLE, sz, C_TEXT, 1, EC_PW / 2, 104, end_name, 1, 1.5f);
+		game_date (end_day, date, sizeof date);
+		for (i = 0; date[i]; i++) date[i] = (char) toupper ((unsigned char) date[i]);
+		text (g, F_COND, 20, C_ACCENT, 1, EC_W - EC_PW / 2, 46, date, 1, 4);
+		text (g, F_SANS, 24, C_TEXT2_SEE, 1, EC_W - EC_PW / 2, 100, "Press a key to continue", 1, 0.3f);
+		CGContextRelease (g);
+	}
+	if (!end_tex || end_tw < w || end_th < h) {
+		if (end_tex) glDeleteTextures (1, &end_tex);
+		glGenTextures (1, &end_tex);
+		end_tw = pow2 (w);
+		end_th = pow2 (h);
+		glBindTexture (GL_TEXTURE_2D, end_tex);
+		glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA, end_tw, end_th, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+	}
+	glBindTexture (GL_TEXTURE_2D, end_tex);
+	glPushClientAttrib (GL_CLIENT_PIXEL_STORE_BIT);
+	glPixelStorei (GL_UNPACK_ALIGNMENT, 4);
+	glPixelStorei (GL_UNPACK_ROW_LENGTH, 0);
+	glTexSubImage2D (GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, buf);
+	glPopClientAttrib ();
+	free (buf);
+	end_w = w;
+	end_h = h;
+}
+
+static void endcard_forget (void)
+{
+	if (end_tex) glDeleteTextures (1, &end_tex);
+	end_tex = 0;
+	end_tw = end_th = 0;
+	end_key[0] = 0;
+}
+#endif
+
+/* in the panel pass, over the 3D view */
+void endcard_draw (void)
+{
+#ifdef __APPLE__
+	char key[sizeof end_key];
+	int fw, fh;
+	float a, x0, y0;
+
+	if (!end_on || !begin_picture (&fw, &fh)) return;
+	snprintf (key, sizeof key, "%s/%lu/%dx%d", end_name, end_day, fw, fh);
+	if (!end_tex || strcmp (key, end_key)) {
+		render_end (fw, fh);
+		strcpy (end_key, key);
+	}
+	a = end_fade ();
+	x0 = (EC_X - EC_M) * fw / (float) DW;
+	y0 = (EC_Y - EC_M) * fh / (float) DH;
+	glEnable (GL_TEXTURE_2D);
+	glBindTexture (GL_TEXTURE_2D, end_tex);
+	glColor4f (a, a, a, a);
+	glBegin (GL_TRIANGLE_STRIP);
+	glTexCoord2f (0, 0); glVertex2f (x0, y0);
+	glTexCoord2f (end_w / (float) end_tw, 0); glVertex2f (x0 + end_w, y0);
+	glTexCoord2f (0, end_h / (float) end_th); glVertex2f (x0, y0 + end_h);
+	glTexCoord2f (end_w / (float) end_tw, end_h / (float) end_th); glVertex2f (x0 + end_w, y0 + end_h);
+	glEnd ();
+	end_picture ();
 #endif
 }
