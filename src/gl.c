@@ -3740,19 +3740,20 @@ void Nu_GLClearArea ()
 	y1 = GetReg (1)&0xffff;
 	x2 = GetReg (2)&0xffff;
 	y2 = GetReg (3)&0xffff;
-	hdui_clear_area (x1, y1, x2, y2);
-	
-	push_ortho ();
-	set_ctrl_viewport ();
-	glColor3f (0.0f, 0.0f, 0.0f);
-	glBegin (GL_TRIANGLE_STRIP);
-		glVertex3f (x1, 200-y1, 0);
-		glVertex3f (x2, 200-y1, 0);
-		glVertex3f (x1, 200-y2, 0);
-		glVertex3f (x2, 200-y2, 0);
-	glEnd ();
-	set_main_viewport ();
-	pop_ortho ();
+	/* black behind the view, unless the HD layer has given it a card */
+	if (!hdui_clear_area (x1, y1, x2, y2)) {
+		push_ortho ();
+		set_ctrl_viewport ();
+		glColor3f (0.0f, 0.0f, 0.0f);
+		glBegin (GL_TRIANGLE_STRIP);
+			glVertex3f (x1, 200-y1, 0);
+			glVertex3f (x2, 200-y1, 0);
+			glVertex3f (x1, 200-y2, 0);
+			glVertex3f (x2, 200-y2, 0);
+		glEnd ();
+		set_main_viewport ();
+		pop_ortho ();
+	}
 
 	/* and then we wipe the bit of the ST framebuffer (on both buffers)
 	 * to transparent/unset */

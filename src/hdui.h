@@ -49,8 +49,10 @@ void hdui_backdrop (const unsigned int *pal, int bgcol);
 int hdui_owns_page (void);
 
 /* The game cleared the ST area (x1, y1)-(x2, y2) for a 3D viewer this
- * frame: the next hdui_frame leaves it alone and frames it. */
-void hdui_clear_area (int x1, int y1, int x2, int y2);
+ * frame: the next hdui_frame leaves it alone and gives it a card.
+ * Nonzero when the backdrop under this frame already has that card
+ * there: then the caller leaves it, not painting the area black. */
+int hdui_clear_area (int x1, int y1, int x2, int y2);
 
 /* The pointer, in ST pixels, as input.c is about to give it to the game,
  * and the buttons held (2: the left one).  While the left button is held

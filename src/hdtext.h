@@ -105,6 +105,11 @@ int hdtext_glyph_x (const struct hdtext_run *r, int k);
  * hdtext_runs again for the count.  Returns 0 when it cannot. */
 int hdtext_split (int i, int k);
 
+/* hdui's own words, not the game's: a run of ASCII s (letters and spaces)
+ * at ST (x, y) in palette colour col, after the runs hdtext_frame found.
+ * Returns its index, or -1; call hdtext_runs again for the count. */
+int hdtext_add (const char *s, int x, int y, int col);
+
 /* A run's width set in its role (and scale), ST pixels, at the size the
  * last frame was drawn (1600x1200 before the first) */
 float hdtext_measure (const struct hdtext_run *r);

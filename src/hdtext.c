@@ -717,6 +717,33 @@ int hdtext_split (int i, int k)
 	return 1;
 }
 
+int hdtext_add (const char *s, int x, int y, int col)
+{
+	const unsigned char *font = runs_font;
+	int first = n_shown, space = font && font[9] > 0 ? font[9] : 4;
+
+	if (!font || n_runs >= MAX_RUNS) return -1;
+	for (; *s && n_shown < MAX_ACTIVE; s++) {
+		struct shown *d;
+		if (*s == ' ') {
+			x += space;
+			continue;
+		}
+		d = &shown[n_shown++];
+		memset (d, 0, sizeof (*d));
+		d->x = x;
+		d->y = y;
+		d->chr = *s - 0x20;
+		d->col = col;
+		x += font[d->chr * 10 + 9];
+	}
+	if (n_shown == first) return -1;
+	fill_run (&runs[n_runs], font, first, n_shown);
+	auto_align[n_runs] = HDT_LEFT;
+	auto_ax[n_runs] = runs[n_runs].ink0;
+	return n_runs++;
+}
+
 /* ---------------------------------------------------------------- */
 /* The new typesetting: the design system's roles in the bundled fonts */
 
