@@ -234,6 +234,102 @@ void procfx_sky_end (void)
 	glPopAttrib ();
 }
 
+/* ---- layer 3: planets ------------------------------------------------ */
+
+int flat_planets = 0;
+
+/* gl.c binds the textures of up to four light zones, each baked by
+ * planet.c from the body's own features and colours, on units 0-3, and
+ * gives every vertex: gl_TexCoord[0] the texture position, [1] cos(sun)
+ * and the view cosine mu there (procfx_planet_attr), [2] the model
+ * direction.  Each zone weighs in over its cos(sun) range with soft edges
+ * that sum to 1, so the game's day, twilight and night colours blend
+ * across the terminator.  On top: a lit body's day side falls off by up
+ * to a fifth towards the terminator (full zone colour where the sun is
+ * high), the limb darkens, fine noise fixed to the body (seeded by it)
+ * fades in octave by octave only once that octave's cells span several
+ * pixels, and not at grazing angles, so a far planet stays clean and
+ * nothing shimmers; with an atmosphere the lit limb turns towards the
+ * innermost layer's colour. */
+static const char planet_glsl[] =
+	"uniform sampler2D uZ0, uZ1, uZ2, uZ3;\n"
+	"uniform vec4 uLo, uHi, uRim;\n"
+	"uniform vec3 uLook, uSeed;\n"
+	"uniform float uSoft;\n"
+	"void main () {\n"
+	"	float c = gl_TexCoord[1].x, mu = clamp (gl_TexCoord[1].y, 0.0, 1.0);\n"
+	"	vec4 w = smoothstep (uLo - uSoft, uLo + uSoft, vec4 (c))\n"
+	"	       - smoothstep (uHi - uSoft, uHi + uSoft, vec4 (c));\n"
+	"	vec2 st = gl_TexCoord[0].st;\n"
+	"	vec3 col = w.x * texture2D (uZ0, st).rgb + w.y * texture2D (uZ1, st).rgb\n"
+	"	         + w.z * texture2D (uZ2, st).rgb + w.w * texture2D (uZ3, st).rgb;\n"
+	"	float day = mix (1.0, smoothstep (-uSoft, uSoft, c), uLook.x);\n"
+	"	col *= mix (1.0, 0.8 + 0.2 * smoothstep (0.0, 0.7, c), day * uLook.x);\n"
+	"	col *= mix (1.0 - uLook.y, 1.0, sqrt (mu));\n"
+	"	vec3 p = gl_TexCoord[2].xyz * 256.0 + uSeed;\n"
+	"	float px = length (fwidth (p)), n = 0.0, a = 1.0;\n"
+	"	for (int k = 0; k < 3; k++) {\n"
+	"		float f = 1.0 - smoothstep (0.1, 0.4, px);\n"
+	"		if (f <= 0.0) break;\n"
+	"		n += a * f * (2.0 * pf_noise (p) - 1.0);\n"
+	"		p = p * 2.03 + vec3 (1.7, 9.2, 3.1); px *= 2.03; a *= 0.5;\n"
+	"	}\n"
+	"	col *= 1.0 + uLook.z * smoothstep (0.05, 0.3, mu) * n;\n"
+	"	col = mix (col, uRim.rgb, uRim.a * 0.6 * pow (1.0 - mu, 4.0) * day);\n"
+	"	gl_FragColor = vec4 (col, 1.0);\n"
+	"}\n";
+
+static GLuint planet_prog;
+static int planet_failed;
+static GLint u_lo, u_hi, u_rim, u_look, u_seed, u_soft;
+
+int procfx_planet_begin (const float lo[4], const float hi[4], float soft,
+			 const float rim[4], const float look[3], unsigned int seed)
+{
+	static const char *zn[4] = { "uZ0", "uZ1", "uZ2", "uZ3" };
+	int i;
+
+	if (flat_planets || planet_failed) return 0;
+	if (!planet_prog) {
+		planet_prog = procfx_program ("planet", planet_glsl);
+		if (!planet_prog) { planet_failed = 1; return 0; }
+		glUseProgram (planet_prog);
+		for (i = 0; i < 4; i++) glUniform1i (glGetUniformLocation (planet_prog, zn[i]), i);
+		u_lo = glGetUniformLocation (planet_prog, "uLo");
+		u_hi = glGetUniformLocation (planet_prog, "uHi");
+		u_rim = glGetUniformLocation (planet_prog, "uRim");
+		u_look = glGetUniformLocation (planet_prog, "uLook");
+		u_seed = glGetUniformLocation (planet_prog, "uSeed");
+		u_soft = glGetUniformLocation (planet_prog, "uSoft");
+	}
+	glUseProgram (planet_prog);
+	glUniform4fv (u_lo, 1, lo);
+	glUniform4fv (u_hi, 1, hi);
+	glUniform4fv (u_rim, 1, rim);
+	glUniform3fv (u_look, 1, look);
+	glUniform3f (u_seed, seed & 0xff, (seed >> 8) & 0xff, (seed >> 16) & 0xff);
+	glUniform1f (u_soft, soft);
+	return 1;
+}
+
+void procfx_planet_bind (int unit, unsigned int tex)
+{
+	glActiveTexture (GL_TEXTURE0 + unit);
+	glBindTexture (GL_TEXTURE_2D, tex);
+	glActiveTexture (GL_TEXTURE0);
+}
+
+void procfx_planet_attr (double c, double mu, const double m[3])
+{
+	glMultiTexCoord2d (GL_TEXTURE1, c, mu);
+	glMultiTexCoord3dv (GL_TEXTURE2, m);
+}
+
+void procfx_planet_end (void)
+{
+	glUseProgram (0);
+}
+
 /* ---- layer 2: the game-over backdrop --------------------------------- */
 
 /* A dark nebula behind the tombstone, in screen space: two layers of the
@@ -300,7 +396,8 @@ void procfx_endgame_backdrop (float fade)
 void procfx_forget (void)
 {
 	if (sky_prog) glDeleteProgram (sky_prog);
+	if (planet_prog) glDeleteProgram (planet_prog);
 	if (end_prog) glDeleteProgram (end_prog);
-	sky_prog = end_prog = 0;
-	sky_failed = end_failed = 0;
+	sky_prog = planet_prog = end_prog = 0;
+	sky_failed = planet_failed = end_failed = 0;
 }
