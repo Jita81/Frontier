@@ -37,6 +37,15 @@ void hdstill_frame (const unsigned char *raster, unsigned char *out,
  * GL_REPLACE and the colour white, as hdtext_draw leaves them. */
 void hdstill_draw (const unsigned int *pal, const unsigned int *ctrl_pal);
 
+/* The HD gauges' red marks, shared with hdtip: the laser will not fire
+ * above LASER_CUT; the hull temperature destroys the ship when it passes
+ * $ffff (fe2.s L623bc, L61c26), and is red from HEAT_WARN, 3/4 of that. */
+#define HDSTILL_LASER_CUT	0xf000
+#define HDSTILL_HEAT_WARN	0xc000
+/* What of the gauges' SPEED/HEAT plate is at ST (x, y) this frame:
+ * 1 the speed, 2 the hull temperature, 0 neither or no plate */
+int hdstill_gauge_at (int x, int y);
+
 /* The icons in the function keys, as this layer names them */
 enum {
 	G_ABSENT, G_EMPTY, G_FRONT, G_REAR, G_EXT, G_GALMAP, G_SYSMAP, G_SHIP,
