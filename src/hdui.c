@@ -134,8 +134,8 @@ struct button {
 	unsigned char used;	/* the layout replaced it */
 };
 
-enum { P_NONE, P_STATION, P_F3, P_PREFS, P_START, P_OTHER, P_DOCK };
-static const char *const page_name[] = { "none", "station", "f3", "prefs", "start", "other", "dock" };
+enum { P_NONE, P_STATION, P_F3, P_PREFS, P_START, P_OTHER, P_DOCK, P_TRANSIT };
+static const char *const page_name[] = { "none", "station", "f3", "prefs", "start", "other", "dock", "transit" };
 
 /* layers */
 enum { L_BACK, L_UNDER, L_OVER };
@@ -3620,6 +3620,53 @@ static void layout_dock (void)
 }
 
 /*
+ * In hyperspace the speed line's last part, what the ship is relative to,
+ * is blank.  It gets a line of the renderer's own: the transit's time
+ * left, from the game's transit timer (read only), and a thin bar of the
+ * time gone.  The destination's name is not written: the game makes it
+ * from the system's number when it shows it and keeps no copy to read.
+ */
+#define A6_TOOLS_MODE	42	/* byte: negative while the 3D view fills the screen */
+#define A6_FLIGHT_STATE	704	/* byte: 8 in hyperspace */
+#define A6_HYPER_LEFT	722	/* long: transit time left, days in 16.16 */
+#define A6_HYPER_TOTAL	13882	/* long: the transit's time */
+
+static int layout_transit (void)
+{
+	char c[96], s[40];
+	unsigned char sp[96];
+	int i, n, k, col, left, total;
+	float x, y, t, bx;
+
+	if (st_b (A6 + A6_FLIGHT_STATE) != 8 || (signed char) st_b (A6 + A6_TOOLS_MODE) >= 0)
+		return 0;
+	left = STMemory_ReadLong (A6 + A6_HYPER_LEFT);
+	total = STMemory_ReadLong (A6 + A6_HYPER_TOTAL);
+	if (total <= 0) return 0;
+	for (i = n_runs - 1; i >= 0; i--) {
+		struct hdtext_run *r = &runs[i];
+		if (!ON_PAGE (r) || r->y < FOOT_Y || r->x0 < 160) continue;
+		n = hdtext_chars (r, c, sp, sizeof (c));
+		if (n < 1 || c[n - 1] != ':') return 0;
+		break;
+	}
+	if (i < 0) return 0;
+	x = runs[i].ink0 + hdtext_measure (&runs[i]) + 3;	/* after the HD label */
+	y = runs[i].y;
+	col = runs[i].col;
+	t = 1 - (float) (left > 0 ? left : 0) / total;
+	snprintf (s, sizeof (s), "in transit %.1f days", (left > 0 ? left : 0) / 65536.0);
+	k = hdtext_add (s, x, y, col);
+	n_runs = hdtext_runs (&runs);
+	if (k < 0) return 0;
+	bx = x + hdtext_measure (&runs[k]) + 5;
+	if (bx > ST_W - 24) bx = ST_W - 24;
+	quad (L_UNDER, bx, y + 3, ST_W - 4, y + 4, C_TEXT2, 0.35f);
+	quad (L_UNDER, bx, y + 3, bx + t * (ST_W - 4 - bx), y + 4, C_ACCENT, 0.9f);
+	return 1;
+}
+
+/*
  * A service's card on the view: the click (on the comms icon) opens the
  * services page; once that page has stood for a frame or two with the
  * service's card on it, a click on that card is made for the player, a
@@ -3765,6 +3812,7 @@ void hdui_frame (const unsigned char *raster, unsigned char *out,
 	find_buttons (raster);
 	page = classify ();
 	if (page == P_NONE && docked_view ()) page = P_DOCK;
+	if (page == P_NONE && layout_transit ()) page = P_TRANSIT;
 	switch (page) {
 	case P_DOCK: layout_dock (); if (!n_el) page = P_NONE; break;
 	case P_STATION: layout_station (raster, out); break;
