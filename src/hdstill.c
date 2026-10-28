@@ -82,27 +82,19 @@ static int n_shown;
 
 static int debug = -1;
 
+/* the control panel as the last hdstill_frame found it (hdstill_panel) */
+static struct hdstill_panel panel_now;
+
 /* ------------------------------------------------------------------ */
 /* what each bitmap is */
 
-/* the icons in the function keys */
-enum {
-	G_ABSENT, G_EMPTY, G_FRONT, G_REAR, G_EXT, G_GALMAP, G_SYSMAP, G_SHIP,
-	G_CARGO, G_CMDR, G_PHONE, G_TARGET, G_CROSS, G_WRENCH, G_HYPER,
-	G_PERSON, G_LAUNCH, G_LIST, G_ENGINES_OFF, G_BEAM, G_RETICLE, G_ORRERY,
-	G_LOAD, G_SAVE, G_DELETE, G_EXIT, G_SECTOR, G_ROUTE, G_TAKEOFF,
-	G_DOC, G_ALPHA, G_AUTOPILOT, G_GEAR, G_JUMP, G_MARKET, G_PEOPLE,
-	G_STARS, G_ROSTER
-};
-#define G_OFF		0x80	/* with an icon: crossed out, not to be had now */
+/* the icons in the function keys (G_ in hdstill.h) */
 #define GX(g)		((g) | G_OFF)
 
 enum { K_PANEL, K_LOGO, K_MISSILE, K_SELECT, K_MORE, K_OPT_ON, K_OPT_OFF };
 #define ON_MAIN(k)	((k) >= K_SELECT)	/* in the main screen's rows, on its background */
 #define IS_OPT(k)	((k) >= K_OPT_ON)	/* an option's key, its own colours */
-#define F_MAPKEYS	1	/* the map's time keys where the second display is */
-#define F_SCANNER	2	/* the scanner in the bay */
-#define F_BUTTONS	4	/* the row of keys along the bay's floor */
+/* F_MAPKEYS, F_SCANNER, F_BUTTONS: hdstill.h */
 
 struct art {
 	u64 hash;
@@ -149,13 +141,19 @@ static const struct art arts[] = {
 	{ 0x440c2b8e3c61a48aULL, 16, 11, K_PANEL, 0, 1, { G_AUTOPILOT }, "icon autopilot" },
 	{ 0x7b3ff1e79e9c3765ULL, 16, 11, K_PANEL, 0, 1, { G_BEAM }, "icon beam" },
 	{ 0xd3ba8a0e288b9151ULL, 16, 11, K_PANEL, 0, 1, { G_EMPTY }, "icon empty" },
-	{ 0x23a4b63e9aa289e4ULL, 16, 11, K_PANEL, 0, 1, { G_RETICLE }, "icon pick (system map)" },
+	{ 0x23a4b63e9aa289e4ULL, 16, 11, K_PANEL, 0, 1, { G_BURST }, "icon pick (system map)" },
 	{ 0xc9ae8b98a3cdfdd7ULL, 16, 11, K_PANEL, 0, 1, { G_GEAR }, "icon gear down" },
 	{ 0xabe8d5e4025cc7acULL, 16, 11, K_PANEL, 0, 1, { G_JUMP }, "icon hyperspace (in flight)" },
 	{ 0xd809a46516fb8361ULL, 16, 11, K_PANEL, 0, 1, { G_ROSTER }, "icon passengers and contracts" },
 	{ 0x96349724541eb108ULL, 16, 11, K_PANEL, 0, 1, { G_ROUTE }, "icon route" },
 	{ 0x38afdfb87c76cf68ULL, 16, 11, K_PANEL, 0, 1, { G_TAKEOFF }, "icon take off (landed)" },
 	{ 0x3fa31e1416775b84ULL, 16, 11, K_PANEL, 0, 1, { GX (G_LIST) }, "icon list crossed (landed)" },
+	/* a map option turned off: its key without the cross, over the strip */
+	{ 0x27098800ad01b1c9ULL, 16, 11, K_PANEL, 0, 1, { G_PERSON }, "icon person (option off)" },
+	{ 0x1aae938aed8b65ccULL, 16, 11, K_PANEL, 0, 1, { G_GALMAP }, "icon galaxy map (option off)" },
+	{ 0x2f8394d95032ca79ULL, 16, 11, K_PANEL, 0, 1, { G_ALPHA }, "icon alpha (option off)" },
+	{ 0x204ff007744c5988ULL, 16, 11, K_PANEL, 0, 1, { G_WRENCH }, "icon wrench (option off)" },
+	{ 0x02fb7f3f0820e6baULL, 16, 11, K_PANEL, 0, 1, { G_DOC }, "icon doc (option off)" },
 	{ 0x980ec8842f7b354bULL, 64, 11, K_PANEL, 0, 1, { G_TARGET, G_CROSS, G_WRENCH, G_HYPER }, "icons 7-10 galaxy map" },
 	{ 0xaa1cc440b258bd81ULL, 64, 11, K_PANEL, 0, 1, { G_TARGET, G_CROSS, G_EMPTY, G_SECTOR }, "icons 7-10 galaxy map zoomed out" },
 	{ 0x86a58df0cc99b241ULL, 64, 11, K_PANEL, 0, 1, { GX (G_PERSON), GX (G_GALMAP), GX (G_ROUTE), GX (G_ALPHA) }, "icons 7-10 galaxy map info" },
@@ -227,6 +225,15 @@ static struct tex {
 } texs[MAX_TEX];
 static float built_sx, built_sy;
 static unsigned frame_no;
+
+/* which function key is at (x, y): 1..4 left, 5..6 in the bay, 7..10 right */
+static int slot_at (int x, int y)
+{
+	if (y >= 186 && x >= 224 && x < 256) return 5 + (x - 224) / 16;
+	if (x < 64) return 1 + x / 16;
+	if (x >= 256) return 7 + (x - 256) / 16;
+	return 0;
+}
 
 /* ------------------------------------------------------------------ */
 /* the art, drawn in code */
@@ -1002,16 +1009,17 @@ static void g_list (void)
 	CGContextRestoreGState (C);
 	gseg (-0.36f, -0.56f, 0.88f, -0.56f);
 	gseg (-0.36f, 0, 0.6f, 0);
-	gseg (-0.36f, 0.56f, 0.4f, 0.56f);
+	gseg (-0.36f, 0.56f, 0.16f, 0.56f);	/* clear of the key number */
 	gstroke (0xe8eef5, 0.9f, 1.3f);
 }
 
-/* the drive cut: a flared nozzle firing down, its flame crossed out */
+/* the drive cut: a flared nozzle firing down and back, as the old icon
+ * has it, its flame crossed out */
 static void g_engines_off (void)
 {
 	CGContextSaveGState (C);
-	CGContextTranslateCTM (C, 0, -0.34f);
-	CGContextRotateCTM (C, (float) (M_PI / 2));
+	CGContextTranslateCTM (C, 0.24f, -0.24f);
+	CGContextRotateCTM (C, (float) (3 * M_PI / 4));
 	/* the flame */
 	CGContextSaveGState (C);
 	glow (0xff8a2a, 0.9f, 3);
@@ -1034,8 +1042,8 @@ static void g_engines_off (void)
 	CGContextRestoreGState (C);
 	CGContextSaveGState (C);
 	glow (0xff4d4d, 0.8f, 2);
-	gseg (-0.36f, 0.04f, 0.36f, 0.76f);
-	gseg (-0.36f, 0.76f, 0.36f, 0.04f);
+	gseg (-0.64f, -0.08f, 0.08f, 0.64f);
+	gseg (-0.64f, 0.64f, 0.08f, -0.08f);
 	gstroke (0xff4d4d, 1, 1.8f);
 	CGContextRestoreGState (C);
 }
@@ -1077,23 +1085,23 @@ static void g_reticle (void)
 {
 	int i;
 	CGContextSaveGState (C);
-	CGContextTranslateCTM (C, -0.1f, -0.1f);	/* clear of the key number */
+	CGContextTranslateCTM (C, -0.16f, -0.24f);	/* clear of the key number */
 	CGContextSaveGState (C);
 	glow (0xffb347, 0.7f, 2);
 	for (i = 0; i < 4; i++) {
 		float sx = i & 1 ? 1 : -1, sy = i & 2 ? 1 : -1;
-		CGContextMoveToPoint (C, 0.7f * sx, 0.32f * sy);
-		CGContextAddLineToPoint (C, 0.7f * sx, 0.7f * sy);
-		CGContextAddLineToPoint (C, 0.32f * sx, 0.7f * sy);
+		CGContextMoveToPoint (C, 0.52f * sx, 0.22f * sy);
+		CGContextAddLineToPoint (C, 0.52f * sx, 0.52f * sy);
+		CGContextAddLineToPoint (C, 0.22f * sx, 0.52f * sy);
 	}
 	gstroke (0xffb347, 1, 1.4f);
 	CGContextRestoreGState (C);
 	CGContextSaveGState (C);
 	glow (0xff4d4d, 0.7f, 2);
-	gcirc (0, 0, 0.34f);
+	gcirc (0, 0, 0.27f);
 	gstroke (0xff4d4d, 1, 1.1f);
 	CGContextRestoreGState (C);
-	glow_ball (0, 0, 0.15f, 0xff9a9a, 0xff4d4d, 0xff4d4d, 3);
+	glow_ball (0, 0, 0.12f, 0xff9a9a, 0xff4d4d, 0xff4d4d, 3);
 	CGContextRestoreGState (C);
 }
 
@@ -1462,7 +1470,7 @@ static void glyph (int g, float cx, float cy, float s)
 	case G_LIST: g_list (); break;
 	case G_ENGINES_OFF: g_engines_off (); break;
 	case G_BEAM: g_beam (); break;
-	case G_RETICLE: g_reticle (); break;
+	case G_BURST: g_reticle (); break;
 	case G_ORRERY: g_orrery (); break;
 	case G_LOAD: g_load (); break;
 	case G_SAVE: g_save (); break;
@@ -2088,15 +2096,6 @@ static void logo (void)
 	}
 }
 
-/* which function key is at (x, y): 1..4 left, 5..6 in the bay, 7..10 right */
-static int slot_at (int x, int y)
-{
-	if (y >= 186 && x >= 224 && x < 256) return 5 + (x - 224) / 16;
-	if (x < 64) return 1 + x / 16;
-	if (x >= 256) return 7 + (x - 256) / 16;
-	return 0;
-}
-
 static void draw_art (const struct art *a, int x, int y)
 {
 	int i, s;
@@ -2448,6 +2447,39 @@ static int get_tex (int a, int x, int y)
 	return slot;
 }
 
+/* hdstill_frame found r on the screen (newest first): what it shows of
+ * the control panel, unless a newer bitmap already said */
+static void note_panel (const struct rec *r)
+{
+	const struct art *a = &arts[r->art];
+	int i, s;
+
+	if (a->kind == K_MISSILE) {
+		panel_now.n_missiles++;
+		return;
+	}
+	if (a->kind != K_PANEL) return;
+	panel_now.valid = 1;
+	s = r->y >= CTRL_Y ? slot_at (r->x, r->y) : 0;
+	for (i = 0; i < 5 && s > 0 && s + i <= 10; i++)
+		if (a->g[i] != G_ABSENT && !panel_now.slot[s + i]) panel_now.slot[s + i] = a->g[i];
+	/* the bay (its middle) and the second display (the map's keys) */
+	if (!(panel_now.seen & 1) && r->x <= 160 && r->x + r->w > 160 && r->y <= 180 && r->y + r->h > 180) {
+		panel_now.seen |= 1;
+		panel_now.flags |= a->flags & F_SCANNER;
+	}
+	if (!(panel_now.seen & 2) && r->x <= 290 && r->x + r->w > 290 && r->y <= 181 && r->y + r->h > 181) {
+		panel_now.seen |= 2;
+		panel_now.flags |= a->flags & F_MAPKEYS;
+	}
+}
+
+int hdstill_panel (struct hdstill_panel *p)
+{
+	*p = panel_now;
+	return panel_now.valid;
+}
+
 void hdstill_frame (const unsigned char *raster, unsigned char *out,
 		    const unsigned int *pal, const unsigned int *ctrl_pal)
 {
@@ -2457,6 +2489,7 @@ void hdstill_frame (const unsigned char *raster, unsigned char *out,
 	int i, j, xx, yy;
 
 	n_shown = 0;
+	memset (&panel_now, 0, sizeof (panel_now));
 	if (pixel_art) return;
 	if (debug < 0) debug = getenv ("FE2_HD_DEBUG") ? atoi (getenv ("FE2_HD_DEBUG")) : 0;
 	frame_no++;
@@ -2519,6 +2552,7 @@ void hdstill_frame (const unsigned char *raster, unsigned char *out,
 			continue;
 		}
 		r->misses = 0;
+		if (r->art >= 0) note_panel (r);
 		/* a layer before this one (the restyled screens) has taken
 		 * it out: theirs */
 		defer = taken * 100 > vis * DEFER_PCT;
