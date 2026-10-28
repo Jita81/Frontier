@@ -8,11 +8,13 @@
  * only where the bitmap is clear, then the blip at its foot).  The lines
  * drawn between the scanner's blit and the next blit are noted, per
  * screen buffer, and joined into contacts (lines that touch, in the order
- * drawn).  A frame the buffer being shown still has most of its contacts'
- * pixels, those pixels are taken out and the newest set of contacts (the
- * one drawn last, whichever buffer: so docked, where the two buffers take
- * turns, they do not jump back and forth) is drawn on the HD scanner's
- * glass, each a thin stalk and a round blip in the game's colour.
+ * drawn).  A frame the buffer being shown (or, as a station's pages draw
+ * the scanner in the other buffer and copy it, the other) still has most
+ * of its contacts' pixels, those pixels are taken out and the newest set
+ * of contacts (the one drawn last, whichever buffer: so docked, where the
+ * two buffers take turns, they do not jump back and forth) is drawn on
+ * the HD scanner's glass, each a thin stalk and a round blip in the
+ * game's colour.
  *
  * Gun sight.  The game draws it in one colour at a fixed place: 52 pixels
  * looking forward, the same less its four diagonal ticks (32) looking
@@ -22,14 +24,16 @@
  * hdtext is told which pixels they are, so a label the sight was drawn
  * over is still read; a label over the sight is moved clear of it.
  *
- * Lock boxes.  Over a 3D view (the GL renderer leaves the view clear in
- * the ST screen; not a station page, which hdback has a picture behind)
+ * Lock boxes.  Over a 3D view in flight (the GL renderer leaves the view
+ * clear in the ST screen; the scanner was drawn lately, so not a map; not
+ * a station page, which hdback has a picture behind)
  * the target's boxes are the only straight lines but the sight's and the
  * labels'.  A line runs on across a glyph's cell and across pixels another
  * layer took out, as the game drew those over it, so a corner hidden under
  * a label is still found.  Where a horizontal and a vertical line of one
  * colour meet at their ends there is a corner, and a corner bracket in the
- * interface's accent colour is drawn in place of the box.  Each line with
+ * interface's accent colour is drawn in place of the box, its arms
+ * stopping short of a label's text the game drew over it.  Each line with
  * a corner, and each of a box's colour the view's edge cuts off, is taken
  * out end to end, all but the glyph ink hdtext redrew; one cut off with
  * no corner in it is drawn again as a faint accent line, the brackets'
@@ -94,6 +98,7 @@ struct pass {
 static struct pass passes[2], rec;
 static int armed = -1;			/* the buffer being noted, -1: none */
 static unsigned seq;
+static int since = 99;			/* frames shown since the scanner was drawn */
 
 /* What a contact's lines make, row by row (a row may be drawn in two
  * parts, a 16 pixel word each): the 4 pixel wide rows its blip, the
@@ -152,6 +157,7 @@ static void commit (void)
 		shape (&rec);
 		rec.seq = ++seq;
 		passes[armed] = rec;
+		since = 0;
 	}
 	armed = -1;
 }
@@ -276,6 +282,7 @@ void hdinst_mask (const unsigned char *raster)
 	int count[256], i, c = 0, d = 0;
 
 	/* the buffer being noted is done once it is shown */
+	if (since < 99) since++;
 	if (armed == ((VideoBase & 0x100000) != 0)) commit ();
 	sight_init ();
 	for (i = 0; i < 52; i++) sight_mask[sight[i][1] * ST_W + sight[i][0]] = 0;
@@ -317,21 +324,34 @@ static int glass_shown (const unsigned char *out)
 	return clear * 2 >= n;
 }
 
-static void contacts (const unsigned char *raster, unsigned char *out)
+/* a pass the screen shown still has most of the contacts of */
+static int still_shown (const struct pass *p, const unsigned char *raster)
 {
-	int disp = (VideoBase & 0x100000) != 0, i, match = 0;
-	const struct pass *p = &passes[disp], *newest;
+	int i, match = 0;
 
-	if (pixel_art || !p->seq || !glass_shown (out))
-		return;
 	for (i = 0; i < p->n_pix; i++)
 		match += raster[p->py[i] * ST_W + p->px[i]] == p->pc[i];
-	if (match * 100 < p->n_pix * 30) return;
+	return p->seq && p->n_pix && match * 100 >= p->n_pix * 30;
+}
+
+static void contacts (const unsigned char *raster, unsigned char *out)
+{
+	int disp = (VideoBase & 0x100000) != 0, i;
+	const struct pass *p = &passes[disp], *q = &passes[!disp], *newest;
+
+	if (pixel_art || !glass_shown (out)) return;
+	/* the buffer shown's, or (a station's pages draw the scanner in the
+	 * other buffer and copy it over) the other's */
+	if (!still_shown (p, raster)) {
+		if (!still_shown (q, raster)) return;
+		q = p;
+		p = &passes[!disp];
+	}
 	for (i = 0; i < p->n_pix; i++) {
 		int o = p->py[i] * ST_W + p->px[i];
 		if (raster[o] == p->pc[i]) out[o] = 255;
 	}
-	newest = passes[!disp].seq > p->seq ? &passes[!disp] : p;
+	newest = q->n_pix && q->seq > p->seq ? q : p;
 	for (i = 0; i < newest->n_con; i++)
 		if (newest->con[i].col < 16) shown[n_shown++] = newest->con[i];
 }
@@ -401,6 +421,21 @@ static void box_line (const unsigned char *raster, unsigned char *out, const str
 	edges[n_edges++].y1 = horiz ? at : b;
 }
 
+/* An arm from the corner pixel (x, y) stops short of a label's glyph
+ * cell (the speed strip's text the game drew over the box): 0 if the
+ * corner is under one. */
+static float clear_of_text (const unsigned char *cell, int x, int y, int horiz, float d)
+{
+	int k, s = d > 0 ? 1 : -1;
+
+	for (k = 0; k <= (int) (d * s); k++) {
+		int cx = x + (horiz ? s * k : 0), cy = y + (horiz ? 0 : s * k);
+		if (cx < 0 || cx >= ST_W || cy < 0 || cy >= VIEW_H) break;
+		if (cell[cy * ST_W + cx] == 1) return k > 0 ? s * (k - 0.5f) : 0;
+	}
+	return d;
+}
+
 static float arm (int len)
 {
 	float a = 0.3f * len;
@@ -415,8 +450,9 @@ static void boxes (const unsigned char *raster, unsigned char *out)
 	unsigned char boxcol[256], full[256][2];
 	int nh, nv, i, j, eh, ev, clear = 0, n_runs;
 
-	/* a page over a picture (a station's), not a 3D view */
-	if (hdback_active ()) return;
+	/* a flight view: the scanner drawn lately (not a map's), and no
+	 * picture behind the page (a station's) */
+	if (since > 8 || hdback_active ()) return;
 	for (i = 0; i < ST_W * VIEW_H; i++) clear += raster[i] == 255;
 	if (clear * 10 < ST_W * VIEW_H * 7) return;
 	/* the cells hdtext found glyphs in */
@@ -427,7 +463,8 @@ static void boxes (const unsigned char *raster, unsigned char *out)
 			int x0 = hdtext_glyph_x (&runs[i], j), x, y;
 			for (y = runs[i].y; y <= runs[i].y + 8 && y < VIEW_H; y++)
 				for (x = x0; x <= x0 + 8 && x < ST_W; x++)
-					if (x >= 0 && y >= 0) cell[y * ST_W + x] = 1;
+					if (x >= 0 && y >= 0)
+						cell[y * ST_W + x] = runs[i].n == 1 && runs[i].chr0 == 0x81 - 0x20 ? 2 : 1;
 		}
 	nh = find_lines (raster, out, cell, 1, h);
 	nv = find_lines (raster, out, cell, 0, v);
@@ -464,8 +501,10 @@ static void boxes (const unsigned char *raster, unsigned char *out)
 						continue;
 					brackets[n_brackets].x = v[j].at + 0.5f;
 					brackets[n_brackets].y = h[i].at + 0.5f;
-					brackets[n_brackets].h = (eh ? -1 : 1) * arm (h[i].b - h[i].a + 1);
-					brackets[n_brackets++].v = (ev ? -1 : 1) * arm (v[j].b - v[j].a + 1);
+					brackets[n_brackets].h = clear_of_text (cell, v[j].at, h[i].at, 1,
+						(eh ? -1 : 1) * arm (h[i].b - h[i].a + 1));
+					brackets[n_brackets++].v = clear_of_text (cell, v[j].at, h[i].at, 0,
+						(ev ? -1 : 1) * arm (v[j].b - v[j].a + 1));
 					h[i].used = v[j].used = 1;
 					boxcol[h[i].col] = 1;
 				}
@@ -712,8 +751,8 @@ void hdinst_draw (const unsigned int *pal, const unsigned int *ctrl_pal)
 	for (i = 0; i < n_brackets; i++) {
 		float x = brackets[i].x, y = brackets[i].y, hw = 1.1f * K;
 		float h = brackets[i].h, v = brackets[i].v;
-		stroke (x - (h > 0 ? hw : -hw) / SX, y, x + h, y, 1);
-		stroke (x, y - (v > 0 ? hw : -hw) / SY, x, y + v, 1);
+		if (h) stroke (x - (h > 0 ? hw : -hw) / SX, y, x + h, y, 1);
+		if (v) stroke (x, y - (v > 0 ? hw : -hw) / SY, x, y + v, 1);
 	}
 	glPopAttrib ();
 }
