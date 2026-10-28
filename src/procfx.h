@@ -53,7 +53,7 @@ int procfx_sky_begin (const float m[9], const double proj[16], const int vp[4]);
  * in window coordinates */
 void procfx_sky_feather (const double (*v)[3], int n);
 void procfx_sky_end (void);
-/* Layer 2: the game-over backdrop, a dark nebula filling the current
+/* The game-over backdrop, a dark nebula filling the current
  * viewport under the tombstone (see endcard_frame in hdcontrols.c), faded
  * up from black by fade 0..1.  Changes nothing if the shader fails. */
 void procfx_endgame_backdrop (float fade);

@@ -101,7 +101,7 @@ oracle is nil.  The risk column is about visuals and code.
   - Switch: `--flat-detail`.
 
 **Recommendation.**  Sky band, limb glow and corona are built, with the
-game-over backdrop: 562 lines in `procfx.c`, 87 in `procfx.h`, and the
+game-over backdrop: 570 lines in `procfx.c`, 87 in `procfx.h`, and the
 hooks.  Do rings once a ringed
 save exists.
 
@@ -204,6 +204,11 @@ object reader's split are shared and count once.  Each layer is inside the
   death camera.
 - **Switches.**  `--old-renderer`, `--classic-ui`, `--pixel-art` and
   `--pixel-text` keep the black stone with no card.
+- **Shared header.**  The pass gets `uVp` from the noise library's
+  header, like every procfx shader, and must not declare it again: a
+  second `uniform vec4 uVp;` fails to compile and leaves the stone on
+  black (fixed in rework r2, checked by forcing the pass on: the log
+  line before, none after).
 
 ## Prototype notes: the limb glow
 
@@ -222,6 +227,9 @@ object reader's split are shared and count once.  Each layer is inside the
     `1 - smooth(245, 409, near + far) * (1 - smooth(178, 230, near))`.
   - It also fades out close in: `smooth(1.3, 2.0, distance / radius)`.
   - Strength 0 stores nothing, so nothing is drawn.
+  - Only while the player's own 3D view fills the screen (the byte at
+    a6+42 is negative, as `hdtip.c` reads it).  The system map's close-up
+    of a planet goes through the same hcalls and gets no glow.
   - A model `body_class` cannot place reads as airless (`DEFAULT_CLASS`),
     so it gets no glow.
   - Width: `(scale - 1) * 12` of the planet's angular radius, kept to
@@ -244,7 +252,8 @@ object reader's split are shared and count once.  Each layer is inside the
   - Uniform locations are looked up once, when the program compiles.  The
     viewport and projection are read only for a program with an eye ray
     (the limb glow; the corona's `uVp` is -1).
-- **Checked.**
+- **Checked.**  Except where marked rework r2, these runs were on the
+  first build (ed7343a), before the screen blend and the new tones.
   - Mars and Lave from orbit: a rim in the game's own outer air colour
     (violet for both), lit on the sun's side, none on the night side.
     `--flat-limb` removes it and nothing else changes.
@@ -254,7 +263,12 @@ object reader's split are shared and count once.  Each layer is inside the
   - On the pad at London, inside the air: no glow.
   - A temporary draw counter (since removed): 25-35 limb glows a second in
     the Lave view, none with `--flat-limb`.  None on the galactic map, the
-    system map, the other F2 pages, F3 or a station's services screen.
+    unzoomed system map, the other F2 pages, F3 or a station's services
+    screen.  It missed the zoomed system map, which the gate now covers.
+  - Rework r2, with the flight-view gate: the zoomed F2 system map
+    draws no rim round Mars (row 540 is the map's flat background where
+    the r1 build drew a violet rim); a temporary trace logged 400 limb
+    puts in that view, all refused.  In flight, Lave's rim is unchanged.
   - A shader broken on purpose: one log line, `limb glow shader does not
     compile, left flat`.  The planet looked as before and the game went on.
   - Oracle: end line unchanged.
@@ -293,7 +307,18 @@ object reader's split are shared and count once.  Each layer is inside the
     view (`procfx_sky_seen`, cleared in `Nu_3DViewInit`).  Without it the
     streamers are left out and the glow is the plain halo.
   - Same screen blend and restore as the limb glow.
-- **Checked.**
+  - `--flat-sky` keeps the streamers: the sky put still records the
+    sky's frame and only then honours the switch.  `--flat-stars` is the
+    corona's only switch.
+  - Put only in the player's 3D view, as for the limb glow: the system
+    map's zoomed star gets the game's disc alone.
+  - The glow squares (about 6r across) leave the depth
+    mask alone.  Depth writes are not on in the far-to-near znode pass, so
+    this is harmless; if they ever are, `glow_begin` should push
+    `GL_DEPTH_BUFFER_BIT` and clear the mask.
+- **Checked.**  As for the limb glow, the Sirius, Leesti and Lave runs
+  were on ed7343a (additive blend, old tones) and were not re-taken.  The
+  Sol view was re-taken in rework r2.
   - Sol (G, `$a0`) from Mars: a bloom round a readable disc.  Additive,
     it burned to white over the violet band; screen-blended it stays
     pale yellow.
@@ -303,7 +328,9 @@ object reader's split are shared and count once.  Each layer is inside the
   - Leesti (M dwarf, `$9a`): a small orange-red corona.
   - `--flat-stars`: the game's disc and twinkle only.
   - Draw counter: 32-34 coronas a second in the Sol view, none with
-    `--flat-stars`.  None on the maps or the station screen.
+    `--flat-stars`.  None on the unzoomed maps or the station screen.
+    The zoomed system map drew a halo round Sol in rework r1; the
+    flight-view gate removes it (r2).
   - On the pad at London, one run of three drew a corona for about 4 s.
     That is the 3D view with the Sun in its sky.  Where it was on screen
     was not found.

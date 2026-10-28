@@ -3664,9 +3664,8 @@ void Nu_DrawQuad (void **data)
 /* procfx corona: which star a disc belongs to, after the disc's data */
 static void put_star (void)
 {
-	struct procfx_star s;
+	struct procfx_star s = { 0, 0 };
 
-	s.model = 0;
 	if (use_renderer == R_GL) procfx_star_put (&s);
 	znode_wrblock (&s, sizeof s);
 }

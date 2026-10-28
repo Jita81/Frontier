@@ -15,6 +15,7 @@
 
 #include "main.h"
 #include "../m68000.h"
+#include "../fixups.h"
 #include "procfx.h"
 
 /* ---- shared building blocks ------------------------------------------
@@ -115,9 +116,16 @@ static int pf_object (unsigned int *rec)
 
 	if (a6 < FRAME_OBJ || !rd_ok (a6 - FRAME_OBJ, 4)) return -1;
 	r = (unsigned int) STMemory_ReadLong (a6 - FRAME_OBJ);
-	if (!rd_ok (r, OBJ_SEED + 4)) return -1;
+	if (!rd_ok (r, OBJ_MODEL + 2)) return -1;
 	if (rec) *rec = r;
 	return STMemory_ReadWord (r + OBJ_MODEL) & 0xffff;
+}
+
+/* the player's own 3D view fills the screen (a6+42, as hdtip.c), not a
+ * map's close-up of a planet or star */
+static int pf_flight (void)
+{
+	return (signed char) STMemory_ReadByte (__DL5eb6_a6_base + 42) < 0;
 }
 
 static int pf_rot (float m[9])
@@ -303,13 +311,12 @@ void procfx_sky_end (void)
 	glPopAttrib ();
 }
 
-/* ---- layer 2: the game-over backdrop --------------------------------- */
+/* ---- the game-over backdrop ----------------------------------------- */
 
 /* A dark nebula behind the tombstone, in screen space: two layers of the
  * shared noise in the HD pages' night blues, a faint warm wisp, and a
  * vignette.  uFade brings it up from the black the game clears to. */
 static const char end_glsl[] =
-	"uniform vec4 uVp;\n"
 	"uniform float uFade;\n"
 	"void main () {\n"
 	"	vec2 p = (gl_FragCoord.xy - uVp.xy) / uVp.w;\n"
@@ -428,7 +435,7 @@ void procfx_limb_put (int col, double scale, const double c[3], double r, float 
 	int i;
 
 	limb[0] = limb[1] = limb[2] = limb[3] = 0;
-	if (flat_limb || scale <= 1.0 || r <= 0 || d <= r) return;
+	if (flat_limb || scale <= 1.0 || r <= 0 || d <= r || !pf_flight ()) return;
 	k = body_class (pf_object (NULL));
 	if (k && (!strcmp (k, "airless") || !strcmp (k, "star"))) return;
 	/* gone before the game draws its own air: the near limb inside 178
@@ -466,7 +473,8 @@ static struct glow limb_fx = { "limb glow", limb_glsl };
 
 float procfx_limb_begin (const float limb[4], const double c[3], double r, const double sun[3])
 {
-	double d = sqrt (c[0]*c[0] + c[1]*c[1] + c[2]*c[2]), thp, gam, h;
+	double d = sqrt (c[0]*c[0] + c[1]*c[1] + c[2]*c[2]), thp, gam;
+	float h;
 	const GLint *u = limb_fx.u;
 
 	if (flat_limb || limb[3] <= 0 || c[2] <= 0 || d <= r) return 0;
@@ -492,9 +500,9 @@ void procfx_star_put (struct procfx_star *s)
 	int m;
 
 	s->model = 0;
-	if (flat_stars || !is_star (m = pf_object (&rec))) return;
+	if (flat_stars || !pf_flight () || !is_star (m = pf_object (&rec))) return;
 	s->model = m;
-	s->seed = (unsigned int) STMemory_ReadLong (rec + OBJ_SEED);
+	s->seed = rd_ok (rec, OBJ_SEED + 4) ? (unsigned int) STMemory_ReadLong (rec + OBJ_SEED) : 0;
 }
 
 /* gl_TexCoord[0] runs -1..1 across the square, uC is the star's centre
