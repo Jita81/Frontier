@@ -34,6 +34,10 @@
 #define ST_W		320
 #define ST_H		200
 #define CTRL_Y		168	/* the control panel's rows have their own palette */
+/* the console's message: rows 170, 180 and 190 between the clock (left)
+ * and the dock status (right) */
+#define IN_CONSOLE(r)	((r)->y >= CTRL_Y && (r)->y <= 192 && (r)->x0 >= 72 && (r)->ink1 <= 262)
+#define CON_MID		180
 #define NGLYPHS		113	/* font codes 0x20..0x90 */
 #define MAX_ACTIVE	4096	/* glyph positions tracked at once */
 #define MISS_LIMIT	8	/* frames a glyph may be off the screen */
@@ -685,14 +689,38 @@ static void build_runs (const unsigned char *font)
 		n_runs++;
 	}
 
-	/* a text centred on the screen stays centred */
+	/* a text centred on the screen stays centred, unless it is a line of
+	 * the console's message, or shares its left edge with a line just
+	 * above or below: a left set block that happens to straddle the centre */
 	for (i = 0; i < n_runs; i++) {
 		struct hdtext_run *r = &runs[i];
 		float c = (r->ink0 + r->ink1) / 2.0f;
-		if (fabsf (c - ST_W / 2.0f) <= 1.0f && r->ink1 - r->ink0 >= 24) {
+		if (IN_CONSOLE (r)) continue;
+		for (k = 0; k < n_runs; k++)
+			if (runs[k].y != r->y && abs (runs[k].y - r->y) <= 12 &&
+			    abs (runs[k].ink0 - r->ink0) <= 2)
+				break;
+		if (k == n_runs && fabsf (c - ST_W / 2.0f) <= 1.0f && r->ink1 - r->ink0 >= 24) {
 			auto_align[i] = HDT_CENTRE;
 			auto_ax[i] = c;
 		}
+	}
+
+	/* the console's message is one, two or three lines from its top
+	 * row: a left set block is set on the strip's middle row, so a one
+	 * line message no longer jumps between the top and the middle */
+	{
+		int lo = 999, hi = -1, x = -1, mixed = 0;
+		for (i = 0; i < n_runs; i++) {
+			if (!IN_CONSOLE (&runs[i])) continue;
+			if (x < 0) x = runs[i].x0;
+			else if (runs[i].x0 != x) mixed = 1;
+			if (runs[i].y < lo) lo = runs[i].y;
+			if (runs[i].y > hi) hi = runs[i].y;
+		}
+		if (hi >= 0 && !mixed)
+			for (i = 0; i < n_runs; i++)
+				if (IN_CONSOLE (&runs[i])) runs[i].dy = CON_MID - (lo + hi) / 2.0f;
 	}
 
 	/* a column of three or more numbers left aligned at one x is set
@@ -1165,10 +1193,39 @@ static int set_slot (UniChar u, float *z)
 	return slot_of (u);
 }
 
+#define MAX_CHARS	256
+
+/* A sum of money as the game printed it ('$-1234.5', '$14 000'), set
+ * as '-$1,234.5'.  Anything but one sum (two '$' or '-') is left as it is. */
+static int money_chars (UniChar *u, short *src, int n)
+{
+	UniChar d[MAX_CHARS];
+	int i, k, m = 0, nd = 0, neg = 0, cur = 0, point = -1, whole;
+
+	for (i = 0; i < n; i++) {
+		if (u[i] == '$' && !cur) cur = 1;
+		else if (u[i] == '-' && !neg) neg = 1;
+		else if (u[i] == '.' && point < 0) point = nd;
+		else if (u[i] >= '0' && u[i] <= '9') d[nd++] = u[i];
+		else if (u[i] != ' ' && u[i] != ',') return n;
+	}
+	if (!nd || n > 64) return n;
+	whole = point < 0 ? nd : point;
+	if (neg) u[m++] = '-';
+	if (cur) u[m++] = '$';
+	for (k = 0; k < nd; k++) {
+		if (k == whole) u[m++] = '.';
+		else if (k && k < whole && (whole - k) % 3 == 0) u[m++] = ',';
+		u[m++] = d[k];
+	}
+	if (point == nd) u[m++] = '.';
+	for (k = 0; k < m; k++) src[k] = -1;
+	return m;
+}
+
 /* A run as the characters to set: the game's glyphs as letters, a word
  * space where it left a gap.  Returns how many; src is the glyph each
  * came from (-1 for a space). */
-#define MAX_CHARS	256
 static int run_chars (const struct hdtext_run *r, int upper, UniChar *u, short *src)
 {
 	const unsigned char *font = runs_font;
@@ -1212,7 +1269,7 @@ static int run_chars (const struct hdtext_run *r, int upper, UniChar *u, short *
 		u[n] = upper ? upper_of (c) : c;
 		src[n++] = k;
 	}
-	return n;
+	return r->money ? money_chars (u, src, n) : n;
 }
 
 static int resolve_role (const struct hdtext_run *r)

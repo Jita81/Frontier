@@ -99,6 +99,7 @@ struct hdtext_run {
 	float scale;		/* of the role's size; 0: 1 */
 	unsigned int rgb;	/* 0xff000000 | 0xBBGGRR: drawn in this colour; 0: the game's */
 	float alpha;		/* 0: 1 */
+	unsigned char money;	/* a sum: set as -$1,234.5 from the game's own figures */
 };
 
 /* After hdtext_frame: the runs it found, top to bottom and left to right
