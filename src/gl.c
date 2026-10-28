@@ -621,9 +621,11 @@ static void galmap_update (void)
 {
 	int m = classic_ui ? 0 : STMemory_ReadByte (__DL5eb6_a6_base + A6_GALMAP_MODE) & 0xff;
 
-	hdtext_map = m == 0xff || m == 2;
+	/* the old renderer keeps its look: names found, no halo or declutter;
+	 * --pixel-art keeps the game's own galaxy picture */
+	hdtext_map = m == 0xff || m == 2 ? 1 + (use_renderer == R_GL) : 0;
 	hdtext_focus_x = -1;	/* until the selected star is drawn */
-	galmap = use_renderer != R_GL ? 0 : m == 0xff ? 1 : m == 2 ? 2 : 0;
+	galmap = use_renderer != R_GL ? 0 : m == 0xff ? 1 : m == 2 && !pixel_art ? 2 : 0;
 }
 
 /* The galaxy picture is 320x168 of dithered greys.  Where hdtext took a
@@ -3585,6 +3587,22 @@ static void soft_ring (const int *v, float s, float r, float g, float b)
 	soft_disc (v, 0.68f * s, 0.76f * s, 0.86f * s, 0.94f * s, r, g, b, 1);
 }
 
+/* where v falls in the window, GL pixels (0: behind the eye) */
+static int project (const int *v, double *xy)
+{
+	GLdouble mv[16], pm[16], z;
+	GLint vp[4];
+
+	glGetDoublev (GL_MODELVIEW_MATRIX, mv);
+	glGetDoublev (GL_PROJECTION_MATRIX, pm);
+	glGetIntegerv (GL_VIEWPORT, vp);
+	return gluProject (v[0], v[1], v[2], mv, pm, vp, xy, xy + 1, &z);
+}
+
+/* where you are on the map: its label's strokes and its marker, projected */
+static double here_seg[64][4], here_mark[2];
+static int here_n;
+
 void Nu_DrawCircle (void **data)
 {
 	int v1[3];
@@ -3608,15 +3626,10 @@ void Nu_DrawCircle (void **data)
 		float R = (unsigned char) r / 255.0f, G = (unsigned char) g / 255.0f,
 		      B = (unsigned char) b / 255.0f;
 		if ((short) dreg2 >= 8) {
-			/* where its name is, for hdtext (ST pixels) */
-			GLdouble mv[16], pm[16], wx, wy, wz;
-			GLint vp[4];
-			glGetDoublev (GL_MODELVIEW_MATRIX, mv);
-			glGetDoublev (GL_PROJECTION_MATRIX, pm);
-			glGetIntegerv (GL_VIEWPORT, vp);
-			if (gluProject (v1[0], v1[1], v1[2], mv, pm, vp, &wx, &wy, &wz)) {
-				hdtext_focus_x = (wx - pic_x) * 320 / pic_w;
-				hdtext_focus_y = (pic_y + pic_h - wy) * 200 / pic_h;
+			double w[2];	/* where its name is, for hdtext (ST pixels) */
+			if (project (v1, w)) {
+				hdtext_focus_x = (w[0] - pic_x) * 320 / pic_w;
+				hdtext_focus_y = (pic_y + pic_h - w[1]) * 200 / pic_h;
 			}
 			soft_ring (v1, size, R, G, B);
 		} else {
@@ -3879,9 +3892,10 @@ void Nu_DrawBlob (void **data)
 		 * soft cloud */
 		float s = -0.002f * rad * v1[2];
 		float R = (c >> 8 & 15) / 15.0f, G = (c >> 4 & 15) / 15.0f, B = (c & 15) / 15.0f;
-		if ((c & 0xfff) == 0xa0a)
+		if ((c & 0xfff) == 0xa0a) {
+			project (v1, here_mark);
 			soft_ring (v1, s, R, G, B);
-		else
+		} else
 			soft_disc (v1, 0, 0, 0.35f * s, 1.2f * s, R, G, B, 0.6f);
 		return;
 	}
@@ -3940,51 +3954,61 @@ void Nu_PutLine ()
 	znode_wrvertex (GetReg (REG_A1)+4);
 	znode_wrcolor (GetReg (REG_D6));
 }
-/* The 'you are here' label (the game's own stroke text) drawn like the
- * HD labels: a dark halo and a light grey core, the halo pass over all
- * the strokes first so no stroke's halo dims another's core; round points
- * at the ends make round caps and joins.  The label shrinks as the map
- * zooms out, and its strokes thin with it. */
-static int here_seg[64][6], here_n;
-
+/* The 'you are here' label (the game's own stroke text) set like the HD
+ * map names: scaled about its end by the marker to their cap height,
+ * narrowed to their condensed face, light grey in their weight over a
+ * dark halo, round ends.  A lone stroke (the far map's pointer) stays. */
 static void here_draw (void)
 {
-	static const float wid[2] = { 2.4f, 0.8f };
-	float w = px_scale (), lo = 1e9f, hi = -1e9f;
-	GLdouble pm[16];
-	int i, k;
+	double x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9, k = 1, kx = 1, ax;
+	float cap = 0.016f * pic_h, wid[2] = { 0.4f * cap, 0.18f * cap };
+	GLint vp[4];
+	int i, j, pass;
 
-	glGetDoublev (GL_PROJECTION_MATRIX, pm);
-	for (i = 0; i < 2 * here_n; i++) {
-		const int *v = here_seg[i / 2] + 3 * (i & 1);
-		float y = v[2] < 0 ? v[1] / (float) -v[2] * pm[5] * pic_h * 0.5f : 0;
-		if (y < lo) lo = y;
-		if (y > hi) hi = y;
-	}
-	/* its letters are about 5 ST pixels high at the map's usual zoom;
-	 * a lone segment is the far map's pointer line: thin, no halo */
-	if (here_n == 1) w *= 0.4f;
-	else if (hi - lo < 5 * w) w *= hi - lo < 1.25f * w ? 0.25f : (hi - lo) / (5 * w);
-	glEnable (GL_POINT_SMOOTH);
-	/* too small to read with a halo: just the strokes */
-	for (k = w < 0.5f * px_scale (); k < 2; k++) {
-		if (k == 0) glColor4f (0, 0, 0, 0.6f);
-		else glColor4ub (222, 222, 222, 255);
-		glLineWidth (wid[k] * w);
-		glPointSize (wid[k] * w);
-		glBegin (GL_LINES);
-		for (i = 0; i < here_n; i++) {
-			glVertex3iv (here_seg[i]);
-			glVertex3iv (here_seg[i] + 3);
+	for (i = 0; i < here_n; i++)
+		for (j = 0; j < 4; j += 2) {
+			x0 = fmin (x0, here_seg[i][j]);
+			x1 = fmax (x1, here_seg[i][j]);
+			y0 = fmin (y0, here_seg[i][j + 1]);
+			y1 = fmax (y1, here_seg[i][j + 1]);
 		}
-		glEnd ();
-		glBegin (GL_POINTS);
-		for (i = 0; i < 2 * here_n; i++) glVertex3iv (here_seg[i / 2] + 3 * (i & 1));
-		glEnd ();
+	if (here_n == 1) wid[1] = 0.4f * px_scale ();
+	else if (y1 > y0) kx = 0.8 * (k = cap / (y1 - y0));
+	ax = fabs (here_mark[0] - x1) < fabs (here_mark[0] - x0) ? x1 : x0;
+	glGetIntegerv (GL_VIEWPORT, vp);
+	glMatrixMode (GL_PROJECTION);
+	glPushMatrix ();
+	glLoadIdentity ();
+	glOrtho (vp[0], vp[0] + vp[2], vp[1], vp[1] + vp[3], -1, 1);
+	glMatrixMode (GL_MODELVIEW);
+	glPushMatrix ();
+	glLoadIdentity ();
+	glTranslated (ax, (y0 + y1) / 2, 0);
+	glScaled (kx, k, 1);
+	glTranslated (-ax, -(y0 + y1) / 2, 0);
+	glPushAttrib (GL_ENABLE_BIT | GL_LINE_BIT | GL_POINT_BIT);
+	glDisable (GL_DEPTH_TEST);
+	glEnable (GL_POINT_SMOOTH);
+	/* the halo pass over every stroke first, so none dims another's core */
+	for (pass = here_n == 1; pass < 2; pass++) {
+		if (pass) glColor4ub (222, 222, 222, 255);
+		else glColor4f (0, 0, 0, 0.6f);
+		glLineWidth (wid[pass]);
+		glPointSize (wid[pass]);
+		for (j = 0; j < 2; j++) {
+			glBegin (j ? GL_LINES : GL_POINTS);
+			for (i = 0; i < here_n; i++) {
+				glVertex2dv (here_seg[i]);
+				glVertex2dv (here_seg[i] + 2);
+			}
+			glEnd ();
+		}
 	}
-	glDisable (GL_POINT_SMOOTH);
-	glLineWidth (1.0f);
-	glPointSize (1.0f);
+	glPopAttrib ();
+	glPopMatrix ();
+	glMatrixMode (GL_PROJECTION);
+	glPopMatrix ();
+	glMatrixMode (GL_MODELVIEW);
 	here_n = 0;
 }
 
@@ -3999,10 +4023,8 @@ void Nu_DrawLine (void **data)
 	
 	if (galmap == 1 && r == b && (unsigned char) r > 3 * (unsigned char) g + 40) {
 		/* the map's magenta, where you are: kept for here_draw */
-		if (here_n < 64) {
-			memcpy (here_seg[here_n], v1, sizeof v1);
-			memcpy (here_seg[here_n++] + 3, v2, sizeof v2);
-		}
+		if (here_n < 64 && project (v1, here_seg[here_n]) && project (v2, here_seg[here_n] + 2))
+			here_n++;
 		return;
 	}
 	/* the engine's lines (lasers, aerials, wires) are one ST pixel wide;

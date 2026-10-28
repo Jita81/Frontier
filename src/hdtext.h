@@ -20,21 +20,16 @@
 /* --pixel-text: keep the original 8x8 bitmap font */
 extern int pixel_text;
 
-/* Set while the galaxy map is up (not under --classic-ui): its names
- * overlap each other and its grid crosses them, so there a glyph is
- * replaced only by one drawn on its own line, and one drawn this frame or
- * the last is still found with up to half of it covered by something
- * drawn over it (not by the background). */
+/* The galaxy map is up (not under --classic-ui): 1, its names are found
+ * though the grid and other names cross them; 2 (the GL renderer), they
+ * also get a halo and are kept apart (declutter). */
 extern int hdtext_map;
 
-/* Set by gl.c while it draws the 3D view's names into the screen, just
- * before hdtext_frame, to the name's number from 1: on the map those are
- * taken as they are drawn, with no check, kept for that frame only, and
- * kept apart from each other (no name runs into another). */
+/* gl.c is drawing its n-th 3D view name (from 1) into the screen: on the
+ * map it is taken as drawn, for this frame only.  0: other text. */
 extern int hdtext_queue;
 
-/* Where gl.c drew the map's selected star this frame, ST pixels (x < 0:
- * not on the map): its name keeps its place first. */
+/* the map's selected star, ST pixels (x < 0: none): its name keeps its place */
 extern float hdtext_focus_x, hdtext_focus_y;
 
 /* DrawStr drew glyph chr of font (the 10 byte a glyph bitmap font

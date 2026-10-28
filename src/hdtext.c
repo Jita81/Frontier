@@ -95,9 +95,8 @@ void hdtext_glyph (const unsigned char *font, int x, int y, int col, int chr,
 	if (!(g[0] | g[1] | g[2] | g[3] | g[4] | g[5] | g[6] | g[7])) return;
 
 	if (hdtext_map && hdtext_queue) {
-		/* a name on the map, drawn by gl.c just before the frame
-		 * is checked: it is on the screen, and it replaces nothing,
-		 * since every name is drawn again each frame */
+		/* a map name gl.c draws just before the frame is checked:
+		 * it is on the screen and replaces nothing */
 		flags |= F_QUEUED;
 		for (oy = 0; oy < 9 && y + oy < ST_H; oy++)
 			for (ox = 0; ox < 9 && x + ox < ST_W; ox++)
@@ -121,19 +120,18 @@ void hdtext_glyph (const unsigned char *font, int x, int y, int col, int chr,
 		active[n_active++] = o;
 	}
 	s = slots[o];
-	if ((s[1].flags & F_USED) && s[1].chr == chr && s[1].col == col && s[1].flags == flags) {
+	if ((flags & F_QUEUED) && (s[0].flags & F_QUEUED) && !s[0].age)
+		s[1] = s[0];	/* a second name's glyph here this frame: both stay */
+	else if ((s[1].flags & F_USED) && s[1].chr == chr && s[1].col == col && s[1].flags == flags) {
 		struct ent t = s[0];
 		s[0] = s[1];
 		s[1] = t;
-	} else if (!((s[0].flags & F_USED) && s[0].chr == chr && s[0].col == col && s[0].flags == flags)) {
-		/* a name passing over text that stays (the sector line) takes
-		 * the place of the last frame's name, not of that text */
-		if (!((flags & F_QUEUED) && (s[0].flags & F_QUEUED) && s[0].age && (s[1].flags & F_USED)))
-			s[1] = s[0];
-		s[0].chr = chr;
-		s[0].col = col;
-		s[0].flags = flags;
-	}
+	} else if (!((s[0].flags & F_USED) && s[0].chr == chr && s[0].col == col && s[0].flags == flags) &&
+		   !((flags & F_QUEUED) && (s[0].flags & F_QUEUED) && (s[1].flags & F_USED)))
+		s[1] = s[0];	/* a name over text that stays replaces last frame's name */
+	s[0].chr = chr;
+	s[0].col = col;
+	s[0].flags = flags;
 	s[0].misses = 0;
 	s[0].age = 0;
 	s[0].name = flags & F_QUEUED ? hdtext_queue : 0;
@@ -141,10 +139,8 @@ void hdtext_glyph (const unsigned char *font, int x, int y, int col, int chr,
 
 /* Every pixel of the glyph is in its colour, and something in its box is
  * not: a block of solid colour is not a glyph.  A pixel under a map name
- * gl.c drew this frame is explained.  lenient: it was drawn just now, so
- * up to half of it may be covered by what was drawn over it since (the
- * old renderer's grid and stalks), but not by the background: a glyph
- * whose pixels went back to the sky has moved, it is not covered. */
+ * drawn this frame is explained.  lenient (drawn just now): up to half of
+ * it may be covered by lines drawn since, but not by the background. */
 static int on_screen (const unsigned char *g, const unsigned char *r, int x, int y, int col,
 		      int lenient)
 {
@@ -270,10 +266,10 @@ void hdtext_frame (const unsigned char *font, const unsigned char *r, unsigned c
 			if (!(s[k].flags & F_USED)) continue;
 			if (s[k].age < 255) s[k].age++;
 			if (s[k].flags & F_QUEUED) {
-				/* drawn this frame (two names can put a glyph
-				 * in one place: both are shown), or gone */
+				/* drawn this frame, or gone; it never hides
+				 * the other glyph here (a name can start where
+				 * other text does) */
 				if (s[k].age != 1) s[k].flags = 0;
-				else if (hit < 0) hit = k;
 				else show (font, r, out, x, y, &s[k]);
 				continue;
 			}
@@ -1156,10 +1152,8 @@ static int run_chars (const struct hdtext_run *r, int upper, UniChar *u, short *
 				src[n++] = -1;
 			}
 		}
-		/* on the map, a letter or two quoted between words with no
-		 * gap (a star's class letter in the info line): the pixel
-		 * quotes are wide enough to read as gaps, set ones are not,
-		 * so space them */
+		/* on the map, a star's class quoted with no gaps round it
+		 * (the info line): set quotes are too narrow to read as gaps */
 		if (hdtext_map && c == '\'' && k != quote && n && u[n - 1] != ' ')
 			for (j = k + 2; j <= k + 3 && j < r->first + r->n; j++)
 				if (letter (shown[j].chr) == '\'') {
@@ -1386,8 +1380,8 @@ static void place_run (int i, float sx, float sy, const unsigned int *pal, const
 		p->shadow = ro->shadow * alpha;
 		p->drop = floorf (ro->drop * cap + 0.5f);
 		if (p->drop < 1) p->drop = 1;
-		/* text over the map: a halo, so it reads over stars and lines */
-		p->halo = hdtext_map && r->y + r->dy + 8 <= CTRL_Y ? ceilf (0.08f * cap) : 0;
+		/* text over the GL map: a halo, to read over stars and lines */
+		p->halo = hdtext_map > 1 && r->y + r->dy + 8 <= CTRL_Y ? ceilf (0.08f * cap) : 0;
 		pen += (adv * k + ro->track * cap) * z * sq;
 	}
 }
@@ -1592,10 +1586,10 @@ static void draw_vector_icons (const unsigned int *pal, const unsigned int *ctrl
 	}
 }
 
-/* On the map, names that would overlap: text that is not a name, then
- * the name nearer the selected star (or the middle), keeps its place; the
- * other moves a line down or up if that is clear and still on the map, or
- * is left out, as a printed map leaves out what it has no room for. */
+/* Names on the map that would overlap: other text, then the name nearer
+ * the selected star (or the middle) keeps its place; the other moves the
+ * least clear step down or up still on the map, else to where it covers
+ * least: a name is never left out. */
 static float clutter_key[MAX_RUNS];
 
 static int cmp_clutter (const void *a, const void *b)
@@ -1608,8 +1602,8 @@ static void declutter (void)
 {
 	static short order[MAX_RUNS];
 	static float box[MAX_RUNS][4];
-	static const float move[3] = { 0, 8, -8 };
-	int i, j, k, m, n = 0, kept = 0, focus = hdtext_focus_x >= 0;
+	static const float move[9] = { 0, 6, -6, 12, -12, 18, -18, 24, -24 };
+	int i, j, k, m, best, n = 0, kept = 0, focus = hdtext_focus_x >= 0;
 
 	for (i = 0; i < n_runs; i++) {
 		const struct hdtext_run *r = &runs[i];
@@ -1624,28 +1618,24 @@ static void declutter (void)
 	qsort (order, n, sizeof (order[0]), cmp_clutter);
 	for (k = 0; k < n; k++) {
 		struct hdtext_run *r = &runs[order[k]];
-		float w = hdtext_measure (r), x0;
+		float w = hdtext_measure (r), x0, least;
 		if (w < r->ink1 - r->ink0) w = r->ink1 - r->ink0;
 		x0 = auto_align[order[k]] == HDT_CENTRE ? auto_ax[order[k]] - w / 2 : r->ink0;
 		x0 += r->dx;
-		for (m = 0; m < (run_name[order[k]] ? 3 : 1); m++) {
-			float y0 = r->y + r->dy + move[m];
-			if (run_name[order[k]] && (y0 < 0 || y0 + 8 > CTRL_Y)) continue;
+		for (m = best = 0, least = 1e9f; m < (run_name[order[k]] ? 9 : 1); m++) {
+			float y0 = r->y + r->dy + move[m], a = 0;
+			if (m && (y0 < 0 || y0 + 8 > CTRL_Y)) continue;
 			for (j = 0; j < kept; j++)
-				if (x0 < box[j][2] && box[j][0] < x0 + w &&
-				    y0 < box[j][3] && box[j][1] < y0 + 8)
-					break;
-			if (j == kept || !run_name[order[k]]) break;
+				a += fmaxf (0, fminf (x0 + w, box[j][2]) - fmaxf (x0, box[j][0])) *
+				     fmaxf (0, fminf (y0 + 6, box[j][3]) - fmaxf (y0, box[j][1]));
+			if (a < least) least = a, best = m;
+			if (!a) break;
 		}
-		if (m == 3) {
-			r->hide = 1;
-			continue;
-		}
-		r->dy += move[m];
+		r->dy += move[best];
 		box[kept][0] = x0;
 		box[kept][1] = r->y + r->dy;
 		box[kept][2] = x0 + w;
-		box[kept][3] = r->y + r->dy + 8;
+		box[kept][3] = r->y + r->dy + 6;	/* the HD text's height */
 		kept++;
 	}
 }
@@ -1658,7 +1648,7 @@ static void new_draw (const unsigned char *font, const unsigned int *pal, const 
 
 	n_placed = 0;
 	frame_clock = use_clock;
-	if (hdtext_map) declutter ();
+	if (hdtext_map > 1) declutter ();
 	for (i = 0; i < n_runs; i++)
 		if (!runs[i].hide && !(runs[i].kind & HDT_K_ICON))
 			place_run (i, sx, sy, pal, ctrl_pal);
