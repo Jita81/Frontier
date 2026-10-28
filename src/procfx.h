@@ -44,7 +44,7 @@ void procfx_sky_end (void);
 /* --flat-planets: the planets' exact light zones and flat atmosphere discs */
 extern int flat_planets;
 
-/* Around one textured planet.  lo, hi: each light zone's cos(sun) range
+/* Layer 3: around one textured planet.  lo, hi: each light zone's cos(sun) range
  * (9, 9 for none); soft: half width of the blend at a boundary; rim: the
  * innermost atmosphere colour, alpha 1 with an atmosphere; look: sun
  * shading on (1 lit), limb darkening, detail amplitude; seed: the body's.
@@ -56,6 +56,12 @@ void procfx_planet_bind (int unit, unsigned int tex);
 /* before each vertex: cos(sun), view cosine, model direction there */
 void procfx_planet_attr (double c, double mu, const double m[3]);
 void procfx_planet_end (void);
+
+/* Layer 2: the game-over backdrop, a dark nebula filling the current
+ * viewport under the tombstone (see endcard_frame in hdcontrols.c), faded
+ * up from black by fade 0..1.  Changes nothing if the shader fails. */
+void procfx_endgame_backdrop (float fade);
+
 /* change_vidmode, before the GL context goes */
 void procfx_forget (void);
 
