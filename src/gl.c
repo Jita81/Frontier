@@ -833,6 +833,7 @@ static void draw_control_panel ()
 		hdback_frame (VideoRaster, hd_screen);
 		scr = hd_screen;
 		if (galmap == 2) galaxy_soften (VideoRaster, hd_screen);
+		if (use_renderer == R_GL) hdback_concourse (fb_w, fb_h, hd_screen);
 	}
 	
 	/* intro likes black at the bottom */
@@ -1359,6 +1360,7 @@ void Nu_3DViewInit ()
 	//printf ("%d bytes object data\n", obj_data_pos);
 	obj_data_pos = 0;
 	detached_pos = 0;
+	procfx_sky_seen = 0;
 
 	//add_node (&znode_start, 0);
 	znode_start = NULL;
@@ -3936,6 +3938,38 @@ void Nu_DrawQuad (void **data)
 		if (hull_glow) hull_glow_draw (p, 4);
 	}
 }
+/* procfx corona: which star a disc belongs to, after the disc's data */
+static void put_star (void)
+{
+	struct procfx_star s = { 0, 0 };
+
+	if (use_renderer == R_GL) procfx_star_put (&s);
+	znode_wrblock (&s, sizeof s);
+}
+
+/* under the disc of radius size at v: a square facing the eye, texture
+ * coordinates -1..1 across it */
+static void draw_corona (void **data, const int v[3], float size)
+{
+	static const float q[4][2] = { {-1, -1}, {1, -1}, {1, 1}, {-1, 1} };
+	struct procfx_star s;
+	float c[3] = { v[0], v[1], v[2] }, h;
+	int i;
+
+	memcpy (&s, *data, sizeof s);
+	*data += sizeof s;
+	if (!s.model || (h = procfx_corona_begin (&s, c, size > 0 ? size : 0)) <= 0) return;
+	billboard_begin (c[0], c[1], c[2]);
+	glBegin (GL_QUADS);
+	for (i = 0; i < 4; i++) {
+		glTexCoord2fv (q[i]);
+		glVertex2f (h * q[i][0], h * q[i][1]);
+	}
+	glEnd ();
+	billboard_end ();
+	procfx_corona_end ();
+}
+
 void Nu_PutTwinklyCircle ()
 {
 	if (use_renderer == R_OLD) return;
@@ -3943,6 +3977,7 @@ void Nu_PutTwinklyCircle ()
 	znode_wrlong (GetReg (REG_D2));
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrcolor (GetReg (REG_D6));
+	put_star ();
 }
 void Nu_DrawTwinklyCircle (void **data)
 {
@@ -3961,6 +3996,7 @@ void Nu_DrawTwinklyCircle (void **data)
 	//printf ("%x (%x)\n", GetReg (2), isize);
 	
 	size = -0.002*((short)dreg2)*v1[2];
+	draw_corona (data, v1, size);
 	
 	/* billboard: always face the camera, otherwise this twinkle/star
 	 * dot degenerates to an invisible line when viewed edge-on. */
@@ -5381,6 +5417,7 @@ void Nu_PutCircle ()
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrcolor (GetReg (REG_D6));
 	znode_wrlong (hyper_tag ());
+	put_star ();
 }
 /* The galaxy map's stars and markers: a camera-facing disc whose alpha
  * rises from 0 at r0 to a at r1, holds to r2 and falls to 0 at r3 (a
@@ -5529,7 +5566,10 @@ void Nu_DrawCircle (void **data)
 	znode_rdvertex (data, v1);
 	znode_rdcolor (data, &r, &g, &b);
 	hyper = znode_rdlong (data);
-	if (fx_circle (v1, dreg2, r, g, b)) return;	/* an explosion's fireball */
+	if (fx_circle (v1, dreg2, r, g, b)) {	/* an explosion's fireball */
+		*data += sizeof (struct procfx_star);	/* put_star's bytes, unread */
+		return;
+	}
 	
 	glColor3ub (r, g, b);
 
@@ -5537,6 +5577,7 @@ void Nu_DrawCircle (void **data)
 	//printf ("%x (%x)\n", GetReg (2), isize);
 	
 	size = -0.002*((short)dreg2)*v1[2];
+	draw_corona (data, v1, size);
 	if (galmap == 1) {
 		/* a star as a glow in its class's colour, white hot at the
 		 * middle; the selected one (the game's big disc) as a ring */

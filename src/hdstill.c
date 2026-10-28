@@ -41,6 +41,11 @@
 #include <string.h>
 #include <math.h>
 #include "hdstill.h"
+#include "hdui.h"
+#include "../m68000.h"
+#include "../fixups.h"
+
+#define A6		__DL5eb6_a6_base
 
 /* screen.h's renderers (it needs SDL): only what this file uses */
 enum RENDERERS { R_OLD, R_GLWIRE, R_GL, R_MAX };
@@ -249,6 +254,26 @@ static struct tex {
 static float built_sx, built_sy;
 static unsigned frame_no;
 
+/* The gauges redrawn from ST memory (only read): fuel, laser and hull
+ * temperature as bars in the slats, speed and heat on a plate beside them */
+#define GAUGE_X	200
+#define GAUGE_Y	168
+#define GAUGE_W	68
+#define GAUGE_H	10
+#define RIM(y) (233 + ((y) - 169) * 1.5f - 1.6f)	/* inside the bay's slanted edge */
+#define MSL(y) (224.6f + ((y) - 174.7f) * 1.5f)		/* right of the right missile */
+#define PL_Y1	169.0f	/* the plate: speed from PL_Y1, heat from PL_Y2, to PL_Y3 */
+#define PL_Y2	172.2f
+#define PL_Y3	177.0f
+static struct gauges {		/* as shown: the texture is redrawn when it changes */
+	unsigned char bar[3];	/* fuel, laser and hull temperature, 0..63 */
+	unsigned char warn[3];	/* red: the laser will not fire, the hull nears damage */
+	char heat[8];
+	char speed[24];		/* as the game prints it */
+} gs, gs_built;
+static float gs_k;		/* > 0: drawn this frame, faded so */
+static struct tex gtex;
+static int gfail;		/* no texture: leave the game's lines */
 /* which function key is at (x, y): 1..4 left, 5..6 in the bay, 7..10 right */
 static int slot_at (int x, int y)
 {
@@ -1828,8 +1853,8 @@ static void slats (void)
 {
 	int i;
 	if (!in_art (234, 169, 266, 178)) return;
-	for (i = 0; i < 3; i++) {
-		float c0 = 238.25f + 5 * i, c1 = c0 + 13.5f, hw = 1.5f;
+	for (i = 0; i < 3; i++) {	/* wider for the HD gauges' names */
+		float c0 = 238.25f + 5 * i, c1 = c0 + 13.5f, hw = classic_ui ? 1.5f : 1.75f;
 		float pt[8] = { c0 - hw, 169.2f, c0 + hw, 169.2f, c1 + hw, 177.8f, c1 - hw, 177.8f };
 		groove (pt, 4);
 	}
@@ -2152,6 +2177,90 @@ static void draw_art (const struct art *a, int x, int y)
 	}
 }
 
+/* a line of the plate on base, between x0 and x1: a small label at x0,
+ * the value (its unit smaller) against x1, cv rows high, shrunk to fit */
+static void plate_row (float x0, float x1, float base, float cv, const char *label, const char *val, unsigned c)
+{
+	CTFontRef f = font ("DINCondensed-Bold");
+	const char *u = strchr (val, ' ');
+	char v[24];
+	const char *s[3] = { label, v, u ? u + 1 : "" };
+	float k = SY / (CTFontGetCapHeight (f) / 100), sz[3] = { 1.6f * k, cv * k, 0.7f * cv * k };
+	float w[3], gap = 1.2f * SX, x = X (x1);
+	CGMutablePathRef p;
+	int i;
+
+	snprintf (v, sizeof v, "%.*s", u ? (int) (u - val) : 23, val);
+	for (i = 0; i < 3; i++) CGPathRelease (text_path (f, s[i], sz[i], i ? 0 : 0.5f * U, 0, 0, &w[i]));
+	k = fminf (1, (X (x1) - X (x0)) / (w[0] + gap + w[1] + (u ? 0.3f * gap + w[2] : 0)));
+	for (i = u ? 2 : 1; i >= 0; i--) {
+		x = i ? x - w[i] * k : X (x0);
+		p = text_path (f, s[i], sz[i] * k, i ? 0 : 0.5f * U * k, x, Y (base), NULL);
+		fill_path (p, i ? c : 0x8fa3b8, i == 2 ? 0.75f : 0.95f);
+		CGPathRelease (p);
+		x -= (i == 2 ? 0.3f : 1) * gap * k;
+	}
+}
+
+static void gauges_paint (void)
+{
+	static const char *const name[3] = { "FUEL", "LASER", "HEAT" };
+	static const unsigned col[3] = { 0x46e86a, 0xffb13b, 0x37c8ff };
+	CTFontRef f = font ("DINCondensed-Bold");
+	float a = atan2f (8.6f * SY, 13.5f * SX), cap = 2.9f * SX * sinf (a);
+	/* clear of what the game draws in the bay: the galactic map's
+	 * distance (x < 212), the right missile (nose at y 173, MSL) and the scanner */
+	float pl[12] = { X (212), Y (PL_Y1), X (RIM (PL_Y1)), Y (PL_Y1), X (RIM (PL_Y3)), Y (PL_Y3),
+			 X (MSL (PL_Y3)), Y (PL_Y3), X (MSL (PL_Y2)), Y (PL_Y2), X (212), Y (PL_Y2) };
+	CGMutablePathRef p;
+	int i;
+
+	for (i = 0; i < 3; i++) {
+		/* the slat's middle line runs from (c0, 169.2) to (c0 + 13.5, 177.8) */
+#define ON(y) (c0 + ((y) - 169.2f) * 13.5f / 8.6f)
+		float c0 = 238.25f + 5 * i, hw = 1.3f, yt = 177.4f - 7.8f * gs.bar[i] / 64;
+		unsigned c = gs.warn[i] ? 0xff4b3e : col[i];
+		if (i == 1) {	/* the top sixteenth: the laser will not fire */
+			float y1 = 169.6f + 7.8f / 16, pt[8] = { X (ON (169.6f) - hw), Y (169.6f), X (ON (169.6f) + hw),
+				Y (169.6f), X (ON (y1) + hw), Y (y1), X (ON (y1) - hw), Y (y1) };
+			p = poly (pt, 4, 0);
+			fill_path (p, 0xff4b3e, 0.6f);
+			CGPathRelease (p);
+		}
+		if (yt < 177.3f) {
+			float pt[8] = { X (ON (yt) - hw), Y (yt), X (ON (yt) + hw), Y (yt),
+					X (ON (177.4f) + hw), Y (177.4f), X (ON (177.4f) - hw), Y (177.4f) };
+			p = poly (pt, 4, 0.8f * U);
+			CGContextSaveGState (C);
+			shade (0, 0, 4 * U, c, 0.7f);
+			fill_path (p, c, 0.95f);
+			CGContextRestoreGState (C);
+			stroke_inside (p, 0.6f * U, 0xffffff, 0.3f);
+			CGPathRelease (p);
+		}
+		/* its name along it, from the top: white, edged dark to read
+		 * on the bar as on the empty slat */
+		p = text_path (f, name[i], cap / (CTFontGetCapHeight (f) / 100), 0.4f * U, 0, cap / 2, NULL);
+		CGContextSaveGState (C);
+		CGContextTranslateCTM (C, X (ON (170.1f)), Y (170.1f));
+		CGContextRotateCTM (C, a);
+		shade (0, 0, 1.5f * U, 0x000000, 1);
+		stroke_path (p, 1.4f * U, 0x05080c, 0.9f);
+		fill_path (p, 0xffffff, 1);
+		CGContextRestoreGState (C);
+		CGPathRelease (p);
+#undef ON
+	}
+
+	/* the plate: speed, then the hull temperature down the edge */
+	p = poly (pl, 6, 2 * U);
+	fill_path (p, 0x101823, 0.82f);
+	stroke_inside (p, 0.8f * U, 0x8fd8ff, 0.18f);
+	CGPathRelease (p);
+	plate_row (212.6f, RIM (169.8f) - 0.4f, PL_Y2 - 0.4f, 2.7f, "SPEED", gs.speed, 0xe8f0f8);
+	plate_row (MSL (PL_Y3) - 0.3f, RIM (174.2f) - 0.4f, PL_Y3 - 0.5f, 2.7f, "HEAT", gs.heat, gs.warn[2] ? 0xff4b3e : 0xe8f0f8);
+}
+
 /* ---- the bodies on a star's information page ---- */
 
 static unsigned mix (unsigned a, unsigned b, float t)
@@ -2442,8 +2551,8 @@ static int pow2 (int n)
 static int build (struct tex *t, int a, int x, int y, float sx, float sy)
 {
 #ifdef __APPLE__
-	const struct art *ar = a >= 0 ? &arts[a] : NULL;
-	int aw = ar ? ar->w : body_now->w, ah = ar ? ar->h : body_now->h;
+	const struct art *ar = a >= 0 ? &arts[a] : NULL;	/* -1: body_now if set, else the gauges */
+	float aw = ar ? ar->w : body_now ? body_now->w : GAUGE_W, ah = ar ? ar->h : body_now ? body_now->h : GAUGE_H;
 	int w = (int) ceilf (aw * sx), h = (int) ceilf (ah * sy);
 	int tw = pow2 (w), th = pow2 (h);
 	unsigned char *buf;
@@ -2476,7 +2585,8 @@ static int build (struct tex *t, int a, int x, int y, float sx, float sy)
 	AH = ah * sy;
 	U = (sx / 5 + sy / 6) / 2;
 	if (ar) draw_art (ar, x, y);
-	else draw_body (body_now);
+	else if (body_now) draw_body (body_now);
+	else gauges_paint ();
 	C = NULL;
 	CGContextRelease (c);
 
@@ -2539,6 +2649,70 @@ static int get_tex (int a, int x, int y, u64 key)
 	texs[slot].key = key;
 	texs[slot].used = frame_no;
 	return slot;
+}
+
+/* the fade of the art shown on top at ST (x, y), 0 if none */
+static float art_at (int x, int y)
+{
+	int i;
+	for (i = n_shown - 1; i >= 0; i--)
+		if (x >= shown[i].x && x < shown[i].x + shown[i].w && y >= shown[i].y && y < shown[i].y + shown[i].vh)
+			return shown[i].k;
+	return 0;
+}
+
+static unsigned rw (unsigned a) { return (unsigned short) STMemory_ReadWord (a); }
+
+/* the console's art is up all round the gauges: read them and take the
+ * game's lines out (gs_k > 0), else leave them be */
+static void gauges_frame (unsigned char *out)
+{
+	static const unsigned lim[] = { 1u << 30, 1 << 28, 1 << 26, 1 << 22, 1 << 18, 0 }, post[] = { 0, 1, 2, 3, 5, 7 };
+	unsigned ship = (unsigned) STMemory_ReadLong (A6 + 674), sq, g[3];
+	int vel[3], d, x, y, i;
+	long long v;
+
+	gs_k = art_at (240, 170);
+	if (classic_ui || gfail || !ship || ship >= 0x100000 || art_at (262, 177) <= 0 || art_at (205, 170) <= 0) gs_k = 0;
+	if (gs_k <= 0) return;
+	memset (&gs, 0, sizeof gs);
+	/* as the game's gauge routine (L6f210) works them out */
+	g[0] = (rw (ship + 242) * rw (__DL6f1f2 + 2 * (STMemory_ReadByte (ship + 166) & 0xff)) >> 8) & 0xffff;
+	g[1] = rw (ship + 190);
+	g[2] = rw (A6 + 866);
+	for (i = 0; i < 3; i++) gs.bar[i] = g[i] >> 10;
+	gs.warn[1] = g[1] > HDSTILL_LASER_CUT;
+	gs.warn[2] = g[2] >= HDSTILL_HEAT_WARN;
+	snprintf (gs.heat, sizeof gs.heat, "%u%%", g[2] * 100 / 65536);
+	for (y = GAUGE_Y; y < GAUGE_Y + GAUGE_H; y++)
+		for (x = 234; x < 266; x++)
+			for (i = 0; i < 3; i++)
+				if (fabsf (x + 0.5f - (238.25f + 5 * i + (y + 0.5f - 169.2f) * 13.5f / 8.6f)) <= 2.5f)
+					out[y * ST_W + x] = 255;
+	/* the speed as "Actual" works it out (L63574, L368e0) and prints it
+	 * (L3e640), on every view */
+	for (d = i = 0; i < 3; i++)
+		while ((labs ((long) (vel[i] = (int) STMemory_ReadLong (ship + 98 + 4 * i))) >> d) >= 0x4000) d++;
+	for (sq = i = 0; i < 3; i++) sq += (vel[i] >> d) * (vel[i] >> d);
+	for (i = 0; sq < lim[i]; i++) ;
+	v = (long long) (rw (__DL3695a_sqrt_table + ((sq >> (20 - 2 * post[i])) & 0xfffe)) >> post[i]) << d;
+	if (v > 0x7fffffff) v = 0x7fffffff;
+	if (v > 0x4705d) {
+		v >>= 7;
+		v = v + (v >> 2) - (v >> 5);
+		snprintf (gs.speed, sizeof gs.speed, "%lld.%02lld km/s", v / 100, v % 100);
+	} else {
+		v = 3 * v + (v >> 1) - (v >> 4);
+		snprintf (gs.speed, sizeof gs.speed, "%lld.%lld km/h", v / 10, v % 10);
+	}
+}
+
+int hdstill_gauge_at (int x, int y)
+{
+	float fx = x + 0.5f, fy = y + 0.5f;
+
+	if (gs_k <= 0 || fy < PL_Y1 || fy > PL_Y3 || fx > RIM (fy)) return 0;
+	return fy < PL_Y2 ? fx >= 212 : 2 * (fx >= MSL (fy));
 }
 
 /* hdstill_frame found r on the screen (newest first): what it shows of
@@ -2752,6 +2926,7 @@ void hdstill_frame (const unsigned char *raster, unsigned char *out,
 	int bodies_on = !classic_ui && use_renderer == R_GL;
 
 	n_shown = 0;
+	gs_k = 0;
 	memset (&panel_now, 0, sizeof (panel_now));
 	if (pixel_art) return;
 	if (debug < 0) debug = getenv ("FE2_HD_DEBUG") ? atoi (getenv ("FE2_HD_DEBUG")) : 0;
@@ -2876,6 +3051,7 @@ void hdstill_frame (const unsigned char *raster, unsigned char *out,
 		shown[i] = shown[j];
 		shown[j] = t;
 	}
+	gauges_frame (out);
 }
 
 void hdstill_draw (const unsigned int *pal, const unsigned int *ctrl_pal)
@@ -2927,6 +3103,27 @@ void hdstill_draw (const unsigned int *pal, const unsigned int *ctrl_pal)
 		glEnd ();
 	}
 
+	if (gs_k > 0 && (!gtex.id || memcmp (&gs, &gs_built, sizeof gs))) {
+		if (gtex.id) glDeleteTextures (1, &gtex.id);
+		gtex.id = 0;
+		if (build (&gtex, -1, GAUGE_X, GAUGE_Y, built_sx, built_sy)) gs_built = gs;
+		else gfail = 1;
+	}
+	if (gs_k > 0 && gtex.id) {
+		glBindTexture (GL_TEXTURE_2D, gtex.id);
+		glColor4f (gs_k, gs_k, gs_k, 1);
+		glBegin (GL_QUADS);
+		glTexCoord2f (0, 0);
+		glVertex2f (GAUGE_X, ST_H - GAUGE_Y);
+		glTexCoord2f (gtex.s1, 0);
+		glVertex2f (GAUGE_X + GAUGE_W, ST_H - GAUGE_Y);
+		glTexCoord2f (gtex.s1, gtex.t1);
+		glVertex2f (GAUGE_X + GAUGE_W, ST_H - GAUGE_Y - GAUGE_H);
+		glTexCoord2f (0, gtex.t1);
+		glVertex2f (GAUGE_X, ST_H - GAUGE_Y - GAUGE_H);
+		glEnd ();
+	}
+
 	/* what has been drawn over the bitmaps goes back on top: the screen
 	 * again, where it is not transparent */
 	glBindTexture (GL_TEXTURE_2D, screen);
@@ -2960,6 +3157,9 @@ void hdstill_forget (void)
 		if (texs[i].id) glDeleteTextures (1, &texs[i].id);
 		texs[i].id = 0;
 	}
+	if (gtex.id) glDeleteTextures (1, &gtex.id);
+	gtex.id = 0;
+	gfail = 0;
 	built_sx = built_sy = 0;
 	n_shown = 0;
 }

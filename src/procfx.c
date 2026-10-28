@@ -15,6 +15,7 @@
 
 #include "main.h"
 #include "../m68000.h"
+#include "../fixups.h"
 #include "procfx.h"
 
 /* ---- shared building blocks ------------------------------------------
@@ -105,21 +106,47 @@ int flat_sky = 0;
 #define FRAME_OBJ	212
 #define FRAME_ROT	36
 #define OBJ_MODEL	90
+#define OBJ_SEED	118
+
+/* the record of the object being drawn, readable up to its seed; 0 for none */
+static unsigned int pf_record (void)
+{
+	unsigned int a6 = (unsigned int) GetReg (REG_A6), rec;
+
+	if (a6 < FRAME_OBJ || !rd_ok (a6 - FRAME_OBJ, 4)) return 0;
+	rec = (unsigned int) STMemory_ReadLong (a6 - FRAME_OBJ);
+	return rd_ok (rec, OBJ_SEED + 4) ? rec : 0;
+}
+
+/* the sky's frame and whether this 3D view has one (the player's flight
+ * view): the corona's streamers are fixed to it and it gates the corona */
+static float sky_rot[9];
+int procfx_sky_seen;
 
 int procfx_sky_put (float m[9])
 {
-	unsigned int a6, rec;
+	unsigned int a6 = (unsigned int) GetReg (REG_A6), rec = pf_record ();
 	int i;
 
-	if (flat_sky) return 0;
-	a6 = (unsigned int) GetReg (REG_A6);
-	if (a6 < FRAME_OBJ || !rd_ok (a6 - FRAME_OBJ, 4) || !rd_ok (a6 - FRAME_ROT, 18)) return 0;
-	rec = (unsigned int) STMemory_ReadLong (a6 - FRAME_OBJ);
-	if (!rd_ok (rec + OBJ_MODEL, 2)) return 0;
+	if (!rec || !rd_ok (a6 - FRAME_ROT, 18)) return 0;
 	if ((STMemory_ReadWord (rec + OBJ_MODEL) & 0xffff) != SKY_MODEL) return 0;
 	for (i = 0; i < 9; i++)
 		m[i] = (short) STMemory_ReadWord (a6 - FRAME_ROT + 2*i) / 32768.0f;
-	return 1;
+	memcpy (sky_rot, m, sizeof sky_rot);
+	procfx_sky_seen = 1;
+	return !flat_sky;
+}
+
+/* m (as procfx_sky_put) as the eye-to-object matrix: GL eye (x, y, z) is
+ * the game's view (x, y, -z) (znode_wrvertex), and the object's frame is
+ * the transpose of its rotation applied to that */
+static void pf_frame (GLint loc, const float m[9])
+{
+	float s[9];
+	int j;
+
+	for (j = 0; j < 9; j++) s[j] = j % 3 == 2 ? -m[j] : m[j];
+	glUniformMatrix3fv (loc, 1, GL_TRUE, s);
 }
 
 /* The eye ray of each pixel comes back from gl_FragCoord through the
@@ -157,9 +184,6 @@ static double sky_vp_h;
 
 int procfx_sky_begin (const float m[9], const double proj[16], const int vp[4])
 {
-	float s[9];
-	int j;
-
 	if (flat_sky || sky_failed) return 0;
 	if (!sky_prog) {
 		sky_prog = procfx_program ("sky band", sky_glsl);
@@ -168,20 +192,12 @@ int procfx_sky_begin (const float m[9], const double proj[16], const int vp[4])
 		u_vp = glGetUniformLocation (sky_prog, "uVp");
 		u_foc = glGetUniformLocation (sky_prog, "uFoc");
 	}
-	/* GL eye (x, y, z) is the game's view (x, y, -z) (znode_wrvertex);
-	 * the object's frame is the transpose of its rotation applied to
-	 * that.  Row j of the eye-to-sky matrix: */
-	for (j = 0; j < 3; j++) {
-		s[3*j + 0] = m[3*j + 0];
-		s[3*j + 1] = m[3*j + 1];
-		s[3*j + 2] = -m[3*j + 2];
-	}
 	/* the brighter of band and sky wins, so overlaps never add up */
 	glPushAttrib (GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT);
 	glEnable (GL_BLEND);
 	glBlendEquation (GL_MAX);
 	glUseProgram (sky_prog);
-	glUniformMatrix3fv (u_sky, 1, GL_TRUE, s);
+	pf_frame (u_sky, m);
 	glUniform4f (u_vp, (float) vp[0], (float) vp[1], (float) vp[2], (float) vp[3]);
 	glUniform2f (u_foc, (float) proj[0], (float) proj[5]);
 	sky_vp_h = vp[3];
@@ -330,7 +346,7 @@ void procfx_planet_end (void)
 	glUseProgram (0);
 }
 
-/* ---- layer 2: the game-over backdrop --------------------------------- */
+/* ---- the game-over backdrop ----------------------------------------- */
 
 /* A dark nebula behind the tombstone, in screen space: two layers of the
  * shared noise in the HD pages' night blues, a faint warm wisp, and a
@@ -392,12 +408,125 @@ void procfx_endgame_backdrop (float fade)
 	glPopAttrib ();
 }
 
+/* ---- the star corona ------------------------------------------------ */
+
+int flat_stars = 0;
+
+int is_star (int model) { return model >= 0x98 && model <= 0xae; }
+
+enum light star_light (int model)
+{
+	switch (model) {
+	case 0x98:		/* brown dwarf */
+	case 0x9a:		/* M dwarfs */
+	case 0x9c:		/* red giant */
+		return L_RED;
+	case 0x9e:		/* K */
+		return L_ORANGE;
+	case 0xa0:		/* G */
+		return L_YELLOW;
+	case 0xa2:		/* F */
+	case 0xa4:		/* A */
+	case 0xa8:		/* bright giant */
+	case 0xaa:		/* supergiant */
+	case 0xae:		/* white dwarf */
+		return L_WHITE;
+	case 0xa6:		/* B */
+	case 0xac:		/* blue supergiant */
+		return L_BLUE;
+	}
+	return L_NONE;
+}
+
+/* only while the player's 3D view fills the screen (a6+42, as hdtip.c) */
+void procfx_star_put (struct procfx_star *s)
+{
+	unsigned int rec = pf_record ();
+	int m;
+
+	s->model = 0;
+	if (flat_stars || !rec || (signed char) STMemory_ReadByte (__DL5eb6_a6_base + 42) >= 0) return;
+	if (!is_star (m = STMemory_ReadWord (rec + OBJ_MODEL) & 0xffff)) return;
+	s->model = m;
+	s->seed = (unsigned int) STMemory_ReadLong (rec + OBJ_SEED);
+}
+
+/* gl_TexCoord[0] runs -1..1 across the square, uC is the star's centre
+ * and uDisc the disc's radius on that scale.  The streamers are noise
+ * over the direction away from the star (the eye ray less its part along
+ * the star's), turned into the sky's frame (a star's own rotation is not
+ * kept where it is drawn) so they stay put when the ship rolls, seeded by
+ * the star.  Deep tone by the disc. */
+static const char corona_glsl[] =
+	"uniform mat3 uRot;\n"
+	"uniform vec3 uC, uCol, uSeed;\n"
+	"uniform float uDisc;\n"
+	"void main () {\n"
+	"	vec2 q = gl_TexCoord[0].xy;\n"
+	"	float r = length (q);\n"
+	"	if (r >= 1.0) discard;\n"
+	"	float t = clamp ((r - uDisc) / (1.0 - uDisc), 0.0, 1.0);\n"
+	"	vec3 e = normalize (uC + vec3 (q, 0.0)), n = normalize (uC);\n"
+	"	vec3 d = e - n * dot (e, n), u = uRot * (d / max (length (d), 1e-6));\n"
+	"	float s = smoothstep (0.45, 0.8, pf_fbm (u * (2.5 + 1.5 * t) + uSeed, 4));\n"
+	"	float g = min (0.55 * pow (1.0 - t, 4.0) + 0.6 * s * pow (1.0 - t, 2.0), 1.0);\n"
+	"	gl_FragColor = vec4 (mix (uCol, uCol * uCol, (1.0 - t) * (1.0 - t)) * g, 1.0);\n"
+	"}\n";
+
+static GLuint corona_prog;
+static int corona_failed;
+static GLint u_rot, u_c, u_col, u_cseed, u_disc;
+
+/* by star_light */
+static const float tone[L_MAX][3] = {
+	{ 0.9, 0.9, 0.9 }, { 1.0, 0.42, 0.22 }, { 1.0, 0.62, 0.30 },
+	{ 1.0, 0.92, 0.72 }, { 0.82, 0.88, 1.0 }, { 0.58, 0.72, 1.0 }
+};
+
+float procfx_corona_begin (const struct procfx_star *s, const float c[3], float r)
+{
+	/* three disc radii, and as far as the game's twinkle reaches */
+	float h = 3 * r - 0.016f * c[2];
+	unsigned int z = s->seed;
+
+	if (flat_stars || !s->model || !procfx_sky_seen || c[2] >= 0 || corona_failed) return 0;
+	if (!corona_prog) {
+		corona_prog = procfx_program ("corona", corona_glsl);
+		if (!corona_prog) { corona_failed = 1; return 0; }
+		u_rot = glGetUniformLocation (corona_prog, "uRot");
+		u_c = glGetUniformLocation (corona_prog, "uC");
+		u_col = glGetUniformLocation (corona_prog, "uCol");
+		u_cseed = glGetUniformLocation (corona_prog, "uSeed");
+		u_disc = glGetUniformLocation (corona_prog, "uDisc");
+	}
+	/* screen blend: light over a bright disc tints it, never burns it white */
+	glPushAttrib (GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_CURRENT_BIT);
+	glDisable (GL_CULL_FACE);
+	glEnable (GL_BLEND);
+	glBlendFunc (GL_ONE, GL_ONE_MINUS_SRC_COLOR);
+	glBlendEquation (GL_FUNC_ADD);
+	glUseProgram (corona_prog);
+	pf_frame (u_rot, sky_rot);
+	glUniform3f (u_c, c[0] / h, c[1] / h, c[2] / h);
+	glUniform3fv (u_col, 1, tone[star_light (s->model)]);
+	glUniform3f (u_cseed, (z & 1023) / 37.0f, (z >> 10 & 1023) / 41.0f, (z >> 20 & 1023) / 43.0f);
+	glUniform1f (u_disc, r / h);
+	return h;
+}
+
+void procfx_corona_end (void)
+{
+	glUseProgram (0);
+	glPopAttrib ();
+}
+
 /* the GL context is about to go: compile again in the next one */
 void procfx_forget (void)
 {
 	if (sky_prog) glDeleteProgram (sky_prog);
 	if (planet_prog) glDeleteProgram (planet_prog);
 	if (end_prog) glDeleteProgram (end_prog);
-	sky_prog = planet_prog = end_prog = 0;
-	sky_failed = planet_failed = end_failed = 0;
+	if (corona_prog) glDeleteProgram (corona_prog);
+	sky_prog = planet_prog = end_prog = corona_prog = 0;
+	sky_failed = planet_failed = end_failed = corona_failed = 0;
 }
