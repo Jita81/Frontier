@@ -20,6 +20,21 @@
 /* --pixel-text: keep the original 8x8 bitmap font */
 extern int pixel_text;
 
+/* DrawStr starts a string (the glyphs that follow are its) */
+void hdtext_string (void);
+
+/* The galaxy map is up (not under --classic-ui): 1, its names are found
+ * though the grid and other names cross them; 2 (the GL renderer), they
+ * also get a halo and are kept apart (declutter). */
+extern int hdtext_map;
+
+/* gl.c is drawing its n-th 3D view name (from 1) into the screen: on the
+ * map it is taken as drawn, for this frame only.  0: other text. */
+extern int hdtext_queue;
+
+/* the map's selected star, ST pixels (x < 0: none): its name keeps its place */
+extern float hdtext_focus_x, hdtext_focus_y;
+
 /* DrawStr drew glyph chr of font (the 10 byte a glyph bitmap font
  * DrawChar draws with) (character code - 0x20) with its top left
  * at ST pixel (x, y) in palette colour col, with a shadow at (x+1, y+1)
@@ -87,11 +102,17 @@ struct hdtext_run {
 	float scale;		/* of the role's size; 0: 1 */
 	unsigned int rgb;	/* 0xff000000 | 0xBBGGRR: drawn in this colour; 0: the game's */
 	float alpha;		/* 0: 1 */
+	unsigned char money;	/* a sum: set as -$1,234.5 from the game's own figures */
 };
 
 /* After hdtext_frame: the runs it found, top to bottom and left to right
  * on each line, for hdui to style.  Valid until the next hdtext_frame. */
 int hdtext_runs (struct hdtext_run **runs);
+
+/* After hdtext_frame: drop the game's frame counter (its F key) from the
+ * runs.  Returns how many of its glyphs were dropped; then call
+ * hdtext_runs again. */
+int hdtext_hide_counter (void);
 
 /* Run r's glyphs as ASCII ('?' for anything else), and whether a word
  * space comes before each; returns how many (at most max). */
@@ -104,6 +125,13 @@ int hdtext_glyph_x (const struct hdtext_run *r, int k);
  * aligned at its first ink) and the runs after it move up one.  Call
  * hdtext_runs again for the count.  Returns 0 when it cannot. */
 int hdtext_split (int i, int k);
+
+/* After hdtext_frame: a run of the renderer's own, s (ASCII; a space is
+ * a word space) set as though the game had drawn it at ST (x, y) in
+ * palette colour col, nothing in the picture taken out for it.  hdui
+ * styles it like any other run.  Returns its index, or -1.  Valid until
+ * the next hdtext_frame. */
+int hdtext_add (const char *s, int x, int y, int col);
 
 /* A run's width set in its role (and scale), ST pixels, at the size the
  * last frame was drawn (1600x1200 before the first) */
