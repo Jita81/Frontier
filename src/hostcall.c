@@ -781,31 +781,59 @@ static void Call_Fdelete ()
 	SetReg (REG_D0, remove (filename));
 }
 
+/* A save is written to a hidden file beside the target and renamed over it
+ * only once every byte is on disk, so a failed save (disk full, the game
+ * killed mid-write) leaves the old commander whole.  Freaddir hides these. */
+#define SAVE_TMP	".fe2tmp-"
+
 static void Call_Fwrite ()
 {
 	int pBuf = GetReg (REG_A4);
 	int len = GetReg (REG_D7);
-	char filename[GUEST_PATH_MAX], *slash;
+	char filename[GUEST_PATH_MAX], tmp[GUEST_PATH_MAX + sizeof SAVE_TMP], *slash;
 	FILE *f;
+	int ok;
 
 	if (!read_guest_path (GetReg (REG_D1), filename) || !guest_range_ok (pBuf, len)) {
 		SetReg (REG_D0, 0);
 		return;
 	}
-	f = fopen (filename, "wb");
+	slash = strrchr (filename, '/');
+	snprintf (tmp, sizeof tmp, "%.*s" SAVE_TMP "%s", slash ? (int) (slash + 1 - filename) : 0,
+		  filename, slash ? slash + 1 : filename);
+	f = fopen (tmp, "wb");
 	/* the first save on a new install: make the folder (savs/) and retry */
-	if (!f && errno == ENOENT && (slash = strrchr (filename, '/')) && slash != filename) {
+	if (!f && errno == ENOENT && slash && slash != filename) {
 		*slash = '\0';
 		mkdir (filename, 0777);
 		*slash = '/';
-		f = fopen (filename, "wb");
+		f = fopen (tmp, "wb");
 	}
 	if (!f) {
 		SetReg (REG_D0, 0);
-	} else {
-		SetReg (REG_D0, fwrite (STRam+pBuf, 1, len, f));
-		fclose (f);
+		return;
 	}
+	ok = fwrite (STRam+pBuf, 1, len, f) == (size_t) len && !fflush (f) && !fsync (fileno (f));
+	if (fclose (f)) ok = 0;
+	if (ok && !rename (tmp, filename)) {
+		SetReg (REG_D0, len);	/* all of it: the game's success test */
+	} else {
+		remove (tmp);
+		SetReg (REG_D0, 0);	/* what a failed open always returned */
+	}
+}
+
+/* a save's temporary file: never listed; one left by a crash before its
+ * rename is removed once it is a minute old (a live save takes milliseconds) */
+static int save_tmp (const char *dir, const char *name)
+{
+	char path[1024];
+	struct stat st;
+
+	if (strncmp (name, SAVE_TMP, sizeof SAVE_TMP - 1)) return 0;
+	snprintf (path, sizeof path, "%s/%s", dir, name);
+	if (!stat (path, &st) && S_ISREG (st.st_mode) && time (NULL) - st.st_mtime > 60) remove (path);
+	return 1;
 }
 	
 static void Call_Fread ()
@@ -859,9 +887,10 @@ static void Call_Freaddir ()
 	char full_path_shit[1024];
 	struct stat _stat;
 	struct dirent *dent = NULL;
-	/* skip '.' and '..' by name: they need not come first */
+	/* skip '.', '..' (by name: they need not come first) and save temporaries */
 	while (poodir && (dent = readdir (poodir)) &&
-	       (!strcmp (dent->d_name, ".") || !strcmp (dent->d_name, "..")))
+	       (!strcmp (dent->d_name, ".") || !strcmp (dent->d_name, "..") ||
+		save_tmp (cur_dir, dent->d_name)))
 		;
 	if (dent == NULL) {
 		SetReg (REG_D0, -1);
