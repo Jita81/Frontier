@@ -34,6 +34,7 @@ extern int pixel_text;
 extern int pixel_art;
 extern int pixel_faces;
 extern int classic_ui;
+extern int hull_style;
 
 /* palette length changes as dynamic colours change */
 extern int len_main_palette;

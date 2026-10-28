@@ -67,9 +67,10 @@ BOOL bInFullScreen = FALSE;
 
 /* new stuff */
 enum RENDERERS use_renderer = R_OLD;
-/* --flat-hulls, --flat-sky, --flat-limb, --flat-stars: the GL renderer's
- * options, nothing to do here */
+/* --flat-hulls, --hull-style, --flat-sky, --flat-limb, --flat-stars: the
+ * GL renderer's options, nothing to do here */
 int flat_hulls = 0;
+int hull_style = 0;
 int flat_sky = 0;
 int flat_limb = 0;
 int flat_stars = 0;
