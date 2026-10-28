@@ -992,15 +992,23 @@ static inline void end_node ()
 /* where the writers point once znode_buf is full (S-6) */
 static struct ZNode znode_dummy;
 
-/* The object being drawn is the star background: L44200_DrawBGStars sets
- * model 0xb0 in its record (a6-212, word 90). */
+/* The object being drawn is sky, by its model (record at a6-212, word 90):
+ * the star background L44200_DrawBGStars draws (0xb0) or one of the star
+ * dust fields (0x76) that carry most of the stars a flight view shows.
+ * bg_stars says this frame drew the star background, so it is a flight
+ * view: no map, bay or title scene draws it. */
+static int bg_stars;
 static int obj_is_sky (void)
 {
 	unsigned int a6 = GetReg (REG_A6), rec;
+	int m;
 
-	if (a6 < 212 || a6 > 0x110000u) return 0;
+	if (a6 < 0x400 + 212 || a6 >= 0x110000u) return 0;
 	rec = STMemory_ReadLong (a6 - 212);
-	return rec < 0x110000u - 92 && (STMemory_ReadWord (rec + 90) & 0xffff) == 0xb0;
+	if (rec < 0x400 || rec >= 0x110000u - 92) return 0;
+	m = STMemory_ReadWord (rec + 90) & 0xffff;
+	if (m == 0xb0) bg_stars = 1;
+	return m == 0xb0 || m == 0x76;
 }
 
 static void add_node (struct ZNode **node, unsigned int zval)
@@ -3303,7 +3311,7 @@ void Nu_PutPlanet ()
 	planet_atmosphere_band (&p);
 
 	znode_wrlong (NU_PLANET);
-	znode_cur->sky = 1;
+	if (znode_cur) znode_cur->sky = 1;
 	/* S-7: through the checked writer */
 	znode_wrblock (&p, sizeof (p));
 
@@ -3748,18 +3756,20 @@ static void draw_sky_strips (void)
 	double cx = ox + ow/2.0, cy = oy + oh/2.0, hx = ow/2.0, hy = oh/2.0;
 	int x0 = MAX (0, (int) ceil (cx - hx/(1.9*t)));
 	int x1 = MIN (fb_w, (int) floor (cx + hx/(1.9*t)));
-	int y1 = MIN (fb_h, (int) floor (cy + hy*0.5/t)), y0 = oy;
+	int y1 = MIN (fb_h, (int) floor (cy + hy*0.5/t));
+	int y0 = MAX (0, (int) ceil (cy - hy*0.5/t));
+	/* the band under the picture: under the panel, or in its rows
+	 * when there is none */
+	int yb = STMemory_ReadByte (__DL60cf_hblank_do_pal) ? pic_y : oy;
 	int r[4][4];
 
-	if (!STMemory_ReadByte (__DL60cf_hblank_do_pal))
-		y0 = MAX (0, (int) ceil (cy - hy*0.5/t));
-	/* a 4:3 window with the panel: nothing to do */
-	if (x0 == ox && x1 == ox + ow && y0 == oy && y1 == oy + oh) return;
-	v3d_under = y0 < oy;
 	r[0][0] = x0;      r[0][1] = y0;      r[0][2] = ox - x0;           r[0][3] = y1 - y0;
 	r[1][0] = ox + ow; r[1][1] = y0;      r[1][2] = x1 - ox - ow;      r[1][3] = y1 - y0;
-	r[2][0] = ox;      r[2][1] = y0;      r[2][2] = ow;                r[2][3] = oy - y0;
+	r[2][0] = ox;      r[2][1] = y0;      r[2][2] = ow;                r[2][3] = yb - y0;
 	r[3][0] = ox;      r[3][1] = oy + oh; r[3][2] = ow;                r[3][3] = y1 - oy - oh;
+	/* a 4:3 window with the panel: nothing to do */
+	if (r[0][2] <= 0 && r[2][3] <= 0 && r[3][3] <= 0) return;
+	v3d_under = yb == oy && r[2][3] > 0;
 	wide_3d = 1;
 	v3d_x = x0; v3d_y = y0; v3d_w = x1 - x0; v3d_h = y1 - y0;
 	glMatrixMode (GL_PROJECTION);
@@ -3843,10 +3853,11 @@ void Nu_DrawScreen ()
 				 scene_overflows);
 	} else {
 		if (use_renderer == R_GL && !classic_ui && znode_start
-		    && !hdback_active ())
+		    && bg_stars && !hdback_active ())
 			draw_sky_strips ();
 		draw_3dview (znode_start);
 	}
+	bg_stars = 0;
 	hull_end ();
 	//fprintf (stderr, "\n");
 
