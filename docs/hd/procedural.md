@@ -177,3 +177,19 @@ exists.
     loaded, so the 4 + 3 numbers above are the review's.
   - A real hole contour.
   - The wireframe renderer is untouched.
+
+## Prototype notes: the game-over backdrop
+
+- **What.**  The tombstone sequence used to sit on flat black.  It now
+  sits on a dark nebula with a vignette, drawn from `pf_fbm` as a
+  full-view pass (`procfx_endgame_backdrop`, about 20 lines of GLSL).
+  It fades in over half a second.  The frosted title card that goes with
+  it is in `hdcontrols.c` (`endcard_*`).
+- **Detection.**  The pass is host-side and reads only.  It runs while
+  the core's tombstone record is live and animating: the flag in the
+  loop is set, the model is the stone's, its name matches the
+  commander's, and its matrix or z changed within the last two frames.
+  It does not fire in the intro, menus, flight, station pages or the
+  death camera.
+- **Switches.**  `--old-renderer`, `--classic-ui`, `--pixel-art` and
+  `--pixel-text` keep the black stone with no card.
