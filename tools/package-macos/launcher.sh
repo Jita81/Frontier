@@ -137,10 +137,9 @@ for f in cursor.png joystick.ini; do
 	[ -f "$DATA_DIR/$f" ] || [ ! -f "$RES/$f" ] || cp "$RES/$f" "$DATA_DIR/$f" 2>/dev/null
 done
 
-# The hull plating tile stays in the app; FE2_HULL_TILE, if set, wins.
-[ -n "${FE2_HULL_TILE+set}" ] || [ ! -f "$RES/art/hull/plating.lum" ] ||
-	export FE2_HULL_TILE="$RES/art/hull/plating.lum"
-# The rest of the new art too; FE2_ART_DIR, if set, wins.
+# The new art stays in the app (the hull tiles too: FE2_HULL_TILE is left
+# unset, as setting it gives every hull class the one tile); FE2_ART_DIR,
+# if set, wins.
 [ -n "${FE2_ART_DIR+set}" ] || [ ! -d "$RES/art" ] || export FE2_ART_DIR="$RES/art"
 
 cd "$DATA_DIR" || exit 1

@@ -23,6 +23,18 @@ extern int pixel_text;
 /* DrawStr starts a string (the glyphs that follow are its) */
 void hdtext_string (void);
 
+/* The galaxy map is up (not under --classic-ui): 1, its names are found
+ * though the grid and other names cross them; 2 (the GL renderer), they
+ * also get a halo and are kept apart (declutter). */
+extern int hdtext_map;
+
+/* gl.c is drawing its n-th 3D view name (from 1) into the screen: on the
+ * map it is taken as drawn, for this frame only.  0: other text. */
+extern int hdtext_queue;
+
+/* the map's selected star, ST pixels (x < 0: none): its name keeps its place */
+extern float hdtext_focus_x, hdtext_focus_y;
+
 /* DrawStr drew glyph chr of font (the 10 byte a glyph bitmap font
  * DrawChar draws with) (character code - 0x20) with its top left
  * at ST pixel (x, y) in palette colour col, with a shadow at (x+1, y+1)
