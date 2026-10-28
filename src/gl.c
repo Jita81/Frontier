@@ -699,6 +699,7 @@ static void draw_control_panel ()
 	hdface_draw (MainRGBPalette, CtrlRGBPalette);
 	hdtext_draw (font_bmp, MainRGBPalette, CtrlRGBPalette);
 	hdui_draw_over (MainRGBPalette, CtrlRGBPalette);
+	endcard_draw ();
 	controls_page_draw ();
 	
 	glDisable (GL_TEXTURE_2D);
@@ -3950,4 +3951,6 @@ void Nu_DrawScreen ()
 	set_main_viewport ();
 	/* a 2D page's backdrop, under everything the next frame draws */
 	hdui_backdrop (MainRGBPalette, fe2_bgcol);
+	/* the game-over backdrop, under the tombstone */
+	endcard_frame ();
 }
