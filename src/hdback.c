@@ -119,20 +119,24 @@ static enum light star_light (int model)
 	return L_NONE;
 }
 
+/* the class any port falls back to: a body outside the table, or one
+ * with no picture of its own (a star, a surface port on a giant) */
+#define DEFAULT_CLASS "airless"
+
 /* the look of a body, by the model the game draws it with */
 static const char *body_class (int model)
 {
 	switch (model) {
-	case 0x7a: case 0x80: return "airless";	/* bare rock, no air */
-	case 0x7e: return "rocky";		/* thin dusty air, desert */
+	case 0x7a: case 0x7c: case 0x80: return "airless";	/* bare rock, no air ($7c: asteroids) */
+	case 0x7e: case 0x82: return "rocky";	/* thin dusty air, desert ($82: hot rock, Sirius) */
 	case 0x84: return "corrosive";		/* thick hot or ammonia murk */
 	case 0x86: return "methane";		/* cold orange smog */
-	case 0x88: case 0x8a: return "terran";	/* oxygen, oceans, cloud */
+	case 0x88: case 0x8a: case 0x90: return "terran";	/* oxygen, oceans, cloud ($90: Earth) */
 	case 0x8c: return "ice";		/* oxygen but frozen */
 	case 0x8e: return "ocean";		/* corrosive water world */
 	case 0x92: case 0x94: case 0x96: return "gasgiant";
 	}
-	return is_star (model) ? "star" : NULL;
+	return is_star (model) ? "star" : DEFAULT_CLASS;
 }
 
 static void locate (struct where *w)
@@ -270,22 +274,26 @@ static int find (enum kind kind, const char *cls, enum light l,
 
 /* the picture for w and the light it was made under, NULL if none.  A
  * moon tries its CLASS-moon pictures (the giant in the sky) first; a light
- * with no picture borrows the one the manifest names, to be tinted. */
+ * with no picture borrows the one the manifest names, to be tinted; a class
+ * with no picture (and an unknown light) falls back to DEFAULT_CLASS. */
 static const struct art *pick (const struct where *w, enum light *drawn)
 {
 	const struct art *found[MAX_ART];
-	char cls[2][24];
+	char cls[3][24];
 	enum light l;
 	unsigned int h;
 	int c, n, tries, n_cls = 0;
 
 	if (!manifest_read) read_manifest ();
-	if (!w->kind || !w->cls || !w->light) return NULL;
-	if (w->moon)
+	if (!w->kind) return NULL;
+	if (w->moon && w->cls)
 		snprintf (cls[n_cls++], sizeof cls[0], "%s-moon", w->cls);
-	snprintf (cls[n_cls++], sizeof cls[0], "%s", w->cls);
+	if (w->cls)
+		snprintf (cls[n_cls++], sizeof cls[0], "%s", w->cls);
+	/* every docked page gets a picture: last, the default class */
+	snprintf (cls[n_cls++], sizeof cls[0], "%s", DEFAULT_CLASS);
 	for (c = 0; c < n_cls; c++) {
-		l = w->light;
+		l = w->light ? w->light : L_YELLOW;
 		for (tries = 0; tries < 2 && l; tries++, l = use_light[l]) {
 			n = find (w->kind, cls[c], l, found);
 			if (!n) continue;

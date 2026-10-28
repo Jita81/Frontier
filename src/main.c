@@ -14,6 +14,10 @@
 #include <signal.h>
 
 #include <SDL.h>
+#ifdef __APPLE__
+#include <pthread.h>
+#include <sys/qos.h>
+#endif
 
 #include "main.h"
 #include "audio.h"
@@ -26,6 +30,7 @@
 #include "shortcut.h"
 #include "oracle.h"
 #include "bindings.h"
+#include "ini.h"
 
 
 #define FORCE_WORKING_DIR                 /* Set default directory to cwd */
@@ -113,9 +118,7 @@ void Main_EventHandler()
    switch( event.type )
    {
     case SDL_QUIT:
-       bQuitProgram = TRUE;
-       SDL_Quit ();
-       exit (0);
+       Main_Quit (0);
        break;
     case SDL_MOUSEMOTION:               /* Read/Update internal mouse position */
        input.motion_x += event.motion.xrel;
@@ -264,7 +267,30 @@ void Main_Init(void)
   if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_JOYSTICK) < 0)
   {
     fprintf(stderr, "Could not initialize the SDL library:\n %s\n", SDL_GetError() );
-    exit(-1);
+    Main_Quit(-1);
+  }
+
+  /* --size: at least 640x480, at most the desktop less the menu bar, title
+   * bar and dock (128 points, as gl.c's pick_window_size); too big shrinks
+   * keeping its shape */
+  if (screen_w > 0 && screen_h > 0)
+  {
+    const SDL_VideoInfo *vi = SDL_GetVideoInfo();
+    int w = screen_w, h = screen_h, mw = vi ? vi->current_w : 0, mh = vi ? vi->current_h - 128 : 0;
+    if (mw > 0 && mh > 0 && (w > mw || h > mh))
+    {
+      double s = (double) mw / w < (double) mh / h ? (double) mw / w : (double) mh / h;
+      w = (int) (w * s);
+      h = (int) (h * s);
+    }
+    if (w < 640) w = 640;
+    if (h < 480) h = 480;
+    if (mw >= 640 && w > mw) w = mw;
+    if (mh >= 480 && h > mh) h = mh;
+    if (w != screen_w || h != screen_h)
+      fprintf(stderr, "--size %dx%d clamped to %dx%d (640x480 to %dx%d)\n", screen_w, screen_h, w, h, mw, mh);
+    screen_w = w;
+    screen_h = h;
   }
   
   Screen_Init();
@@ -273,35 +299,122 @@ void Main_Init(void)
   Keymap_Init();
 
   if(bQuitProgram)
-  {
-    SDL_Quit();
-    exit(-2);
-  }
+    Main_Quit(-2);
+}
+
+
+/* The VBL, 50 a second as on a PAL ST or Amiga.  The game's clock is counted
+ * in VBLs (its handler adds a fixed step per VBL at 1x), so 1x is real time
+ * only if 50 VBLs really arrive each second.  SDL's timer cannot keep that
+ * rate: under sdl12-compat it fires on a coarse ~10 ms grid, so a callback
+ * asking for 20 ms runs every 25-35 ms and the VBL ran at 30-40 a second.
+ *
+ * So a thread of its own keeps the deadlines on SDL_GetTicks' clock, sleeping
+ * with SDL_Delay, and flags one VBL per deadline, within a few ms of it (on
+ * macOS at user-interactive QoS, so a busy machine does not starve it).  It
+ * never flags two at once: the game ends each frame by waiting for one VBL
+ * (L41bc4_LimitFrameRate), and two together let the frame after the wait take
+ * both steps of time and the next frame none, so that frame redraws nothing
+ * that tracks the time (the clock) and shows the other buffer's old picture,
+ * and motion jerks.  If it falls behind it catches up one VBL every VBL_GAP
+ * ms.  A backlog longer than VBL_MAX_BACKLOG VBLs (5 s) means the host was
+ * stopped (sleep, a debugger): that gap is dropped, as if the machine had been
+ * switched off.  Not started under the oracle, which steps VBLs itself. */
+#define VBL_MS			20
+#define VBL_GAP			5
+#define VBL_MAX_BACKLOG		250
+static SDL_Thread *vbl_thread;
+static volatile int vbl_quit;
+
+static int vbl_run (void *unused)
+{
+	Uint32 next = SDL_GetTicks () + VBL_MS;
+
+	(void) unused;
+#ifdef __APPLE__
+	pthread_set_qos_class_self_np (QOS_CLASS_USER_INTERACTIVE, 0);
+#endif
+	while (!vbl_quit) {
+		Uint32 now = SDL_GetTicks ();
+		Sint32 wait = (Sint32) (next - now);
+
+		if (wait > 0) {
+			SDL_Delay (wait);
+			continue;
+		}
+		if (-wait >= VBL_MS * VBL_MAX_BACKLOG)
+			next = now;
+		next += VBL_MS;
+		FlagException (0);
+		SDL_Delay (VBL_GAP);
+	}
+	return 0;
 }
 
 
 /*-----------------------------------------------------------------------*/
 /*
-  Un-Initialise emulation
+  Every way out (the window's close button, Ctrl-Q, the end of main, a
+  failed start): the VBL thread is stopped and waited for and the audio
+  closed before SDL_Quit, so no thread of ours runs on while SDL and the
+  C library shut down.  A second call while quitting goes straight out.
 */
-void Main_UnInit(void)
+static volatile sig_atomic_t quitting;
+
+void Main_Quit(int code)
 {
+  if (quitting)
+    _exit(code);
+  quitting = 1;
+  bQuitProgram = TRUE;
+  if (vbl_thread) {
+    vbl_quit = 1;
+    SDL_WaitThread (vbl_thread, NULL);
+    vbl_thread = NULL;
+  }
   Keymap_UnInit();
   Audio_UnInit();
   Screen_UnInit();
-
-  /* SDL uninit: */
   SDL_Quit();
+  exit(code);
 }
 
-static Uint32 vbl_callback ()
+/* frontier.ini keeps one thing: the renderer Ctrl-E last chose.  It is
+ * read before the command line, so --old-renderer still wins; an oracle
+ * run neither reads nor writes it. */
+#define SETTINGS_FILE "frontier.ini"
+
+static void Main_LoadSettings(void)
 {
-	FlagException (0);
-	return 20;
+  struct INI *ini;
+  const char *name, *key, *val;
+  size_t len, lkey, lval;
+
+  if (oracle.active || !(ini = ini_open(SETTINGS_FILE)))
+    return;
+  while (ini_next_section(ini, &name, &len) > 0)
+    while (ini_read_pair(ini, &key, &lkey, &val, &lval) > 0)
+      if (lkey == 8 && !strncasecmp(key, "RENDERER", 8) && lval == 3 && !strncasecmp(val, "old", 3))
+        use_renderer = R_OLD;
+  ini_close(ini);
+}
+
+void Main_SaveSettings(void)
+{
+  FILE *f;
+
+  if (oracle.active || !(f = fopen(SETTINGS_FILE ".tmp", "w")))
+    return;
+  fprintf(f, "; Frontier settings, written by the game (Ctrl-E). Delete it for the defaults.\n"
+          "[Display]\nRENDERER=%s\n", use_renderer == R_OLD ? "old" : "hd");
+  if (fclose(f) != 0 || rename(SETTINGS_FILE ".tmp", SETTINGS_FILE) != 0)
+    perror(SETTINGS_FILE);
 }
 
 void sig_handler (int signum)
 {
+	if (quitting)		/* a late signal while shutting down */
+		_exit (0);
 	if (signum == SIGSEGV) {
 		printf ("Segfault! All is lost! Abandon ship!\n");
 		Call_DumpDebug ();
@@ -323,6 +436,8 @@ int main(int argc, char *argv[])
   /* Oracle flags (docs/07); strips them, does nothing when none given */
   oracle_parse_args(&argc, argv);
 
+  Main_LoadSettings();
+
   /* Check for any passed parameters */
   Main_ReadParameters(argc, argv);
 
@@ -339,14 +454,14 @@ int main(int argc, char *argv[])
   oracle_install();             /* no-op unless an oracle flag was given */
 
   if (!oracle_lockstep())
-    SDL_AddTimer (20, &vbl_callback, NULL);
+    vbl_thread = SDL_CreateThread (vbl_run, NULL);
   
   /* Run emulation */
   Main_UnPauseEmulation();
   Start680x0();                 /* Start emulation */
 
   /* Un-init emulation system */
-  Main_UnInit();
+  Main_Quit(0);
 
   return(0);
 }

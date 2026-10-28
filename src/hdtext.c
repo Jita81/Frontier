@@ -751,6 +751,11 @@ int hdtext_chars (const struct hdtext_run *r, char *c, unsigned char *sp, int ma
 	return n;
 }
 
+int hdtext_glyph_x (const struct hdtext_run *r, int k)
+{
+	return shown[r->first + k].x;
+}
+
 int hdtext_split (int i, int k)
 {
 	int first, n, tail;
