@@ -42,6 +42,7 @@ typedef void (*_GLUfuncptr)();
 #include "hdback.h"
 #include "procfx.h"
 #include "bindings.h"
+#include "hdtip.h"
 /* MEM_SIZE, and the engine's variables by label address (__D<label>) */
 #include "../host.h"
 #include "../fixups.h"
@@ -235,6 +236,7 @@ static void change_vidmode ()
 		galaxy_tex = 0;
 	}
 	procfx_forget ();
+	hdtip_forget ();
 	if (screen_tex) {
 		glDeleteTextures (1, &screen_tex);
 		screen_tex = 0;
@@ -786,8 +788,10 @@ static void draw_control_panel ()
 	if (!pixel_text || !pixel_art || !pixel_faces || !classic_ui) {
 		hdtext_frame (font_bmp, VideoRaster, hd_screen);
 		hdui_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
-		hdstill_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
+		/* before hdstill: the face parts and the message thumbnail
+		 * it takes out are hdstill's to leave be (and log deferred) */
 		hdface_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
+		hdstill_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
 		hdback_frame (VideoRaster, hd_screen);
 		scr = hd_screen;
 		if (galmap == 2) galaxy_soften (VideoRaster, hd_screen);
@@ -860,7 +864,9 @@ static void draw_control_panel ()
 	hdface_draw (MainRGBPalette, CtrlRGBPalette);
 	hdtext_draw (font_bmp, MainRGBPalette, CtrlRGBPalette);
 	hdui_draw_over (MainRGBPalette, CtrlRGBPalette);
+	endcard_draw ();
 	controls_page_draw ();
+	hdtip_draw ();
 	
 	glDisable (GL_TEXTURE_2D);
 	
@@ -4250,4 +4256,6 @@ void Nu_DrawScreen ()
 	/* a 2D page's backdrop, under everything the next frame draws */
 	hdui_backdrop (MainRGBPalette, fe2_bgcol);
 	if (galmap == 1) galmap_backdrop ();
+	/* the game-over backdrop, under the tombstone */
+	endcard_frame ();
 }
