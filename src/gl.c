@@ -3885,8 +3885,44 @@ static void set_gl_clear_col (int rgb)
  * come from the planet primitive itself - see draw_ground_dome.
  */
 
+/* the next frame: its clear, the backdrops under it */
+static void begin_frame (void)
+{
+	/* frontier background color... */
+	if (use_renderer == R_GLWIRE) {
+		glClearColor (0,0,0,0);
+	} else {
+		set_gl_clear_col (MainRGBPalette[fe2_bgcol]);
+	}
+	
+	glMatrixMode (GL_MODELVIEW);
+	if (pic_w < fb_w || pic_h < fb_h) {
+		/* black bars beside the picture, the sky colour inside it */
+		GLfloat sky[4];
+		glGetFloatv (GL_COLOR_CLEAR_VALUE, sky);
+		glClearColor (0, 0, 0, 0);
+		glClear (GL_COLOR_BUFFER_BIT);
+		glClearColor (sky[0], sky[1], sky[2], sky[3]);
+		glScissor (pic_x, pic_y, pic_w, pic_h);
+		glEnable (GL_SCISSOR_TEST);
+		glClear (GL_COLOR_BUFFER_BIT);
+		glDisable (GL_SCISSOR_TEST);
+	} else {
+		glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	}
+	if (use_renderer == R_GL) hdback_draw (fb_w, fb_h);
+	glLoadIdentity ();
+	
+	set_main_viewport ();
+	/* a 2D page's backdrop, under everything the next frame draws */
+	hdui_backdrop (MainRGBPalette, fe2_bgcol);
+}
+
+static int stalled;	/* host updates since the last frame */
+
 void Nu_DrawScreen ()
 {
+	stalled = 0;
 	/* build RGB palettes */
 	_BuildRGBPalette (MainRGBPalette, MainPalette, len_main_palette);
 	_BuildRGBPalette (CtrlRGBPalette, CtrlPalette, 16);
@@ -3922,32 +3958,19 @@ void Nu_DrawScreen ()
 	
 	SDL_GL_SwapBuffers ();
 
-	/* frontier background color... */
-	if (use_renderer == R_GLWIRE) {
-		glClearColor (0,0,0,0);
-	} else {
-		set_gl_clear_col (MainRGBPalette[fe2_bgcol]);
-	}
-	
-	glMatrixMode (GL_MODELVIEW);
-	if (pic_w < fb_w || pic_h < fb_h) {
-		/* black bars beside the picture, the sky colour inside it */
-		GLfloat sky[4];
-		glGetFloatv (GL_COLOR_CLEAR_VALUE, sky);
-		glClearColor (0, 0, 0, 0);
-		glClear (GL_COLOR_BUFFER_BIT);
-		glClearColor (sky[0], sky[1], sky[2], sky[3]);
-		glScissor (pic_x, pic_y, pic_w, pic_h);
-		glEnable (GL_SCISSOR_TEST);
-		glClear (GL_COLOR_BUFFER_BIT);
-		glDisable (GL_SCISSOR_TEST);
-	} else {
-		glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-	}
-	if (use_renderer == R_GL) hdback_draw (fb_w, fb_h);
-	glLoadIdentity ();
-	
-	set_main_viewport ();
-	/* a 2D page's backdrop, under everything the next frame draws */
-	hdui_backdrop (MainRGBPalette, fe2_bgcol);
+	begin_frame ();
+}
+
+/* The game draws no frames while it waits for a name typed on the save
+ * page (it draws each letter straight to the screen) or a file chosen:
+ * there, from the third host update with no frame, show the screen as it
+ * is each update.  Only the HD layers' picture of it is redrawn: nothing
+ * writes ST memory (the queued strings, which would, hold it back). */
+void Screen_Stalled (void)
+{
+	if (++stalled < 3 || queued_string_pos || !hdui_still_page ()) return;
+	draw_control_panel ();
+	glFlush ();
+	SDL_GL_SwapBuffers ();
+	begin_frame ();
 }

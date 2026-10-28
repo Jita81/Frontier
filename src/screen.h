@@ -54,6 +54,9 @@ extern void Screen_Init(void);
 extern void Screen_UnInit(void);
 extern void Screen_ToggleFullScreen (void);
 extern void Screen_ToggleRenderer ();
+/* Once a host update: show the screen again when the game has drawn no
+ * frame for a while on a page that waits for keys */
+extern void Screen_Stalled (void);
 
 extern void Nu_PutComplexStart ();
 extern void Nu_PutTriangle ();

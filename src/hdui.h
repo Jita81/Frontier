@@ -48,6 +48,10 @@ void hdui_backdrop (const unsigned int *pal, int bgcol);
  * dim the picture and hdback adds no scrim of its own. */
 int hdui_owns_page (void);
 
+/* Nonzero while the last hdui_frame's page is one the game waits on
+ * without drawing frames (load and save: a name typed, a file chosen) */
+int hdui_still_page (void);
+
 /* The game cleared the ST area (x1, y1)-(x2, y2) for a 3D viewer this
  * frame: the next hdui_frame leaves it alone and frames it. */
 void hdui_clear_area (int x1, int y1, int x2, int y2);
