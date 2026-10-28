@@ -232,14 +232,18 @@ static unsigned frame_no;
 #define GAUGE_Y	168
 #define GAUGE_W	68
 #define GAUGE_H	10
+#define RIM(y) (233 + ((y) - 169) * 1.5f - 1.6f)	/* inside the bay's slanted edge */
+#define MSL(y) (224.6f + ((y) - 174.7f) * 1.5f)		/* right of the right missile */
+#define PL_Y1	169.4f	/* the plate: speed from PL_Y1, heat from PL_Y2, to PL_Y3 */
+#define PL_Y2	172.6f
+#define PL_Y3	177.0f
 static struct gauges {		/* as shown: the texture is redrawn when it changes */
 	unsigned char bar[3];	/* fuel, laser and hull temperature, 0..63 */
 	unsigned char warn[3];	/* red: the laser will not fire, the hull nears damage */
 	char heat[8];
-	char speed[24];		/* as the game prints it, a few times a second */
+	char speed[24];		/* as the game prints it */
 } gs, gs_built;
 static float gs_k;		/* > 0: drawn this frame, faded so */
-static unsigned gs_at;		/* the frame speed was last read in */
 static struct tex gtex;
 static int gfail;		/* no texture: leave the game's lines */
 /* which function key is at (x, y): 1..4 left, 5..6 in the bay, 7..10 right */
@@ -1983,9 +1987,6 @@ static void draw_art (const struct art *a, int x, int y)
 	}
 }
 
-#define RIM(y) (233 + ((y) - 169) * 1.5f - 1.6f)	/* inside the bay's slanted edge */
-#define MSL(y) (224.6f + ((y) - 174.7f) * 1.5f)		/* right of the right missile */
-
 /* a line of the plate on base, between x0 and x1: a small label at x0,
  * the value (its unit smaller) against x1, cv rows high, shrunk to fit */
 static void plate_row (float x0, float x1, float base, float cv, const char *label, const char *val, unsigned c)
@@ -2019,16 +2020,15 @@ static void gauges_paint (void)
 	float a = atan2f (8.6f * SY, 13.5f * SX), cap = 2.9f * SX * sinf (a);
 	/* clear of what the game draws in the bay: the galactic map's
 	 * distance (x < 212), the right missile (nose at y 173, MSL) and the scanner */
-	float r1 = 169.4f, r2 = 172.6f, r3 = 177.0f;
-	float pl[12] = { X (212), Y (r1), X (RIM (r1)), Y (r1), X (RIM (r3)), Y (r3),
-			 X (MSL (r3)), Y (r3), X (MSL (r2)), Y (r2), X (212), Y (r2) };
+	float pl[12] = { X (212), Y (PL_Y1), X (RIM (PL_Y1)), Y (PL_Y1), X (RIM (PL_Y3)), Y (PL_Y3),
+			 X (MSL (PL_Y3)), Y (PL_Y3), X (MSL (PL_Y2)), Y (PL_Y2), X (212), Y (PL_Y2) };
 	CGMutablePathRef p;
-	int i, k;
+	int i;
 
 	for (i = 0; i < 3; i++) {
 		/* the slat's middle line runs from (c0, 169.2) to (c0 + 13.5, 177.8) */
 #define ON(y) (c0 + ((y) - 169.2f) * 13.5f / 8.6f)
-		float c0 = 238.25f + 5 * i, hw = 1.3f, yt = 177.4f - 7.8f * gs.bar[i] / 63;
+		float c0 = 238.25f + 5 * i, hw = 1.3f, yt = 177.4f - 7.8f * gs.bar[i] / 64;
 		unsigned c = gs.warn[i] ? 0xff4b3e : col[i];
 		if (i == 1) {	/* the top sixteenth: the laser will not fire */
 			float y1 = 169.6f + 7.8f / 16, pt[8] = { X (ON (169.6f) - hw), Y (169.6f), X (ON (169.6f) + hw),
@@ -2048,18 +2048,16 @@ static void gauges_paint (void)
 			stroke_inside (p, 0.6f * U, 0xffffff, 0.3f);
 			CGPathRelease (p);
 		}
-		/* its name along it, from the top: light in the empty slat,
-		 * dark where the bar has reached */
+		/* its name along it, from the top: white, edged dark to read
+		 * on the bar as on the empty slat */
 		p = text_path (f, name[i], cap / (CTFontGetCapHeight (f) / 100), 0.4f * U, 0, cap / 2, NULL);
-		for (k = 0; k < 2; k++) {
-			CGContextSaveGState (C);
-			CGContextClipToRect (C, CGRectMake (0, k ? Y (yt) : 0, AW, k ? AH : Y (yt)));
-			CGContextTranslateCTM (C, X (ON (170.1f)), Y (170.1f));
-			CGContextRotateCTM (C, a);
-			if (!k) shade (0, 0, 1.5f * U, 0x000000, 1);
-			fill_path (p, k ? 0x06100c : 0xffffff, k ? 1 : 0.95f);
-			CGContextRestoreGState (C);
-		}
+		CGContextSaveGState (C);
+		CGContextTranslateCTM (C, X (ON (170.1f)), Y (170.1f));
+		CGContextRotateCTM (C, a);
+		shade (0, 0, 1.5f * U, 0x000000, 1);
+		stroke_path (p, 1.4f * U, 0x05080c, 0.9f);
+		fill_path (p, 0xffffff, 1);
+		CGContextRestoreGState (C);
 		CGPathRelease (p);
 #undef ON
 	}
@@ -2069,8 +2067,8 @@ static void gauges_paint (void)
 	fill_path (p, 0x101823, 0.82f);
 	stroke_inside (p, 0.8f * U, 0x8fd8ff, 0.18f);
 	CGPathRelease (p);
-	plate_row (212.6f, RIM (169.8f) - 0.4f, r2 - 0.5f, 2.3f, "SPEED", gs.speed, 0xe8f0f8);
-	plate_row (MSL (r3) - 0.3f, RIM (174.2f) - 0.4f, r3 - 0.5f, 2.3f, "HEAT", gs.heat, gs.warn[2] ? 0xff4b3e : 0xe8f0f8);
+	plate_row (212.6f, RIM (169.8f) - 0.4f, PL_Y2 - 0.5f, 2.3f, "SPEED", gs.speed, 0xe8f0f8);
+	plate_row (MSL (PL_Y3) - 0.3f, RIM (174.2f) - 0.4f, PL_Y3 - 0.5f, 2.3f, "HEAT", gs.heat, gs.warn[2] ? 0xff4b3e : 0xe8f0f8);
 }
 
 #endif /* __APPLE__ */
@@ -2417,6 +2415,7 @@ static void gauges_frame (unsigned char *out)
 	gs_k = art_at (240, 170);
 	if (classic_ui || gfail || !ship || ship >= 0x100000 || art_at (262, 177) <= 0 || art_at (205, 170) <= 0) gs_k = 0;
 	if (gs_k <= 0) return;
+	memset (&gs, 0, sizeof gs);
 	/* as the game's gauge routine (L6f210) works them out */
 	g[0] = (rw (ship + 242) * rw (__DL6f1f2 + 2 * (STMemory_ReadByte (ship + 166) & 0xff)) >> 8) & 0xffff;
 	g[1] = rw (ship + 190);
@@ -2431,16 +2430,13 @@ static void gauges_frame (unsigned char *out)
 				if (fabsf (x + 0.5f - (238.25f + 5 * i + (y + 0.5f - 169.2f) * 13.5f / 8.6f)) <= 2.5f)
 					out[y * ST_W + x] = 255;
 	/* the speed as "Actual" works it out (L63574, L368e0) and prints it
-	 * (L3e640), on every view: a few times a second, to be read */
-	if (frame_no - gs_at < 8 && gs.speed[0]) return;
-	gs_at = frame_no;
+	 * (L3e640), on every view */
 	for (d = i = 0; i < 3; i++)
 		while ((labs ((long) (vel[i] = (int) STMemory_ReadLong (ship + 98 + 4 * i))) >> d) >= 0x4000) d++;
 	for (sq = i = 0; i < 3; i++) sq += (vel[i] >> d) * (vel[i] >> d);
 	for (i = 0; sq < lim[i]; i++) ;
 	v = (long long) (rw (__DL3695a_sqrt_table + ((sq >> (20 - 2 * post[i])) & 0xfffe)) >> post[i]) << d;
 	if (v > 0x7fffffff) v = 0x7fffffff;
-	memset (gs.speed, 0, sizeof gs.speed);
 	if (v > 0x4705d) {
 		v >>= 7;
 		v = v + (v >> 2) - (v >> 5);
@@ -2449,6 +2445,16 @@ static void gauges_frame (unsigned char *out)
 		v = 3 * v + (v >> 1) - (v >> 4);
 		snprintf (gs.speed, sizeof gs.speed, "%lld.%lld km/h", v / 10, v % 10);
 	}
+}
+
+int hdstill_gauge_at (int x, int y)
+{
+	float fx = x + 0.5f, fy = y + 0.5f;
+
+	if (gs_k <= 0 || fy < PL_Y1 || fy > PL_Y3 || fx > RIM (fy)) return 0;
+	return fy < PL_Y2 ? fx >= 212 : 2 * (fx >= MSL (fy));
+}
+
 /* hdstill_frame found r on the screen (newest first): what it shows of
  * the control panel, unless a newer bitmap already said */
 static void note_panel (const struct rec *r)
