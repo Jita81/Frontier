@@ -28,8 +28,9 @@ extern int pixel_text;
 extern int hdtext_map;
 
 /* Set by gl.c while it draws the 3D view's names into the screen, just
- * before hdtext_frame: on the map those are taken as they are drawn, with
- * no check, and kept for that frame only. */
+ * before hdtext_frame, to the name's number from 1: on the map those are
+ * taken as they are drawn, with no check, kept for that frame only, and
+ * kept apart from each other (no name runs into another). */
 extern int hdtext_queue;
 
 /* DrawStr drew glyph chr of font (the 10 byte a glyph bitmap font
