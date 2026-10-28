@@ -16,6 +16,7 @@ void fx_frame_begin (void);
  * other primitive (1 after a complex start, 2 after its end).  The fx_X
  * hooks return 1 when they drew the tagged primitive themselves. */
 void fx_draw_tag (void **data);
+int fx_tagged (void);	/* a tagged primitive is next: no hull plating */
 void fx_prim_done (int complex_mark);
 int fx_tri (const float *a, const float *b, const float *c, const int *rgb);
 int fx_line (const int *a, const int *b, int r, int g, int bl);
