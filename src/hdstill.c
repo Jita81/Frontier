@@ -1006,36 +1006,36 @@ static void g_list (void)
 	gstroke (0xe8eef5, 0.9f, 1.3f);
 }
 
-/* the drive cut: a nozzle top right, its flame down left, crossed out */
+/* the drive cut: a flared nozzle firing down, its flame crossed out */
 static void g_engines_off (void)
 {
 	CGContextSaveGState (C);
-	CGContextTranslateCTM (C, 0.42f, -0.42f);
-	CGContextRotateCTM (C, (float) (3 * M_PI / 4));
+	CGContextTranslateCTM (C, 0, -0.34f);
+	CGContextRotateCTM (C, (float) (M_PI / 2));
 	/* the flame */
 	CGContextSaveGState (C);
 	glow (0xff8a2a, 0.9f, 3);
-	CGContextAddEllipseInRect (C, CGRectMake (-0.1f, -0.3f, 1.3f, 0.6f));
+	CGContextAddEllipseInRect (C, CGRectMake (-0.1f, -0.3f, 1.2f, 0.6f));
 	CGContextClip (C);
-	lgrad (0, 0, 1.2f, 0, 3, CS3 (0xfff3c0, 0xffb347, 0xff4d1a), AS3 (1, 0.9f, 0), AS3 (0, 0.45f, 1));
+	lgrad (0, 0, 1.1f, 0, 3, CS3 (0xfff3c0, 0xffb347, 0xff4d1a), AS3 (1, 0.9f, 0), AS3 (0, 0.45f, 1));
 	CGContextRestoreGState (C);
-	/* the bell and the stub of the drive behind it */
-	CGContextMoveToPoint (C, -0.4f, -0.13f);
-	CGContextAddLineToPoint (C, 0.02f, -0.26f);
-	CGContextAddLineToPoint (C, 0.02f, 0.26f);
-	CGContextAddLineToPoint (C, -0.4f, 0.13f);
+	/* the bell, flared wider than its flame, and the drive above it */
+	CGContextMoveToPoint (C, -0.4f, -0.14f);
+	CGContextAddQuadCurveToPoint (C, -0.08f, -0.16f, 0.04f, -0.4f);
+	CGContextAddLineToPoint (C, 0.04f, 0.4f);
+	CGContextAddQuadCurveToPoint (C, -0.08f, 0.16f, -0.4f, 0.14f);
 	CGContextClosePath (C);
 	CGContextSaveGState (C);
 	CGContextClip (C);
-	lgrad (0, -0.26f, 0, 0.26f, 3, CS3 (0xe4eaf1, 0xa9b6c4, 0x5d6c7c), AS3 (1, 1, 1), AS3 (0, 0.45f, 1));
+	lgrad (0, -0.4f, 0, 0.4f, 3, CS3 (0xe4eaf1, 0xa9b6c4, 0x5d6c7c), AS3 (1, 1, 1), AS3 (0, 0.45f, 1));
 	CGContextRestoreGState (C);
-	CGContextAddRect (C, CGRectMake (-0.66f, -0.17f, 0.26f, 0.34f));
-	gfill (0x3a4654, 1);
+	CGContextAddRect (C, CGRectMake (-0.64f, -0.24f, 0.24f, 0.48f));
+	gfill (0x8fa3b8, 1);
 	CGContextRestoreGState (C);
 	CGContextSaveGState (C);
 	glow (0xff4d4d, 0.8f, 2);
-	gseg (-0.72f, 0.0f, -0.0f, 0.72f);
-	gseg (-0.72f, 0.72f, 0.0f, 0.0f);
+	gseg (-0.36f, 0.04f, 0.36f, 0.76f);
+	gseg (-0.36f, 0.76f, 0.36f, 0.04f);
 	gstroke (0xff4d4d, 1, 1.8f);
 	CGContextRestoreGState (C);
 }
@@ -1348,9 +1348,10 @@ static void g_jump (void)
 {
 	float lw = LW;
 	CGContextSaveGState (C);
-	CGContextTranslateCTM (C, 0.36f, 0);
-	CGContextScaleCTM (C, 0.64f, 0.64f);
-	LW = lw / 0.64f;
+	CGContextTranslateCTM (C, 0.34f, -0.08f);
+	CGContextScaleCTM (C, 0.8f, 0.8f);
+	CGContextRotateCTM (C, (float) (-M_PI / 3));	/* no tail on the key number */
+	LW = lw / 0.7f;
 	g_hyper ();
 	LW = lw;
 	CGContextRestoreGState (C);
@@ -1362,7 +1363,7 @@ static void g_market (void)
 {
 	CGContextMoveToPoint (C, -0.72f, -0.86f);
 	CGContextAddLineToPoint (C, -0.72f, 0.72f);
-	CGContextAddLineToPoint (C, 0.9f, 0.72f);
+	CGContextAddLineToPoint (C, 0.78f, 0.72f);
 	gstroke (0xc9d4e0, 1, 1.2f);
 	CGContextSaveGState (C);
 	glow (0xe05cff, 0.8f, 2);
@@ -1407,11 +1408,11 @@ static void g_roster (void)
 	int i;
 	bust (-0.56f, 0.1f, 0.34f, 0.19f, 0xf0e070, 0xa89a2a, 0xffd79a, 0xd08a3a);
 	bust (-0.08f, 0.28f, 0.38f, 0.21f, 0x6b95ff, 0x2a4cb8, 0xf3a6ff, 0xc24ee0);
-	for (i = -1; i <= 1; i++) {
-		gcirc (0.5f, 0.44f * i, 0.07f);
-		gfill (0x3fd0ff, 1);
-		gseg (0.64f, 0.44f * i, 0.9f, 0.44f * i);
-	}
+	/* a fill takes the whole path: the dots first, then the lines,
+	 * the list high and short, clear of the key number */
+	for (i = 0; i < 3; i++) gcirc (0.5f, 0.42f * i - 0.62f, 0.07f);
+	gfill (0x3fd0ff, 1);
+	for (i = 0; i < 3; i++) gseg (0.64f, 0.42f * i - 0.62f, 0.86f, 0.42f * i - 0.62f);
 	gstroke (0xe8eef5, 0.9f, 1.2f);
 }
 
@@ -1420,7 +1421,7 @@ static void g_stars (void)
 {
 	static const float d[] = {
 		-0.7f, -0.48f, 0.07f, -0.28f, -0.76f, 0.05f, 0.76f, 0.12f, 0.06f,
-		-0.76f, 0.38f, 0.07f, -0.36f, 0.72f, 0.05f, 0.46f, 0.7f, 0.06f,
+		-0.76f, 0.38f, 0.07f, -0.36f, 0.72f, 0.05f, 0.12f, 0.76f, 0.06f,
 		0.16f, -0.3f, 0.05f
 	};
 	int i;
