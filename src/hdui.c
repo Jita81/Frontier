@@ -117,6 +117,7 @@ static unsigned int text_rgb (unsigned int c)
 #define H_REPLY_HEAD	0xc32da9c8u	/* a conversation's answers heading */
 #define H_START_TITLE	0x0f9ffb64u	/* the start menu's title */
 #define H_CASH		0x962530d2u	/* the cargo panel's cash label */
+#define H_DOCKED	0xf5e33b2bu	/* the console's flight status: docked */
 
 static const unsigned int prefs_heads[] = {
 	0xdfb0e074u, 0x0662faa5u, 0x9f9c4fd4u, 0xfa2e3895u, 0xd9893ebfu
@@ -131,8 +132,8 @@ struct button {
 	unsigned char used;	/* the layout replaced it */
 };
 
-enum { P_NONE, P_STATION, P_F3, P_PREFS, P_START, P_OTHER };
-static const char *const page_name[] = { "none", "station", "f3", "prefs", "start", "other" };
+enum { P_NONE, P_STATION, P_F3, P_PREFS, P_START, P_OTHER, P_DOCK };
+static const char *const page_name[] = { "none", "station", "f3", "prefs", "start", "other", "dock" };
 
 /* layers */
 enum { L_BACK, L_UNDER, L_OVER };
@@ -176,6 +177,7 @@ struct hot {
 	float x0, y0, x1, y1;	/* ST pixels */
 	short tx, ty;		/* a point inside the original control */
 	short remap;
+	unsigned int chain;	/* then a click on the services page's control of this label (H_SVC_*) */
 };
 
 static struct button btn[MAX_BUTTONS];
@@ -1699,6 +1701,7 @@ static int add_hot (float x0, float y0, float x1, float y1, int tx, int ty, int 
 	h->tx = tx;
 	h->ty = ty;
 	h->remap = remap;
+	h->chain = 0;
 	return n_hot++;
 }
 
@@ -1818,6 +1821,8 @@ static float map_y (float y)
 }
 
 /* the icon of a service's or the shipyard's card; 0 if it is not one */
+static void svc_seen (const struct hdtext_run *lab, int tx, int ty);
+
 static int card_icon (unsigned int h)
 {
 	switch (h) {
@@ -1973,6 +1978,7 @@ static void grid_card (struct button *b, float x0, float y0, float x1, float y1,
 	e->c = Ih * 6;
 	e->hot = add_hot (x0, y0, x1, y1, b->x + 4, b->y + 4, 1);
 	b->used = 1;
+	if (lab) svc_seen (lab, b->x + 4, b->y + 4);
 
 	if (lab) {
 		float lwid;
@@ -2819,6 +2825,242 @@ static void layout_prefs (const unsigned int *pal)
 	}
 }
 
+/*
+ * Docked, with the 3D view up (the hangar, or the ship from outside): the
+ * console says docked and nothing is written over the view but the speed
+ * line at its foot.  Station services are a click away on the console
+ * (its comms icon), and nothing on the view said so.  Here the view
+ * carries the station's home: at its top left a card with the station's
+ * name (the speed line gives it: what the ship is relative to, set again
+ * from that line's glyphs, which stays as it was), a click on it a click
+ * on that icon, and under it a card for each of the services (market,
+ * shipyard, bulletin board, launch), in the services page's style, each
+ * opening the services page and then the service on it (svc_chain).
+ * The view itself is the hangar, lit (gl.c).
+ */
+#define COMMS_X		57	/* the console's comms icon: station services when docked */
+#define COMMS_Y		193
+
+/* The services' labels: the game's own words, found once in its memory by
+ * their letters' hash (read only; nothing of them is in this source), or
+ * taken from the services page when it is seen. */
+static const unsigned int svc_hash[] = { H_SVC_MARKET, H_SVC_SHIPYARD, H_SVC_BOARD, H_SVC_LAUNCH };
+#define N_SVC	(int) (sizeof (svc_hash) / sizeof (svc_hash[0]))
+static char svc_label[N_SVC][40];
+static short svc_tx[N_SVC], svc_ty[N_SVC];
+static unsigned int svc_at[N_SVC];	/* hdui_frame count when seen on the services page */
+static unsigned int ui_frames;		/* hdui_frame calls */
+
+extern signed char m68kram[];
+#define ST_MEM_TOP	0x110000
+
+static int svc_index (unsigned int h)
+{
+	int i;
+	for (i = 0; i < N_SVC; i++)
+		if (svc_hash[i] == h) return i;
+	return -1;
+}
+
+static void svc_find_labels (void)
+{
+	static int done;
+	const unsigned char *m = (const unsigned char *) m68kram;
+	int i, k, left = 0;
+
+	if (done) return;
+	done = 1;
+	for (i = 0; i < N_SVC; i++)
+		if (!svc_label[i][0]) left++;
+	for (i = 1; i < ST_MEM_TOP && left; i++) {
+		unsigned int h = 2166136261u;
+		if (m[i] < 0x20 || m[i] > 0x7e || (m[i - 1] >= 0x20 && m[i - 1] <= 0x7e)) continue;
+		for (k = i; k < ST_MEM_TOP && k - i < 39 && m[k] >= 0x20 && m[k] <= 0x7e; k++) {
+			int c = m[k], j;
+			if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))) continue;
+			h = (h ^ (unsigned) (c >= 'A' && c <= 'Z' ? c + 32 : c)) * 16777619u;
+			/* the whole string, not a prefix of a longer one */
+			if (k + 1 < ST_MEM_TOP && m[k + 1] >= 0x20 && m[k + 1] <= 0x7e) continue;
+			j = svc_index (h);
+			if (j >= 0 && !svc_label[j][0]) {
+				memcpy (svc_label[j], m + i, k + 1 - i);
+				svc_label[j][k + 1 - i] = 0;
+				left--;
+			}
+		}
+	}
+}
+
+/* a service's card on the services page: its label, and where it is */
+static void svc_seen (const struct hdtext_run *lab, int tx, int ty)
+{
+	int i = svc_index (lab->hash), n, k, o = 0;
+	char c[40];
+	unsigned char sp[40];
+
+	if (i < 0) return;
+	svc_tx[i] = tx;
+	svc_ty[i] = ty;
+	svc_at[i] = ui_frames;
+	if (svc_label[i][0]) return;
+	n = hdtext_chars (lab, c, sp, sizeof (c));
+	for (k = 0; k < n && o < (int) sizeof (svc_label[i]) - 2; k++) {
+		if (k && sp[k]) svc_label[i][o++] = ' ';
+		svc_label[i][o++] = c[k];
+	}
+	svc_label[i][o] = 0;
+}
+
+static int docked_view (void)
+{
+	int i, docked = 0;
+
+	if (n_btn) return 0;
+	/* a page's 3D view; not a comms face down in the console */
+	for (i = 0; i < fr_ca_n; i++)
+		if (fr_ca[i][1] < CTRL_Y - 2) return 0;
+	for (i = 0; i < n_runs; i++) {
+		const struct hdtext_run *r = &runs[i];
+		if (r->hash == H_DOCKED && r->y >= CTRL_Y - 2 && r->y <= CTRL_Y + 4 && r->x0 >= 240)
+			docked = 1;
+		else if (ON_PAGE (r) && r->y < FOOT_Y)
+			return 0;
+	}
+	return docked;
+}
+
+/* a card on the view: icon, label (run i), chevron; a click goes to the
+ * comms icon, and then to the service chain names */
+static void dock_card (float x0, float y0, float x1, float y1, int icon, int i, float scale, unsigned int chain)
+{
+	struct hdtext_run *r = &runs[i];
+	struct elem *e;
+	int h;
+
+	style (r, HDT_LABEL, C_TEXT);
+	r->scale = scale;
+	r->align = HDT_LEFT;
+	r->ax = x0 + 21;
+	r->maxw = x1 - 12 - r->ax;
+	centre_y (r, (y0 + y1) / 2);
+	e = add (E_CARD, L_UNDER, x0, y0, x1, y1);
+	e->icon = icon;
+	e->flags = F_CHEVRON;
+	e->a = x0 + 10;
+	e->b = (y0 + y1) / 2;
+	e->c = 72;
+	h = add_hot (e->x0, e->y0, e->x1, e->y1, COMMS_X, COMMS_Y, 1);
+	e->hot = h;
+	if (h >= 0) hot[h].chain = chain;
+}
+
+static void layout_dock (void)
+{
+	char c[96], name[100];
+	unsigned char sp[96];
+	int i, k, n, o = 0, ni = -1, li[N_SVC], col = 0;
+	float x0 = 4, y0 = 4, y1 = 22, w, x1, wmax;
+
+	/* the speed line's last part: after its colon, the name of what the ship is relative to */
+	for (i = n_runs - 1; i >= 0; i--) {
+		struct hdtext_run *r = &runs[i];
+		if (!ON_PAGE (r) || r->y < FOOT_Y || r->x0 < 160) continue;
+		n = hdtext_chars (r, c, sp, sizeof (c));
+		for (k = 0; k < n - 1 && c[k] != ':'; k++)
+			;
+		if (k >= n - 1) return;
+		for (k++; k < n && o < (int) sizeof (name) - 2; k++) {
+			if (o && sp[k]) name[o++] = ' ';
+			name[o++] = c[k];
+		}
+		name[o] = 0;
+		col = r->col;
+		break;
+	}
+	if (!o) return;
+	svc_find_labels ();
+	ni = hdtext_add (name, 0, 2, col);
+	for (k = 0; k < N_SVC; k++)
+		li[k] = svc_label[k][0] ? hdtext_add (svc_label[k], 0, 30 + 23 * k, col) : -1;
+	n_runs = hdtext_runs (&runs);
+	if (ni < 0) return;
+
+	/* one width for the column: the widest label's */
+	runs[ni].role = HDT_LABEL;
+	runs[ni].scale = 1.3f;
+	wmax = hdtext_measure (&runs[ni]);
+	for (k = 0; k < N_SVC; k++)
+		if (li[k] >= 0) {
+			runs[li[k]].role = HDT_LABEL;
+			runs[li[k]].upper = 1;
+			runs[li[k]].scale = 1;
+			w = hdtext_measure (&runs[li[k]]);
+			if (w > wmax) wmax = w;
+		}
+	x1 = x0 + 21 + wmax + 14;
+	if (x1 < x0 + 92) x1 = x0 + 92;
+	if (x1 > x0 + 150) x1 = x0 + 150;
+
+	dock_card (x0, y0, x1, y1, I_STATION, ni, 1.3f, 0);
+	for (k = 0, y0 = 27; k < N_SVC; k++) {
+		if (li[k] < 0) continue;
+		dock_card (x0, y0, x1, y0 + 19, card_icon (svc_hash[k]), li[k], 1, svc_hash[k]);
+		runs[li[k]].upper = 1;
+		y0 += 22;
+	}
+}
+
+/*
+ * A service's card on the view: the click (on the comms icon) opens the
+ * services page; once that page has stood for a frame or two with the
+ * service's card on it, a click on that card is made for the player, a
+ * press and a release.  Only after the player's own click, never in an
+ * oracle replay (hdui_mouse is not called there), and given up after a
+ * few seconds or on any click of the player's.
+ */
+static unsigned int svc_chain;		/* the service to open, 0 none */
+static unsigned int chain_start;	/* ui_frames when it was asked for */
+
+static int svc_chain_step (short *ax, short *ay, int buttons)
+{
+	static int phase, polls;
+	static unsigned int phase_at;
+	int i = svc_index (svc_chain);
+
+	if (!svc_chain || i < 0) return buttons;
+	if ((buttons & 2) && !phase) {
+		/* the player is clicking: theirs */
+		svc_chain = 0;
+		return buttons;
+	}
+	if (!phase) {
+		if (ui_frames - chain_start > 240) {
+			svc_chain = 0;
+			return buttons;
+		}
+		if (page != P_STATION || stable < 2 || svc_at[i] != ui_frames) return buttons;
+		phase = 1;
+		phase_at = ui_frames;
+		polls = 0;
+	}
+	*ax = svc_tx[i];
+	*ay = svc_ty[i];
+	polls++;
+	if (phase == 1) {
+		if (ui_frames - phase_at >= 3 && polls >= 4) {
+			phase = 2;
+			phase_at = ui_frames;
+			polls = 0;
+		}
+		return buttons | 2;
+	}
+	if (ui_frames - phase_at >= 3 && polls >= 4) {
+		phase = 0;
+		svc_chain = 0;
+	}
+	return buttons & ~2;
+}
+
 /* The start menu: each choice a card */
 static void layout_start (void)
 {
@@ -2908,10 +3150,13 @@ void hdui_frame (const unsigned char *raster, unsigned char *out,
 		dump (raster, out, pal, ctrl_pal);
 		return;
 	}
+	ui_frames++;
 	n_runs = hdtext_runs (&runs);
 	find_buttons (raster);
 	page = classify ();
+	if (page == P_NONE && docked_view ()) page = P_DOCK;
 	switch (page) {
+	case P_DOCK: layout_dock (); if (!n_el) page = P_NONE; break;
 	case P_STATION: layout_station (raster, out); break;
 	case P_F3: layout_f3 (out); break;
 	case P_PREFS: layout_prefs (pal); break;
@@ -2936,10 +3181,11 @@ void hdui_frame (const unsigned char *raster, unsigned char *out,
 	dump (raster, out, pal, ctrl_pal);
 }
 
-void hdui_mouse (short *ax, short *ay, int buttons)
+int hdui_mouse (short *ax, short *ay, int buttons)
 {
 	static int latch = -1, was_down;
 	static short tx, ty;
+	static unsigned int chain;
 	int down = (buttons & 2) != 0, x = *ax, y = *ay, i;
 
 	ptr_x = x < 0 ? 0 : x >= ST_W ? ST_W - 1 : x;
@@ -2948,7 +3194,8 @@ void hdui_mouse (short *ax, short *ay, int buttons)
 	if (!layer_on ()) {
 		latch = -1;
 		was_down = down;
-		return;
+		svc_chain = 0;
+		return buttons;
 	}
 	if (down && !was_down) {
 		latch = -1;
@@ -2959,15 +3206,26 @@ void hdui_mouse (short *ax, short *ay, int buttons)
 					latch = i;
 					tx = live[i].tx;
 					ty = live[i].ty;
+					chain = live[i].chain;
 					break;
 				}
 	}
+	was_down = down;
 	if (latch >= 0) {
 		*ax = tx;
 		*ay = ty;
-		if (!down) latch = -1;
+		if (!down) {
+			latch = -1;
+			/* released: the service it names, once the page is up */
+			if (chain) {
+				svc_chain = chain;
+				chain_start = ui_frames;
+			}
+			chain = 0;
+		}
+		return buttons;
 	}
-	was_down = down;
+	return svc_chain_step (ax, ay, buttons);
 }
 
 static int backdrop_page (void)
