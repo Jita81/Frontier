@@ -48,6 +48,7 @@ typedef void (*_GLUfuncptr)();
 #include "hull.h"
 #include "art.h"
 #include "hdback.h"
+#include "fx.h"
 #include "procfx.h"
 #include "bindings.h"
 #include "hdtip.h"
@@ -264,6 +265,7 @@ static void change_vidmode ()
 	hdui_forget ();
 	controls_page_forget ();
 	hdback_forget ();
+	fx_forget ();
 	if (galaxy_tex) {
 		glDeleteTextures (1, &galaxy_tex);
 		galaxy_tex = 0;
@@ -1177,8 +1179,15 @@ enum NuPrimitive {
 	NU_ATMOSPHERE,
 	NU_SKYBAND,
 	NU_COMPLEX_OVAL,
+	NU_FX,		/* fx.c's tag for the primitive that follows */
 	NU_MAX
 };
+/* the next primitive belongs to a weapon, missile, explosion...: say which (fx.c) */
+static void put_fx (void)
+{
+	unsigned int tag[3];
+	if (use_renderer == R_GL && fx_tag_for (tag)) { znode_wrlong (NU_FX); znode_wrblock (tag, sizeof (tag)); }
+}
 
 static inline void end_node ()
 {
@@ -1343,6 +1352,7 @@ void Nu_InsertZNode ()
 
 void Nu_3DViewInit ()
 {
+	fx_frame_begin ();
 	queued_string_pos = 0;
 	//printf ("3dviewinit()\n");
 	znode_buf_pos = 0;
@@ -1569,6 +1579,7 @@ static void put_complex_start_4real ()
 		znode_wrlong (NU_SKYBAND);
 		znode_wrblock (complex_sky_m, sizeof complex_sky_m);
 	}
+	put_fx ();
 	znode_wrlong (NU_COMPLEX_START);
 	znode_wrcolor (complex_col_rgb444);
 	hull_put_cctx ();
@@ -2471,7 +2482,7 @@ static void hull_end (void)
 /* Plating for this polygon: 1 with st filled in, 0 to draw it flat */
 static int hull_use (double p[][3], int n, float st[][2])
 {
-	if (flat_hulls || !hull_coords (p, n, st)) {
+	if (flat_hulls || fx_tagged () || !hull_coords (p, n, st)) {	/* fx objects stay unplated */
 		hull_end ();
 		return 0;
 	}
@@ -3627,7 +3638,7 @@ static int hull_paint (double p[][3], int n, int have_ctx, const struct HullCtx 
 	 * hull_models[]: anything else (the intro's titles and banners,
 	 * text, planets, buildings, missiles, debris, cargo) is drawn flat,
 	 * as with --flat-hulls */
-	if (flat_hulls || !have_ctx || !hull_key_listed (cx->key)) {
+	if (flat_hulls || fx_tagged () || !have_ctx || !hull_key_listed (cx->key)) {
 		hull_end ();
 		return 0;
 	}
@@ -3707,7 +3718,7 @@ static int hull_complex_begin (GLdouble c[][3], int n, void **data)
 	if (hull_ctx != 2) return 0;	/* no model being read: no word after it */
 	calm = hull_chain || hull_decal_host (data);
 	hull_chain = calm;
-	if (!hull_cc_on || hull_style < 5 || flat_hulls || n < 3) return 0;
+	if (!hull_cc_on || hull_style < 5 || flat_hulls || fx_tagged () || n < 3) return 0;
 	cls = hull_class_of_key (hull_cc.key, &sc, off);
 	mx = mn = c8[0];
 	for (k = 1; k < 3; k++) {
@@ -3824,6 +3835,7 @@ static void hull_complex_end (void)
 void Nu_PutTriangle ()
 {
 	if (use_renderer == R_OLD) return;
+	put_fx ();
 	znode_wrlong (NU_TRIANGLE);
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrvertex (GetReg (REG_A1)+4);
@@ -3842,6 +3854,7 @@ void Nu_DrawTriangle (void **data)
 	znode_rdvertexf (data, v3);
 	znode_rdcolorv (data, rgb);
 	if (hull_ctx) hull_rdctx (data, &cx, 3);
+	if (fx_tri (v1, v2, v3)) return;
 	glColor3ub (rgb[0], rgb[1], rgb[2]);
 	if (use_renderer == R_GLWIRE) {
 		glBegin (GL_LINE_STRIP);
@@ -3871,6 +3884,8 @@ void Nu_DrawTriangle (void **data)
 void Nu_PutQuad ()
 {
 	if (use_renderer == R_OLD) return;
+	if (use_renderer == R_GL && fx_laser_quad ()) return;	/* a laser beam: fx draws it */
+	put_fx ();	/* a missile's body: flat, never plated */
 	znode_wrlong (NU_QUAD);
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrvertex (GetReg (REG_A1)+4);
@@ -5329,6 +5344,7 @@ static int circle_slices (double size, double z)
 void Nu_PutCircle ()
 {
 	if (use_renderer == R_OLD) return;
+	put_fx ();
 	znode_wrlong (NU_CIRCLE);
 	znode_wrlong (GetReg (REG_D2));
 	znode_wrvertex (GetReg (REG_A0)+4);
@@ -5397,6 +5413,7 @@ void Nu_DrawCircle (void **data)
 	dreg2 = znode_rdlong (data);
 	znode_rdvertex (data, v1);
 	znode_rdcolor (data, &r, &g, &b);
+	if (fx_circle (v1, dreg2, r, g, b)) return;	/* an explosion's fireball */
 	
 	glColor3ub (r, g, b);
 
@@ -5653,6 +5670,7 @@ void Nu_DrawOval (void **data)
 void Nu_PutBlob ()
 {
 	if (use_renderer == R_OLD) return;
+	put_fx ();
 	znode_wrlong (NU_BLOB);
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrlong (GetReg (REG_D0));
@@ -5670,6 +5688,7 @@ void Nu_DrawBlob (void **data)
 	split_rgb444i (c, &r, &g, &b);
 	rad = znode_rdlong (data) & 0xffff;
 	edges = rad+4;
+	if (fx_blob (v1, rad, r >> 24, g >> 24, b >> 24)) return;
 	
 	if (galmap == 1 && rad >= 3) {
 		/* the map: where you are (magenta) as a ring, a nebula as a
@@ -5733,6 +5752,7 @@ void Nu_DrawPoint (void **data)
 void Nu_PutLine ()
 {
 	if (use_renderer == R_OLD) return;
+	put_fx ();
 	znode_wrlong (NU_LINE);
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrvertex (GetReg (REG_A1)+4);
@@ -5945,7 +5965,8 @@ NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	NULL,	/* NU_SUBTREE, see Nu_DrawPrimitive */
 	&Nu_DrawAtmosphereFaded,
 	&Nu_DrawSkyBand,
-	&Nu_DrawComplexOval
+	&Nu_DrawComplexOval,
+	&fx_draw_tag
 };
 
 /*
@@ -5970,6 +5991,7 @@ static void Nu_DrawPrimitive (void *data)
 			continue;
 		}
 		nu_drawfuncs[fnum] (&data);
+		if (fnum != NU_FX) fx_prim_done (fnum == NU_COMPLEX_START ? 1 : fnum == NU_COMPLEX_END ? 2 : 0);
 	}
 }
 
@@ -6209,6 +6231,7 @@ void Nu_DrawScreen ()
 		if (t) hull_log_frame (t);
 	}
 	hull_end ();
+	fx_frame_end ();	/* beams and flashes that outlive the frame they were put in */
 	if (hangar_faces) hull_hangar_grade ();
 	//fprintf (stderr, "\n");
 
