@@ -2129,7 +2129,7 @@ void Nu_DrawTriangle (void **data)
 	znode_rdvertexf (data, v2);
 	znode_rdvertexf (data, v3);
 	znode_rdcolorv (data, rgb);
-	if (fx_tri (v1, v2, v3, rgb)) return;
+	if (fx_tri (v1, v2, v3)) return;
 	glColor3ub (rgb[0], rgb[1], rgb[2]);
 	if (use_renderer == R_GLWIRE) {
 		glBegin (GL_LINE_STRIP);
@@ -3427,7 +3427,6 @@ void Nu_DrawCircle (void **data)
 	//printf ("%x (%x)\n", GetReg (2), isize);
 	
 	size = -0.002*((short)dreg2)*v1[2];
-	if (fx_circle (v1, dreg2, r, g, b)) return;
 	
 	/* billboard: this is used for distant planets/stars rendered as a
 	 * flat shaded dot, which must always face the camera. */
@@ -3741,7 +3740,6 @@ void Nu_DrawLine (void **data)
 	znode_rdvertex (data, v1);
 	znode_rdvertex (data, v2);
 	znode_rdcolor (data, &r, &g, &b);
-	if (fx_line (v1, v2, r, g, b)) return;
 	
 	/* the engine's lines (lasers, aerials, wires) are one ST pixel wide;
 	 * keep them the same share of the view at any picture size, as the

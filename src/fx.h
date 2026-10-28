@@ -18,9 +18,7 @@ void fx_frame_begin (void);
 void fx_draw_tag (void **data);
 int fx_tagged (void);	/* a tagged primitive is next: no hull plating */
 void fx_prim_done (int complex_mark);
-int fx_tri (const float *a, const float *b, const float *c, const int *rgb);
-int fx_line (const int *a, const int *b, int r, int g, int bl);
-int fx_circle (const int *v, unsigned int d2, int r, int g, int b);
+int fx_tri (const float *a, const float *b, const float *c);
 int fx_blob (const int *v, int rad, int r, int g, int b);
 void fx_frame_end (void);	/* the afterglow ring, over the 3D view */
 void fx_forget (void);		/* the GL context is going away */

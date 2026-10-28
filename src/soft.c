@@ -70,7 +70,6 @@ enum RENDERERS use_renderer = R_OLD;
 /* --flat-hulls, --flat-sky: the GL renderer's options, nothing to do here */
 int flat_hulls = 0;
 int flat_sky = 0;
-int flat_fx = 0;	/* --flat-fx, likewise */
 /* mouse shown this frame? */
 int mouse_shown = 0;
 /* --pixel-text: the GL renderer's HD text; this one only has pixels */

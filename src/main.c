@@ -49,6 +49,7 @@ char szCurrentDir[MAX_FILENAME_LENGTH] = { "" };
 extern enum RENDERERS use_renderer;
 
 int delta_x, delta_y, abs_delta_x, abs_delta_y;
+int flat_fx = 0;	/* --flat-fx: no HD weapon effects (fx.c); both renderers link this */
 
 /*-----------------------------------------------------------------------*/
 /*
