@@ -117,6 +117,7 @@ static unsigned int text_rgb (unsigned int c)
 #define H_REPLY_HEAD	0xc32da9c8u	/* a conversation's answers heading */
 #define H_START_TITLE	0x0f9ffb64u	/* the start menu's title */
 #define H_CASH		0x962530d2u	/* the cargo panel's cash label */
+#define H_DOCKED	0xf5e33b2bu	/* the console's flight status: docked */
 
 static const unsigned int prefs_heads[] = {
 	0xdfb0e074u, 0x0662faa5u, 0x9f9c4fd4u, 0xfa2e3895u, 0xd9893ebfu
@@ -131,8 +132,8 @@ struct button {
 	unsigned char used;	/* the layout replaced it */
 };
 
-enum { P_NONE, P_STATION, P_F3, P_PREFS, P_START, P_OTHER };
-static const char *const page_name[] = { "none", "station", "f3", "prefs", "start", "other" };
+enum { P_NONE, P_STATION, P_F3, P_PREFS, P_START, P_OTHER, P_DOCK };
+static const char *const page_name[] = { "none", "station", "f3", "prefs", "start", "other", "dock" };
 
 /* layers */
 enum { L_BACK, L_UNDER, L_OVER };
@@ -159,6 +160,7 @@ enum { I_NONE, I_LAUNCH, I_SHIP, I_DOC, I_MARKET, I_SHIELD, I_CHIP, I_WRENCH, I_
 #define F_BIG		512	/* card: a tile of a grid, a large icon over its label */
 #define F_ROUND		1024	/* button: a circle */
 #define F_OFF		2048	/* button: not there now (dimmed, no hover) */
+#define F_VIEW		4096	/* glass: a 3D view's card, darkened to its edges */
 
 struct elem {
 	unsigned char kind, layer, icon, state;	/* state: 0, 1 hover, 2 pressed */
@@ -176,6 +178,7 @@ struct hot {
 	float x0, y0, x1, y1;	/* ST pixels */
 	short tx, ty;		/* a point inside the original control */
 	short remap;
+	unsigned int chain;	/* then a click on the services page's control of this label (H_SVC_*) */
 };
 
 static struct button btn[MAX_BUTTONS];
@@ -309,8 +312,10 @@ static void page_log (const unsigned char *out, const unsigned int *pal)
 	}
 }
 
-void hdui_clear_area (int x1, int y1, int x2, int y2)
+int hdui_clear_area (int x1, int y1, int x2, int y2)
 {
+	int i;
+
 	if (ca_n < 16) {
 		ca[ca_n][0] = x1;
 		ca[ca_n][1] = y1;
@@ -318,6 +323,14 @@ void hdui_clear_area (int x1, int y1, int x2, int y2)
 		ca[ca_n][3] = y2;
 		ca_n++;
 	}
+	/* a view the backdrop under this frame already gave its card: the
+	 * card is its background, not black */
+	if (!back_drawn || back_drawn != page_key) return 0;
+	for (i = 0; i < n_el; i++)
+		if (el[i].kind == E_GLASS && (el[i].flags & F_VIEW) && el[i].x0 <= x1 + 2 && el[i].y0 <= y1 + 2 &&
+		    el[i].x1 >= x2 - 2 && el[i].y1 >= y2 - 2)
+			return 1;
+	return 0;
 }
 
 /* ---------------------------------------------------------------- */
@@ -905,6 +918,14 @@ static void paint_glass (CGContextRef g, const struct paint *p)
 	CGContextClip (g);
 	if (p->see) vgrad (g, 0, h, C_GLASS, SEE_GLASS_A0, C_GLASS, SEE_GLASS_A1);
 	else vgrad (g, 0, h, C_GLASS, 0.84f, C_GLASS, 0.72f);
+	if (p->flags & F_VIEW) {
+		/* under a 3D view: darker to the edges, the model in the light */
+		CGFloat comp[8] = { 0, 0, 0, 0.18, 0, 0, 0, 0.62 }, loc[2] = { 0, 1 };
+		CGGradientRef gr = CGGradientCreateWithColorComponents (rgb_space, comp, loc, 2);
+		CGContextDrawRadialGradient (g, gr, CGPointMake (w / 2, h / 2), 0, CGPointMake (w / 2, h / 2),
+					     sqrtf (w * w + h * h) / 2, kCGGradientDrawsAfterEndLocation);
+		CGGradientRelease (gr);
+	}
 	/* a sheen at the top */
 	vgrad (g, 0, h * 0.35f, 0xffffff, 0.055f, 0xffffff, 0);
 	if (p->a > 0) {
@@ -1536,6 +1557,10 @@ static void frost_shape (float x, float y, float w, float h, float r, int corner
 }
 #endif
 
+/* drawing a new page's backdrop over this frame: not a 3D view's card,
+ * which would cover the view the game has drawn */
+static int skip_view;
+
 static void draw_elems (int layer)
 {
 	int i, see = hdback_active ();
@@ -1546,7 +1571,7 @@ static void draw_elems (int layer)
 	for (i = 0; i < n_el; i++) {
 		const struct elem *e = &el[i];
 		int state = hot_state (e->hot);
-		if (e->layer != layer) continue;
+		if (e->layer != layer || (skip_view && (e->flags & F_VIEW))) continue;
 		if (e->pressed) state = 2;
 		switch (e->kind) {
 		case E_QUAD:
@@ -1699,6 +1724,7 @@ static int add_hot (float x0, float y0, float x1, float y1, int tx, int ty, int 
 	h->tx = tx;
 	h->ty = ty;
 	h->remap = remap;
+	h->chain = 0;
 	return n_hot++;
 }
 
@@ -1818,6 +1844,8 @@ static float map_y (float y)
 }
 
 /* the icon of a service's or the shipyard's card; 0 if it is not one */
+static void svc_seen (const struct hdtext_run *lab, int tx, int ty);
+
 static int card_icon (unsigned int h)
 {
 	switch (h) {
@@ -1973,6 +2001,7 @@ static void grid_card (struct button *b, float x0, float y0, float x1, float y1,
 	e->c = Ih * 6;
 	e->hot = add_hot (x0, y0, x1, y1, b->x + 4, b->y + 4, 1);
 	b->used = 1;
+	if (lab) svc_seen (lab, b->x + 4, b->y + 4);
 
 	if (lab) {
 		float lwid;
@@ -2333,9 +2362,18 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 		centre_y (cash_lab, 7);
 	}
 
-	/* the card on the left: the picture and the cargo panel */
+	/* the card on the left: the picture and the cargo panel; a 3D view
+	 * in it (a ship's) on a card of its own */
 	e = add (E_GLASS, L_BACK, 0, BODY_Y0, 120.5f, 166.5f);
 	e->flags = F_ALL;
+	for (i = 0; i < fr_ca_n; i++)
+		if (fr_ca[i][2] <= 121 && fr_ca[i][1] >= BODY_Y0) {
+			e = add (E_GLASS, L_BACK, fr_ca[i][0] + 1, fr_ca[i][1], fr_ca[i][2], fr_ca[i][3] + 0.5f);
+			e->flags = F_ALL | F_VIEW;
+			/* the black edge the game draws beside it went with its black */
+			for (y = fr_ca[i][1]; y < fr_ca[i][3] && y < CTRL_Y; y++)
+				if (out[y * ST_W + fr_ca[i][2]] == 0) out[y * ST_W + fr_ca[i][2]] = 255;
+		}
 	if (find_blob (out, 0, 15, 119, FOOT_Y - 1, bb)) {
 		e = add (E_FRAME, L_OVER, bb[0], bb[1], bb[2], bb[3]);
 		e->a = 0;
@@ -2533,8 +2571,8 @@ static void layout_station (const unsigned char *raster, unsigned char *out)
 	if (!inplace) add_hot (118, 0, ST_W, foot ? FOOT_Y : CTRL_Y, 1, 1, 1);
 }
 
-/* A label and its value the game printed with nothing between them
- * ("Name:value"): two runs, the value a little clear of the colon */
+/* A label and its value the game printed as one string ("Name:value",
+ * "Name: value"): two runs, the value a little clear of the colon */
 static void split_colons (float right)
 {
 	int i, k, n;
@@ -2547,9 +2585,8 @@ static void split_colons (float right)
 		n = hdtext_chars (r, c, sp, 96);
 		for (k = 1; k < n - 1; k++)
 			if (c[k] == ':') break;
-		/* after a letter, the value straight after it: not a time */
-		if (k >= n - 1 || (c[k - 1] | 32) < 'a' || (c[k - 1] | 32) > 'z' || sp[k + 1] ||
-		    !hdtext_split (i, k + 1))
+		/* after a letter: not a time */
+		if (k >= n - 1 || (c[k - 1] | 32) < 'a' || (c[k - 1] | 32) > 'z' || !hdtext_split (i, k + 1))
 			continue;
 		n_runs = hdtext_runs (&runs);
 		runs[i + 1].align = HDT_LEFT;
@@ -2584,7 +2621,7 @@ static void split_counts (float right)
 static void f3_panel (float right)
 {
 	struct hdtext_run *head[8], *cash_lab = NULL, *cash = NULL;
-	float head_y = 138, hr[8], head_x1 = 0;
+	float head_y = 138, hr[8], head_x1 = 0, fig_x0 = 320;
 	int i, k, nh = 0;
 
 	for (i = 0; i < n_runs; i++) {
@@ -2618,8 +2655,21 @@ static void f3_panel (float right)
 				r->align = HDT_RIGHT;
 				r->ax = hr[k];
 				r->maxw = hr[k] - head[k]->ink0 + 6;
+				if (hr[k] - hdtext_measure (r) < fig_x0) fig_x0 = hr[k] - hdtext_measure (r);
 				break;
 			}
+	}
+	/* the rows' names clear of the card's edge, as the sheet's are, and
+	 * never into the first column of figures */
+	for (i = 0; i < n_runs; i++) {
+		struct hdtext_run *r = &runs[i];
+		float x0 = right + 7;
+		if (!ON_PAGE (r) || r == cash_lab || r->x0 < right || r->x0 > right + 6 || r->y <= 142 ||
+		    (r->kind & HDT_K_NUMERIC) || !(r->kind & HDT_K_LETTER))
+			continue;
+		r->align = HDT_LEFT;
+		r->ax = x0;
+		if (fig_x0 - 3 - x0 > 8) r->maxw = fig_x0 - 3 - x0;
 	}
 	if (cash_lab && cash) {
 		style (cash_lab, HDT_SECTION, C_TEXT2);
@@ -2634,10 +2684,175 @@ static void f3_panel (float right)
 	}
 }
 
-/* The ship's status pages (F3): one glass sheet, the 3D view framed */
+/* The F3 pages' left sheet as a spec sheet.  Each column of labels
+ * (runs ending in a colon) is one grid: the labels at its left, every
+ * value at one x clear of the widest label.  A second value on a label's
+ * row is the row above run long (the game wraps it there): it goes under
+ * that row's value, quieter, and the sheet below moves down for it.  A
+ * group of rows the game put at the sheet's foot, under a list, comes up
+ * under a heading of ours with the list after it; a heading with nothing
+ * under it says so.  Our words, never the game's: hdtext_add. */
+#define SHEET_X		5	/* the sheet's left column: 20 px inside the glass at 1600 */
+#define SUB_DY		8	/* a value's second line */
+#define ROW_DY		10	/* the game's row pitch */
+#define LIST_DX		5	/* a list item's step in, its dash in the step */
+static int sheet_add[8], sheet_head[8], n_sheet_add;	/* our runs; a heading or not */
+
+static void sheet_text (const char *s, float x, float y, float right, int head)
+{
+	int i = hdtext_add (s, (int) x, (int) y, 15);
+
+	if (i < 0 || n_sheet_add >= 8) return;
+	n_runs = hdtext_runs (&runs);
+	runs[i].align = HDT_LEFT;
+	runs[i].ax = x;
+	runs[i].maxw = right - 4 - x;
+	sheet_head[n_sheet_add] = head;
+	sheet_add[n_sheet_add++] = i;
+}
+
+static int on_sheet (const struct hdtext_run *r, float right)
+{
+	return ON_PAGE (r) && r->y >= 10 && r->x0 < right && !(r->kind & HDT_K_ICON) && !(r->col == BG && !r->shadow);
+}
+
+/* A heading: in the page colour by its shadow, or all capitals without
+ * figures, but not after a row's label on its line (that is the row's
+ * value, whatever its case) */
+static int is_head (const struct hdtext_run *r)
+{
+	int k;
+
+	if (r->col == BG && r->shadow) return 1;
+	if (!(r->kind & HDT_K_CAPS) || (r->kind & HDT_K_NUMERIC)) return 0;
+	for (k = 0; k < n_runs; k++)
+		if (runs[k].y == r->y && (runs[k].kind & HDT_K_COLON) && runs[k].x0 < r->x0 && ON_PAGE (&runs[k]))
+			return 0;
+	return 1;
+}
+
+static void f3_sheet (float right)
+{
+	static float ty[1024];	/* each run's new y; hdtext finds at most 1024 */
+	float lx[4], vx[4], top_end = 0, shift_y = 1000, list0 = 1000;
+	short gx[4], row_y[32];
+	int i, k, g, ng = 0, nrow = 0, foot = 0, n0 = n_runs < 1024 ? n_runs : 1024;
+
+	n_sheet_add = 0;
+	/* the label columns, each as wide as its widest label */
+	for (i = 0; i < n0; i++) {
+		struct hdtext_run *r = &runs[i];
+		ty[i] = r->y;
+		if (!on_sheet (r, right) || !(r->kind & HDT_K_COLON)) continue;
+		for (g = 0; g < ng && abs (gx[g] - r->x0) > 3; g++)
+			;
+		if (g == ng) {
+			if (ng == 4) continue;
+			gx[ng] = r->x0;
+			lx[ng] = r->x0 <= 10 ? SHEET_X : r->x0;
+			vx[ng++] = 0;
+		}
+		r->role = HDT_LABEL;
+		r->align = HDT_LEFT;
+		r->ax = lx[g];
+		if (lx[g] + hdtext_measure (r) + 8 > vx[g]) vx[g] = lx[g] + hdtext_measure (r) + 8;
+		if (g == 0 && nrow < 32) row_y[nrow++] = r->y;
+	}
+	/* each value at its column's x; a second on a row under the row above's */
+	for (i = 0; i < n0; i++) {
+		struct hdtext_run *r = &runs[i], *lab = NULL, *above = NULL;
+		float lim = right - 4;
+		if (!on_sheet (r, right) || (r->kind & HDT_K_COLON) || is_head (r)) continue;
+		for (k = 0; k < n0; k++)
+			if (runs[k].y == r->y && (runs[k].kind & HDT_K_COLON) && on_sheet (&runs[k], right) &&
+			    runs[k].x0 < r->x0 && (!lab || runs[k].x0 > lab->x0))
+				lab = &runs[k];
+		for (g = 0; lab && g < ng && abs (gx[g] - lab->x0) > 3; g++)
+			;
+		if (!lab || g == ng) continue;
+		for (k = 0; k < ng; k++)
+			if (lx[k] > lx[g] && lx[k] - 4 < lim) lim = lx[k] - 4;
+		r->align = HDT_LEFT;
+		r->ax = vx[g];
+		r->maxw = lim - vx[g];
+		if (i == 0 || runs[i - 1].ax != vx[g] || runs[i - 1].y != r->y) continue;
+		for (k = 0; k < n0; k++)
+			if ((runs[k].kind & HDT_K_COLON) && on_sheet (&runs[k], right) && abs (gx[g] - runs[k].x0) <= 3 &&
+			    runs[k].y < r->y && (!above || runs[k].y > above->y))
+				above = &runs[k];
+		if (!above) continue;
+		r->role = HDT_DESC;
+		ty[i] = above->y + SUB_DY;
+		if (r->y < shift_y) shift_y = r->y;
+	}
+	/* under a value's second line the sheet moves down */
+	for (i = 0; i < n0; i++)
+		if (on_sheet (&runs[i], right) && runs[i].role != HDT_DESC && runs[i].y >= shift_y) ty[i] += SUB_DY;
+	/* rows the game put at the foot, under a list: up under a heading of
+	 * ours, the list after them */
+	for (k = 1; k < nrow && !foot; k++)
+		if (row_y[k] - row_y[k - 1] > 3 * ROW_DY) {
+			top_end = row_y[k - 1] + (shift_y <= row_y[k - 1] ? SUB_DY : 0);
+			foot = k;
+		}
+	if (foot) {
+		float yh = top_end + 14, ylist = yh + ROW_DY * (nrow - foot + 1);
+		for (i = 0; i < n0; i++)
+			if (on_sheet (&runs[i], right) && runs[i].y > row_y[foot - 1] && runs[i].y < row_y[foot] &&
+			    runs[i].y < list0)
+				list0 = runs[i].y;
+		for (i = 0; i < n0; i++) {
+			if (!on_sheet (&runs[i], right)) continue;
+			for (k = foot; k < nrow && row_y[k] != runs[i].y; k++)
+				;
+			if (k < nrow) ty[i] = yh + ROW_DY * (k - foot + 1);
+			else if (runs[i].y >= list0 && runs[i].y < row_y[foot]) {
+				/* the list: on the heading's pitch; an item without a
+				 * value is a list item, a step in, not a row's name */
+				ty[i] = ylist + runs[i].y - list0;
+				if (!(runs[i].kind & HDT_K_COLON) && !is_head (&runs[i])) {
+					runs[i].role = HDT_BODY;
+					runs[i].align = HDT_LEFT;
+					runs[i].ax = (runs[i].x0 <= 10 ? SHEET_X : runs[i].x0) + LIST_DX;
+					runs[i].maxw = right - 4 - runs[i].ax;
+				}
+			}
+		}
+		sheet_text ("Fitted equipment", SHEET_X, yh, right, 1);
+	}
+	/* in place; the left column clear of the glass's edge */
+	for (i = 0; i < n0; i++) {
+		struct hdtext_run *r = &runs[i];
+		if (!on_sheet (r, right)) continue;
+		r->dy = ty[i] - r->y;
+		if (r->x0 <= 4 && !r->ax) {
+			r->align = HDT_LEFT;
+			r->ax = SHEET_X;
+		}
+	}
+	/* a heading with nothing in its column under it, to the next */
+	for (i = 0; i < n0; i++) {
+		const struct hdtext_run *r = &runs[i];
+		float next = 166;
+		int below = 0;
+		if (!on_sheet (r, right) || r->col == BG || !is_head (r)) continue;
+		for (k = 0; k < n0; k++) {
+			const struct hdtext_run *q = &runs[k];
+			if (k == i || !on_sheet (q, right) || q->y <= r->y || q->x0 < r->x0 - 6 || q->x0 >= r->x0 + 100)
+				continue;
+			if (is_head (q)) {
+				if (q->y < next) next = q->y;
+			} else if (q->y < next)
+				below = 1;
+		}
+		if (!below) sheet_text ("None on record", r->ax ? r->ax : r->ink0, r->y + r->dy + ROW_DY, right, 0);
+	}
+}
+
+/* The ship's status pages (F3): one glass sheet, the 3D view on a card */
 static void layout_f3 (unsigned char *out)
 {
-	int i, j, k, view = -1, top_head = 1000;
+	int i, j, k, n0, view = -1, top_head = 1000;
 	float right = 319;
 	struct elem *e;
 
@@ -2646,10 +2861,14 @@ static void layout_f3 (unsigned char *out)
 		if (fr_ca[i][0] >= 180 && fr_ca[i][1] <= 4 && fr_ca[i][2] >= 300) view = i;
 	if (view >= 0) {
 		right = fr_ca[view][0] - 2.5f;
-		add (E_FRAME, L_OVER, fr_ca[view][0], fr_ca[view][1], fr_ca[view][2] + 1, fr_ca[view][3] + 1);
+		/* the view on a card of its own, over the cargo panel's */
+		e = add (E_GLASS, L_BACK, right + 3, 0.5f, 318, fr_ca[view][3] + 1);
+		e->flags = F_ALL | F_VIEW;
 	}
 	split_colons (right);
 	if (view >= 0) split_counts (right);
+	n0 = n_runs;
+	f3_sheet (right);
 	e = add (E_GLASS, L_BACK, 1, 0.5f, right, 166.5f);
 	e->flags = F_ALL;
 	e->a = 14;
@@ -2667,7 +2886,7 @@ static void layout_f3 (unsigned char *out)
 				e->flags = F_ALL;
 				break;
 			}
-	for (i = 0; i < n_runs; i++) {
+	for (i = 0; i < n0; i++) {
 		struct hdtext_run *r = &runs[i];
 		if (!ON_PAGE (r)) continue;
 		if (r->col == BG && r->shadow && r->x0 < right) {
@@ -2698,19 +2917,31 @@ static void layout_f3 (unsigned char *out)
 			r->align = HDT_LEFT;
 			r->ax = 8;
 			r->maxw = right - 12;
-		} else if ((r->kind & HDT_K_CAPS) && !(r->kind & HDT_K_NUMERIC)) {
+		} else if (is_head (r)) {
 			style (r, HDT_SECTION, C_ACCENT);
 			if (r->y > top_head) {
 				for (k = 0; k < i; k++)
 					if (runs[k].y == r->y && (runs[k].kind & HDT_K_CAPS) && runs[k].x0 < right) break;
-				if (k == i) rule (L_BACK, 5, right - 4, r->y - 3.5f, 0xffffff, 0.10f);
+				if (k == i) rule (L_BACK, 5, right - 4, r->y + r->dy - 3.5f, 0xffffff, 0.10f);
 			}
-		} else if (r->kind & HDT_K_COLON)
+		} else if ((r->kind & HDT_K_COLON) || (r->role == HDT_LABEL && r->x0 < right))
 			style (r, HDT_LABEL, C_TEXT2);
-		else
-			/* a value on the sheet reads as its neighbours do: the
-			 * condensed figures are the panel's */
+		else if (r->role == HDT_BODY && r->x0 < right) {
 			style (r, HDT_BODY, C_TEXT);
+			quad (L_BACK, r->ax - LIST_DX + 0.5f, r->y + r->dy + 3.25f, r->ax - 2.5f, r->y + r->dy + 3.75f,
+			      C_ACCENT, 0.9f);
+		} else
+			/* a value on the sheet reads as its neighbours do: the
+			 * condensed figures are the panel's; a second line is quieter */
+			style (r, r->role == HDT_DESC ? HDT_DESC : HDT_BODY, r->role == HDT_DESC ? C_TEXT2 : C_TEXT);
+	}
+	for (i = 0; i < n_sheet_add; i++) {
+		struct hdtext_run *r = &runs[sheet_add[i]];
+		if (!sheet_head[i]) style (r, HDT_BODY, C_TEXT2);
+		else {
+			style (r, HDT_SECTION, C_ACCENT);
+			rule (L_BACK, 5, right - 4, r->y - 3.5f, 0xffffff, 0.10f);
+		}
 	}
 	if (view >= 0) f3_panel (right);
 	for (i = 0; i < n_btn; i++) {
@@ -2819,6 +3050,242 @@ static void layout_prefs (const unsigned int *pal)
 	}
 }
 
+/*
+ * Docked, with the 3D view up (the hangar, or the ship from outside): the
+ * console says docked and nothing is written over the view but the speed
+ * line at its foot.  Station services are a click away on the console
+ * (its comms icon), and nothing on the view said so.  Here the view
+ * carries the station's home: at its top left a card with the station's
+ * name (the speed line gives it: what the ship is relative to, set again
+ * from that line's glyphs, which stays as it was), a click on it a click
+ * on that icon, and under it a card for each of the services (market,
+ * shipyard, bulletin board, launch), in the services page's style, each
+ * opening the services page and then the service on it (svc_chain).
+ * The view itself is the hangar, lit (gl.c).
+ */
+#define COMMS_X		57	/* the console's comms icon: station services when docked */
+#define COMMS_Y		193
+
+/* The services' labels: the game's own words, found once in its memory by
+ * their letters' hash (read only; nothing of them is in this source), or
+ * taken from the services page when it is seen. */
+static const unsigned int svc_hash[] = { H_SVC_MARKET, H_SVC_SHIPYARD, H_SVC_BOARD, H_SVC_LAUNCH };
+#define N_SVC	(int) (sizeof (svc_hash) / sizeof (svc_hash[0]))
+static char svc_label[N_SVC][40];
+static short svc_tx[N_SVC], svc_ty[N_SVC];
+static unsigned int svc_at[N_SVC];	/* hdui_frame count when seen on the services page */
+static unsigned int ui_frames;		/* hdui_frame calls */
+
+extern signed char m68kram[];
+#define ST_MEM_TOP	0x110000
+
+static int svc_index (unsigned int h)
+{
+	int i;
+	for (i = 0; i < N_SVC; i++)
+		if (svc_hash[i] == h) return i;
+	return -1;
+}
+
+static void svc_find_labels (void)
+{
+	static int done;
+	const unsigned char *m = (const unsigned char *) m68kram;
+	int i, k, left = 0;
+
+	if (done) return;
+	done = 1;
+	for (i = 0; i < N_SVC; i++)
+		if (!svc_label[i][0]) left++;
+	for (i = 1; i < ST_MEM_TOP && left; i++) {
+		unsigned int h = 2166136261u;
+		if (m[i] < 0x20 || m[i] > 0x7e || (m[i - 1] >= 0x20 && m[i - 1] <= 0x7e)) continue;
+		for (k = i; k < ST_MEM_TOP && k - i < 39 && m[k] >= 0x20 && m[k] <= 0x7e; k++) {
+			int c = m[k], j;
+			if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))) continue;
+			h = (h ^ (unsigned) (c >= 'A' && c <= 'Z' ? c + 32 : c)) * 16777619u;
+			/* the whole string, not a prefix of a longer one */
+			if (k + 1 < ST_MEM_TOP && m[k + 1] >= 0x20 && m[k + 1] <= 0x7e) continue;
+			j = svc_index (h);
+			if (j >= 0 && !svc_label[j][0]) {
+				memcpy (svc_label[j], m + i, k + 1 - i);
+				svc_label[j][k + 1 - i] = 0;
+				left--;
+			}
+		}
+	}
+}
+
+/* a service's card on the services page: its label, and where it is */
+static void svc_seen (const struct hdtext_run *lab, int tx, int ty)
+{
+	int i = svc_index (lab->hash), n, k, o = 0;
+	char c[40];
+	unsigned char sp[40];
+
+	if (i < 0) return;
+	svc_tx[i] = tx;
+	svc_ty[i] = ty;
+	svc_at[i] = ui_frames;
+	if (svc_label[i][0]) return;
+	n = hdtext_chars (lab, c, sp, sizeof (c));
+	for (k = 0; k < n && o < (int) sizeof (svc_label[i]) - 2; k++) {
+		if (k && sp[k]) svc_label[i][o++] = ' ';
+		svc_label[i][o++] = c[k];
+	}
+	svc_label[i][o] = 0;
+}
+
+static int docked_view (void)
+{
+	int i, docked = 0;
+
+	if (n_btn) return 0;
+	/* a page's 3D view; not a comms face down in the console */
+	for (i = 0; i < fr_ca_n; i++)
+		if (fr_ca[i][1] < CTRL_Y - 2) return 0;
+	for (i = 0; i < n_runs; i++) {
+		const struct hdtext_run *r = &runs[i];
+		if (r->hash == H_DOCKED && r->y >= CTRL_Y - 2 && r->y <= CTRL_Y + 4 && r->x0 >= 240)
+			docked = 1;
+		else if (ON_PAGE (r) && r->y < FOOT_Y)
+			return 0;
+	}
+	return docked;
+}
+
+/* a card on the view: icon, label (run i), chevron; a click goes to the
+ * comms icon, and then to the service chain names */
+static void dock_card (float x0, float y0, float x1, float y1, int icon, int i, float scale, unsigned int chain)
+{
+	struct hdtext_run *r = &runs[i];
+	struct elem *e;
+	int h;
+
+	style (r, HDT_LABEL, C_TEXT);
+	r->scale = scale;
+	r->align = HDT_LEFT;
+	r->ax = x0 + 21;
+	r->maxw = x1 - 12 - r->ax;
+	centre_y (r, (y0 + y1) / 2);
+	e = add (E_CARD, L_UNDER, x0, y0, x1, y1);
+	e->icon = icon;
+	e->flags = F_CHEVRON;
+	e->a = x0 + 10;
+	e->b = (y0 + y1) / 2;
+	e->c = 72;
+	h = add_hot (e->x0, e->y0, e->x1, e->y1, COMMS_X, COMMS_Y, 1);
+	e->hot = h;
+	if (h >= 0) hot[h].chain = chain;
+}
+
+static void layout_dock (void)
+{
+	char c[96], name[100];
+	unsigned char sp[96];
+	int i, k, n, o = 0, ni = -1, li[N_SVC], col = 0;
+	float x0 = 4, y0 = 4, y1 = 22, w, x1, wmax;
+
+	/* the speed line's last part: after its colon, the name of what the ship is relative to */
+	for (i = n_runs - 1; i >= 0; i--) {
+		struct hdtext_run *r = &runs[i];
+		if (!ON_PAGE (r) || r->y < FOOT_Y || r->x0 < 160) continue;
+		n = hdtext_chars (r, c, sp, sizeof (c));
+		for (k = 0; k < n - 1 && c[k] != ':'; k++)
+			;
+		if (k >= n - 1) return;
+		for (k++; k < n && o < (int) sizeof (name) - 2; k++) {
+			if (o && sp[k]) name[o++] = ' ';
+			name[o++] = c[k];
+		}
+		name[o] = 0;
+		col = r->col;
+		break;
+	}
+	if (!o) return;
+	svc_find_labels ();
+	ni = hdtext_add (name, 0, 2, col);
+	for (k = 0; k < N_SVC; k++)
+		li[k] = svc_label[k][0] ? hdtext_add (svc_label[k], 0, 30 + 23 * k, col) : -1;
+	n_runs = hdtext_runs (&runs);
+	if (ni < 0) return;
+
+	/* one width for the column: the widest label's */
+	runs[ni].role = HDT_LABEL;
+	runs[ni].scale = 1.3f;
+	wmax = hdtext_measure (&runs[ni]);
+	for (k = 0; k < N_SVC; k++)
+		if (li[k] >= 0) {
+			runs[li[k]].role = HDT_LABEL;
+			runs[li[k]].upper = 1;
+			runs[li[k]].scale = 1;
+			w = hdtext_measure (&runs[li[k]]);
+			if (w > wmax) wmax = w;
+		}
+	x1 = x0 + 21 + wmax + 14;
+	if (x1 < x0 + 92) x1 = x0 + 92;
+	if (x1 > x0 + 150) x1 = x0 + 150;
+
+	dock_card (x0, y0, x1, y1, I_STATION, ni, 1.3f, 0);
+	for (k = 0, y0 = 27; k < N_SVC; k++) {
+		if (li[k] < 0) continue;
+		dock_card (x0, y0, x1, y0 + 19, card_icon (svc_hash[k]), li[k], 1, svc_hash[k]);
+		runs[li[k]].upper = 1;
+		y0 += 22;
+	}
+}
+
+/*
+ * A service's card on the view: the click (on the comms icon) opens the
+ * services page; once that page has stood for a frame or two with the
+ * service's card on it, a click on that card is made for the player, a
+ * press and a release.  Only after the player's own click, never in an
+ * oracle replay (hdui_mouse is not called there), and given up after a
+ * few seconds or on any click of the player's.
+ */
+static unsigned int svc_chain;		/* the service to open, 0 none */
+static unsigned int chain_start;	/* ui_frames when it was asked for */
+
+static int svc_chain_step (short *ax, short *ay, int buttons)
+{
+	static int phase, polls;
+	static unsigned int phase_at;
+	int i = svc_index (svc_chain);
+
+	if (!svc_chain || i < 0) return buttons;
+	if ((buttons & 2) && !phase) {
+		/* the player is clicking: theirs */
+		svc_chain = 0;
+		return buttons;
+	}
+	if (!phase) {
+		if (ui_frames - chain_start > 240) {
+			svc_chain = 0;
+			return buttons;
+		}
+		if (page != P_STATION || stable < 2 || svc_at[i] != ui_frames) return buttons;
+		phase = 1;
+		phase_at = ui_frames;
+		polls = 0;
+	}
+	*ax = svc_tx[i];
+	*ay = svc_ty[i];
+	polls++;
+	if (phase == 1) {
+		if (ui_frames - phase_at >= 3 && polls >= 4) {
+			phase = 2;
+			phase_at = ui_frames;
+			polls = 0;
+		}
+		return buttons | 2;
+	}
+	if (ui_frames - phase_at >= 3 && polls >= 4) {
+		phase = 0;
+		svc_chain = 0;
+	}
+	return buttons & ~2;
+}
+
 /* The start menu: each choice a card */
 static void layout_start (void)
 {
@@ -2908,10 +3375,13 @@ void hdui_frame (const unsigned char *raster, unsigned char *out,
 		dump (raster, out, pal, ctrl_pal);
 		return;
 	}
+	ui_frames++;
 	n_runs = hdtext_runs (&runs);
 	find_buttons (raster);
 	page = classify ();
+	if (page == P_NONE && docked_view ()) page = P_DOCK;
 	switch (page) {
+	case P_DOCK: layout_dock (); if (!n_el) page = P_NONE; break;
 	case P_STATION: layout_station (raster, out); break;
 	case P_F3: layout_f3 (out); break;
 	case P_PREFS: layout_prefs (pal); break;
@@ -2936,10 +3406,11 @@ void hdui_frame (const unsigned char *raster, unsigned char *out,
 	dump (raster, out, pal, ctrl_pal);
 }
 
-void hdui_mouse (short *ax, short *ay, int buttons)
+int hdui_mouse (short *ax, short *ay, int buttons)
 {
 	static int latch = -1, was_down;
 	static short tx, ty;
+	static unsigned int chain;
 	int down = (buttons & 2) != 0, x = *ax, y = *ay, i;
 
 	ptr_x = x < 0 ? 0 : x >= ST_W ? ST_W - 1 : x;
@@ -2948,7 +3419,8 @@ void hdui_mouse (short *ax, short *ay, int buttons)
 	if (!layer_on ()) {
 		latch = -1;
 		was_down = down;
-		return;
+		svc_chain = 0;
+		return buttons;
 	}
 	if (down && !was_down) {
 		latch = -1;
@@ -2959,15 +3431,26 @@ void hdui_mouse (short *ax, short *ay, int buttons)
 					latch = i;
 					tx = live[i].tx;
 					ty = live[i].ty;
+					chain = live[i].chain;
 					break;
 				}
 	}
+	was_down = down;
 	if (latch >= 0) {
 		*ax = tx;
 		*ay = ty;
-		if (!down) latch = -1;
+		if (!down) {
+			latch = -1;
+			/* released: the service it names, once the page is up */
+			if (chain) {
+				svc_chain = chain;
+				chain_start = ui_frames;
+			}
+			chain = 0;
+		}
+		return buttons;
 	}
-	was_down = down;
+	return svc_chain_step (ax, ay, buttons);
 }
 
 static int backdrop_page (void)
@@ -3002,7 +3485,9 @@ void hdui_draw_under (const unsigned int *pal, const unsigned int *ctrl_pal)
 	if (backdrop_page () && back_drawn != page_key) {
 		/* a new page: its backdrop was not drawn under this frame */
 		draw_base (1);
+		skip_view = 1;
 		draw_elems (L_BACK);
+		skip_view = 0;
 	}
 	draw_elems (L_UNDER);
 	end_2d ();

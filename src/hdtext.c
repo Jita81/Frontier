@@ -756,6 +756,38 @@ int hdtext_glyph_x (const struct hdtext_run *r, int k)
 	return shown[r->first + k].x;
 }
 
+int hdtext_add (const char *s, int x, int y, int col)
+{
+	const unsigned char *font = runs_font;
+	int space, first = n_shown, i;
+
+	if (!font || !s || n_runs >= MAX_RUNS) return -1;
+	space = font[9] > 0 ? font[9] : 4;
+	for (; *s; s++) {
+		int c = (unsigned char) *s;
+		if (c == ' ') {
+			x += space;
+			continue;
+		}
+		if (c < 0x21 || c > 0x7e || n_shown >= MAX_ACTIVE) continue;
+		shown[n_shown].x = x;
+		shown[n_shown].y = y;
+		shown[n_shown].chr = c - 0x20;
+		shown[n_shown].col = col;
+		shown[n_shown].shadow = 0;
+		shown[n_shown].name = 0;
+		shown[n_shown].dx = 0;
+		x += font[(c - 0x20) * 10 + 9];
+		n_shown++;
+	}
+	if (n_shown == first) return -1;
+	i = n_runs++;
+	fill_run (&runs[i], font, first, n_shown);
+	auto_align[i] = HDT_LEFT;
+	auto_ax[i] = runs[i].ink0;
+	return i;
+}
+
 int hdtext_split (int i, int k)
 {
 	int first, n, tail;

@@ -93,6 +93,26 @@ static unsigned int obj_ptr (int idx)
 	return sane (p) ? p : 0;
 }
 
+/* the class any port falls back to: a body outside the table, or one
+ * with no picture of its own (a star, a surface port on a giant) */
+#define DEFAULT_CLASS "airless"
+
+/* the look of a body, by the model the game draws it with */
+static const char *body_class (int model)
+{
+	switch (model) {
+	case 0x7a: case 0x7c: case 0x80: return "airless";	/* bare rock, no air ($7c: asteroids) */
+	case 0x7e: case 0x82: return "rocky";	/* thin dusty air, desert ($82: hot rock, Sirius) */
+	case 0x84: return "corrosive";		/* thick hot or ammonia murk */
+	case 0x86: return "methane";		/* cold orange smog */
+	case 0x88: case 0x8a: case 0x90: return "terran";	/* oxygen, oceans, cloud ($90: Earth) */
+	case 0x8c: return "ice";		/* oxygen but frozen */
+	case 0x8e: return "ocean";		/* corrosive water world */
+	case 0x92: case 0x94: case 0x96: return "gasgiant";
+	}
+	return is_star (model) ? "star" : DEFAULT_CLASS;
+}
+
 static void locate (struct where *w)
 {
 	unsigned int port, p;
