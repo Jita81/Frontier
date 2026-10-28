@@ -183,6 +183,10 @@ void hdtext_glyph (const unsigned char *font, int x, int y, int col, int chr,
 	s[0].str = str_id;
 }
 
+/* the keys under the second display: a page's keys blitted there cut the
+ * descenders of the title above them, which still stands */
+#define UNDER_KEYS(x, y)	((y) >= 186 && (x) >= 240)
+
 /* Every pixel of the glyph is in its colour, and something in its box is
  * not: a block of solid colour is not a glyph.  A pixel under a map name
  * drawn this frame is explained.  lenient (drawn just now): up to half of
@@ -208,6 +212,7 @@ static int on_screen (const unsigned char *g, const unsigned char *r, int x, int
 		for (c = 0; c < 8 && x + c < ST_W; c++) {
 			int i = (y + row) * ST_W + x + c, p = r[i];
 			if (ink (g, c, row)) {
+				if (p != col && UNDER_KEYS (x + c, y + row)) continue;
 				if (p == col) pixels++;
 				else if (over[i]) continue;
 				else if (!lenient || p == bg) return 0;
@@ -243,7 +248,7 @@ static void erase (const unsigned char *g, const unsigned char *r, unsigned char
 	for (yy = y; yy <= y + 8 && yy < ST_H; yy++) {
 		for (xx = x; xx <= x + 8 && xx < ST_W; xx++) {
 			int i = yy * ST_W + xx;
-			if (ink (g, xx - x, yy - y) ||
+			if ((ink (g, xx - x, yy - y) && (r[i] == col || !UNDER_KEYS (xx, yy))) ||
 			    (shadow && r[i] == 0 && ink (g, xx - x - 1, yy - y - 1)))
 				out[i] = best;
 		}
