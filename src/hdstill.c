@@ -234,8 +234,8 @@ static unsigned frame_no;
 #define GAUGE_H	10
 #define RIM(y) (233 + ((y) - 169) * 1.5f - 1.6f)	/* inside the bay's slanted edge */
 #define MSL(y) (224.6f + ((y) - 174.7f) * 1.5f)		/* right of the right missile */
-#define PL_Y1	169.4f	/* the plate: speed from PL_Y1, heat from PL_Y2, to PL_Y3 */
-#define PL_Y2	172.6f
+#define PL_Y1	169.0f	/* the plate: speed from PL_Y1, heat from PL_Y2, to PL_Y3 */
+#define PL_Y2	172.2f
 #define PL_Y3	177.0f
 static struct gauges {		/* as shown: the texture is redrawn when it changes */
 	unsigned char bar[3];	/* fuel, laser and hull temperature, 0..63 */
@@ -1995,7 +1995,7 @@ static void plate_row (float x0, float x1, float base, float cv, const char *lab
 	const char *u = strchr (val, ' ');
 	char v[24];
 	const char *s[3] = { label, v, u ? u + 1 : "" };
-	float k = SY / (CTFontGetCapHeight (f) / 100), sz[3] = { 1.5f * k, cv * k, 0.7f * cv * k };
+	float k = SY / (CTFontGetCapHeight (f) / 100), sz[3] = { 1.6f * k, cv * k, 0.7f * cv * k };
 	float w[3], gap = 1.2f * SX, x = X (x1);
 	CGMutablePathRef p;
 	int i;
@@ -2067,8 +2067,8 @@ static void gauges_paint (void)
 	fill_path (p, 0x101823, 0.82f);
 	stroke_inside (p, 0.8f * U, 0x8fd8ff, 0.18f);
 	CGPathRelease (p);
-	plate_row (212.6f, RIM (169.8f) - 0.4f, PL_Y2 - 0.5f, 2.3f, "SPEED", gs.speed, 0xe8f0f8);
-	plate_row (MSL (PL_Y3) - 0.3f, RIM (174.2f) - 0.4f, PL_Y3 - 0.5f, 2.3f, "HEAT", gs.heat, gs.warn[2] ? 0xff4b3e : 0xe8f0f8);
+	plate_row (212.6f, RIM (169.8f) - 0.4f, PL_Y2 - 0.4f, 2.7f, "SPEED", gs.speed, 0xe8f0f8);
+	plate_row (MSL (PL_Y3) - 0.3f, RIM (174.2f) - 0.4f, PL_Y3 - 0.5f, 2.7f, "HEAT", gs.heat, gs.warn[2] ? 0xff4b3e : 0xe8f0f8);
 }
 
 #endif /* __APPLE__ */

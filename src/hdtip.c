@@ -445,7 +445,7 @@ static int find (int x, int y, struct tip *t)
 	}
 	/* the HD gauges' plate beside them */
 	if ((r[0] = hdstill_gauge_at (x, y))) {
-		t->x0 = 212, t->y0 = 169, t->x1 = 243, t->y1 = 177;
+		t->x0 = 212, t->y0 = 168, t->x1 = 243, t->y1 = 177;
 		if (r[0] == 1) {
 			t->id = T_PLATE_SPEED;
 			SET (title, "Speed");
