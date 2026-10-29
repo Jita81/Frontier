@@ -37,8 +37,9 @@ extern const struct HullProfile hull_profiles[HP_N];
  * word (object+90) and bits 16 and 17 the model table that word indexes:
  * none for the game's own, HULL_TAB_INTRO for the intro's (its title,
  * scenes and the menu's backdrop: its words name other models than the
- * game's), HULL_TAB_OTHER for any other. HULL_KEY_MODEL is the table and
- * word together, which is what names one model. Which profile style 4
+ * game's), HULL_TAB_OTHER for any other; bit 18 the HULL_TAB_SCENE mark
+ * below. HULL_KEY_MODEL is the table, mark and word together, which is
+ * what names one model. Which profile style 4
  * gives a model (by the word's low byte, as that style always read it). */
 #define HULL_KEY_OK(k)	((unsigned int) (k) >> 31)
 #define HULL_TAB_INTRO	0x10000u
