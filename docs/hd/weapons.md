@@ -93,8 +93,9 @@ Which end is the tail, in order:
    the nine 1.15 words at A6-36 (as `procfx_sky_put` does; read only). The
    model's nose is on its +z axis (measured: the body's long axis is the
    model z axis within about 7 degrees, and +z leads the flight). The tail is the
-   end on -z. This holds through camera turns and view changes, so the tail
-   never flips while the body is drawn.
+   end on -z. This holds through camera turns and view changes while the
+   rotation is read. On a fallback frame (2 or 3 below) the tail can flip
+   for that one frame.
 2. With no rotation for it (more than four missiles put in a frame, or the
    frame unreadable), the end nearer its smoke.
 3. With no smoke near it either, the end farther from the eye.
