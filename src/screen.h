@@ -30,6 +30,7 @@ extern int flat_hulls;
 extern int flat_sky;
 extern int flat_planets;
 extern int flat_stars;
+extern int flat_rings;
 extern int pixel_text;
 extern int pixel_art;
 extern int pixel_faces;
