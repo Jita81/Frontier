@@ -252,6 +252,43 @@ close detail), the corona and the rings are built.
   front of a star (the game's draw order should cover it); frame time; a
   star near enough to take the sphere path (it would get no corona).
 
+## Lights
+
+The game marks stations, docking bays and landing pads with blinking
+lights: a small flat disc and a thin cross (`Nu_PutTwinklyCircle` /
+`Nu_DrawTwinklyCircle`, the same primitive the stars use).  The HD layer
+adds a soft additive halo round each one.
+
+- **What gets one.**  Every twinkly whose object is not a star.  The put
+  stores one more long after the corona's: 1 when `hull_model_key()`
+  names a model and `is_star()` is false for its word, else 0.  Seen
+  with a census over the dock, landed, orbit and traffic tours: models
+  `$20` (a pad's lights), `$2c` (the bay), `$48` (intro table), `$50` and
+  `$54` (a station in flight) get a halo; `$9e` (a star) does not, and
+  keeps its corona.
+- **Size.**  Disc radius `r` is the game's (`0.002 * d2 * z`, a fixed
+  size on screen).  The halo reaches `r + 2r` (3x the disc), held between
+  a floor of `1.5 * px_scale()` pixels (about 4 px at 1600x1200, so a
+  light whose disc the game has shrunk to nothing still glints) and a
+  ceiling of 2% of the viewport height.  Pixels per eye unit come from
+  the projection matrix and the viewport, so the wide frustum is right.
+- **Intensity.**  Full to 2 km, then `sqrt(2 km / d)`: 0.6 at 5.5 km,
+  0.2 at 58 km.  A far station reads as a sparkle of points, not a fog
+  over the hull; a near one is bright enough to see against it.  Two
+  rings in `disc_strips`: the colour out to the edge (alpha 0.6), and a
+  paler core, half white, to 0.45 of it (alpha 0.8); additive blend.
+- **Occlusion.**  No depth test, as everything in the 3D view: the view
+  is painted far to near, the halo is drawn in the disc's own place in
+  that order, so a hull painted later hides the halo as it hides the
+  disc.  A light in its off phase is not drawn by the game, so it has no
+  halo.
+- **The cross.**  Unchanged (same lines, same width, no smoothing).
+- **Switch.**  `--flat-lights` writes 0 for every light, so the draw
+  makes exactly the base's GL calls.  `--old-renderer` never puts a
+  twinkly through this path and is unaffected.
+- **Not checked by capture.**  A pad's lights at night (the landed tour
+  is by day and shows none), and a star in view (left to the put flag).
+
 ## Prototype notes: the limb glow (dropped)
 
 Dropped, superseded by #38.  The planets layer draws the lit limb rim
@@ -259,3 +296,39 @@ Dropped, superseded by #38.  The planets layer draws the lit limb rim
 (`draw_planet_halo`), both under `--flat-planets`.  The separate glow and
 its `--flat-limb` switch were removed, so planet drawing is the planets
 layer's code path unchanged.
+
+## Engine exhaust
+
+Host-side only: `Nu_PutTeardrop` / `Nu_DrawTeardrop` in `src/gl.c`, no
+shader, no new file.
+
+- **What is drawn.**  A ship's plume is two translucent fills of the
+  game's own Bezier teardrop (same control points, same 40 steps):
+  - Halo: the game's colour and outline, alpha 0.8 from a point on the
+    axis out to 85% of the way to the rim, then 0 at the rim (normal
+    blend), so the body keeps the game's width and only the edge is soft.
+  - Core: the outline scaled about the engine end, half as wide and 80% as
+    long, in the game's colour mixed 70% toward white, alpha 0.9,
+    additive.  It lies inside the halo, so nothing is drawn outside the
+    game's silhouette.
+  - Flicker: the core's length moves by up to +-8%, from a byte hashed
+    from the object's record and the game clock (A6+524 >> 12).  The same
+    frame draws the same in every run; it stands still while paused.  No
+    game RNG, no wall clock.
+  - Colour, blend, current and lighting state are pushed and popped.
+- **Which plumes.**  Decided at put time and carried as one extra znode
+  long: `hull_model_key()` must name the game's own table and a model word
+  from `$12` to `$4e` (above the missiles, below stations and ports).
+  Chimney flares and the intro's plumes keep the game's flat fill.  The
+  range is inferred from the model tables; only the player's own hull has
+  been seen to take it.
+- **Small plumes.**  The engine draws a plume whose projected radius is 8
+  or less as a 3D line (fe2.s, the branch before the `$70` hostcall), so it
+  never reaches the teardrop and keeps the game's look.
+- **Switches.**  `--flat-exhaust` puts a 0 and the draw takes the game's
+  path: frames byte-identical to the base build.  `--old-renderer` never
+  puts a teardrop, so it is unaffected.
+- **Not checked.**  Another ship's plume; an in-game chimney flare (the
+  intro's flares were checked); missiles.  The plume code does not test
+  `--flat-fx`, `--classic-ui` or `--pixel-art`; whether they should also
+  turn it off is open.
