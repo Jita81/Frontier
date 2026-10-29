@@ -254,7 +254,7 @@ repository.
 
 | Switch | Effect |
 |---|---|
-| `--classic-ui` | the game's own flat pages, exactly the old picture (hdtext keeps its old per-glyph typesetting); no docked backdrop either |
+| `--classic-ui` | the game's own flat pages, exactly the old picture (hdtext keeps its old per-glyph typesetting); no docked backdrop and no HD gauges either; the F12 Controls page still opens (drawn by the host, over either look) |
 | `FE2_HD_BACKDROP=0` | the restyled pages over the dark base, without the docked picture or the frost |
 | `--pixel-text` | the original bitmap font and pages; no hdtext, no hdui |
 | `FE2_HDUI_LOG=1` | each new page's boxes (B), runs (R, hashes and places only), clear areas (C) and hot regions (H, with targets) on stderr |
@@ -289,6 +289,34 @@ The other HD streams have their own switches: `--pixel-art` (stills) and
 | galaxy map (F2) | redrawn in the GL scene (gl.c, `galmap`): a lit-centre sky gradient for the flat fill, thin smooth grid lines, each star a soft glow in its class's colour at its own size, the selected star and where you are as rings, nebulae as soft clouds; the whole-galaxy picture (icon 10) blurred from its dithered greys into a density coloured from deep blue-violet to warm white, with names taken out cleanly and Sol's marker a smooth ring. Names that overlap or are crossed by the grid are still found (hdtext_map); the star names gl.c draws each frame are taken as drawn and kept for that frame only, so none is left behind as the map scrolls or turns. Map names carry a dark halo; where two would overlap, the one nearer the selected star (else the middle) keeps its place and the other moves a line down or up, never into the console, or is left out; a name below the map's edge is left out. Where you are, its label (the game's own stroke text) is drawn light grey with a dark halo, in the weight of the map names. System info page, system map and hyperspace untouched; `--classic-ui` keeps all of it as it was |
 | ship view, external views | 3D only; nothing to restyle. The speed and target readouts over the view are HD text |
 | any page not listed | left alone (P_NONE): original layout, HD text |
+
+## Damage feedback (hddamage)
+
+`src/hddamage.c`, one call from `draw_control_panel` (and a texture drop in
+`change_vidmode`). It reads ST memory and writes none of it.
+
+- **What it reads.** The player's ship object, by the long at offset 674
+  from `L5eb6_a6_base` (fe2.s:302); in it the word at 180 (shields now),
+  182 (shields full, 0 with no generator) and 184 (hull left). Hull is shown
+  in tenths of a percent with the arithmetic of the F3 condition figure
+  (`L7e142`, fe2.s:57334): hull x 250 / the type's hull mass. The killing
+  hit leaves the hull word wrapped round (`L44c96`, fe2.s:26968); that reads
+  as 0.
+- **Hit flash.** A drop in shields or hull since the last frame of the
+  same flight is a hit: a red glow at the edges of the view, never across
+  its middle, fading out within 0.4 s. The game keeps no attacker for the
+  player's hits, so the glow has no direction. Nothing moves the 3D view.
+- **Readout.** A small frosted card (`hdui_glass_px`, the hdui tokens) at
+  the top right of the 4:3 picture, clear of the console and its gauges:
+  shields (when fitted) and hull as figures and bars, the figure just hit
+  in red for 1.5 s. It shows while the shields are below full, for 6 s
+  after a hit, and while the hull is under 25%, when a HULL CRITICAL line
+  is added and the hull bar pulses red. Undamaged, it is not drawn at all.
+- **Where.** Only over a flight view: not docked, not on the F3, map or
+  file pages, not in the intro, not under the F12 Controls page.
+- **Switches.** Off with `--classic-ui`, `--pixel-art` and
+  `--old-renderer`. `FE2_DMG_LOG=1` writes each change of the figures to
+  stderr, to check them against the F3 page.
 
 ## Art and provenance
 

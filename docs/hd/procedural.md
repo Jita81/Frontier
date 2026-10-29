@@ -3,8 +3,24 @@
 The question: where can procedural generation make the port look better
 without building something big?  The answer: a few small shader layers.
 Each sits on a primitive the game already draws, and they all share one
-noise library.  Two are built: the Milky Way, switched off with
-`--flat-sky`, and the planets, switched off with `--flat-planets`.
+noise library.  Three are built:
+
+| Layer | Owner | What it draws | Off |
+|---|---|---|---|
+| 1, sky band | procfx sky | star clouds and dust lanes in the Milky Way polygons | `--flat-sky` |
+| 2, planets (#38) | procfx planet + gl.c | soft terminator, limb darkening, close detail, the lit limb rim (`uRim`) and the atmosphere halo (`draw_planet_halo`) | `--flat-planets` |
+| 3, star corona | procfx corona | soft light and streamers round a star's disc, by class, flight view only | `--flat-stars` |
+
+Down in the atmosphere, layer 2 keys its lit rim and its sun fall-off off
+altitude: their weight (`planet_aloft` in gl.c) ramps from 0 on the ground
+to 1 at 2% of the radius out, and stays 1 beyond.  Seen from space nothing
+changes.  Near the surface every distant patch of ground is seen edge on,
+like the limb, so the rim would wash it pale; there the game's own light
+zones shade the ground and the sky gradient is the halo's job.
+
+The game-over backdrop (#34) uses the same noise but is not a layer on a
+game primitive.  A separate limb glow was prototyped on gl/procgen-glow
+and dropped: layer 2 already owns the planet's rim and halo.
 
 ## What is already procedural
 
@@ -16,9 +32,11 @@ noise library.  Two are built: the Milky Way, switched off with
 - **The sky.**  The background object (model `$b0`, L44200_DrawBGStars)
   draws point stars and the Milky Way.  The Milky Way is a ring of flat
   polygons with Bezier outlines, within about 13 degrees of one great circle.
-- **Identity tables.**  `hdback.c` maps models to a star class
-  (`star_light`) and a body class (`body_class`).  This gives the hierarchy
-  every layer needs: star, then body, then detail.
+- **Identity tables.**  `procfx.c` maps models to a star class
+  (`star_light`, `is_star`); they moved there from `hdback.c` for the
+  corona, and hdback still picks its backdrops with them.  `hdback.c`
+  keeps the body class (`body_class`).  This gives the hierarchy every
+  layer needs: star, then body, then detail.
 
 ## How to add quality without bloat
 
@@ -50,16 +68,16 @@ noise library.  Two are built: the Milky Way, switched off with
 |---|---|---|
 | GLSL noise `pf_hash`, `pf_noise`, `pf_fbm` | ~25 | sky, corona, rings, close detail |
 | `procfx_program`: compile, link, fail closed | ~30 | every shader layer |
-| Object reader: record at a6-212, model at +90, rotation at a6-36 | ~20 | sky, rings, corona |
-| Glow quad on `billboard_begin` (gl.c) | ~25 new | corona, limb glow |
-| `star_light` and `body_class`, moved out of hdback.c | 0 new | corona, limb, backdrops |
+| Object reader `pf_record`, `pf_frame`: record at a6-212, model at +90, seed at +118, rotation at a6-36 | ~30 | sky, corona, rings |
+| Glow square on `billboard_begin` (gl.c `draw_corona`) | 19 | corona |
+| `star_light` and `is_star`, moved out of hdback.c | 0 new | corona, backdrops |
 
 ## Candidates, ranked by quality per line
 
 | # | Layer | Quality gain | Lines | Shared helpers | Risk |
 |---|---|---|---|---|---|
 | 1 | **Planets (built, with 6)** | Every textured planet gets a soft terminator, a darker limb, a lit rim and a soft halo from its own atmosphere layers. | 85 + 210 in gl.c | noise, program | Low |
-| 2 | Star corona by class | The star becomes a glowing sun with soft streamers, not a flat disc. | ~60 | noise, program, glow quad, object reader, star class | Low |
+| 2 | **Star corona by class (built, layer 3)** | The star becomes a glowing sun with soft streamers, not a flat disc. | ~95 + ~45 hooks | noise, program, glow square, object reader, star class | Low |
 | 3 | **Sky band (built)** | The flat blue cut-outs become soft star clouds with dust lanes, on every space screen. | 150 + 33 hooks | noise, program, object reader | Low |
 | 4 | Planet rings | Probably also a fix: rings look to be black discs today. They would become banded and see-through. | ~90 | noise, program, object reader | Medium |
 | 5 | Backdrop variation | Ports of the same class stop looking identical. | ~30 | identity tables | Low |
@@ -75,9 +93,9 @@ oracle is nil.  The risk column is about visuals and code.
   - Fade out while the near-atmosphere cones are drawn.
   - Verify: Lave from orbit.
   - Switch: `--flat-planets`, which covers the whole planets layer.
-- **Corona.**
-  - Hook: `Nu_DrawTwinklyCircle`, with a model check in `Nu_PutTwinklyCircle`.
-  - Streamers: `pf_fbm` over angle, seeded by the star.
+- **Corona.**  Built (layer 3); see its prototype notes.
+  - Hooks: a model check in `Nu_PutTwinklyCircle` and `Nu_PutCircle` (`put_star`); `Nu_DrawTwinklyCircle` and `Nu_DrawCircle` draw it (`draw_corona`).
+  - Streamers: `pf_fbm` over the direction away from the star on the sky, seeded by the star.
   - Verify: red, yellow and white stars.
   - Switch: `--flat-stars`.
 - **Rings.**
@@ -97,8 +115,8 @@ oracle is nil.  The risk column is about visuals and code.
   - Overlaps the parked planet-fidelity work, so do it last.
   - Switch: `--flat-planets`, as for the limb.
 
-**Recommendation.**  Ship the sky band, then limb glow, then corona.  With
-the shared blocks that is about 450 lines.  Do rings once a ringed save
+**Recommendation.**  The sky band, the planets (with their limb and
+close detail) and the corona are built.  Do rings once a ringed save
 exists.
 
 ## Left out, and why
@@ -193,3 +211,55 @@ exists.
   death camera.
 - **Switches.**  `--old-renderer`, `--classic-ui`, `--pixel-art` and
   `--pixel-text` keep the black stone with no card.
+
+## Prototype notes: the corona
+
+- **Size.**  About 95 lines of the layer in `procfx.c` (shader, tones,
+  put, begin and end), plus 26 lines of `star_light` and `is_star` moved
+  from `hdback.c` and about 30 of shared object reader (`pf_record`,
+  `pf_frame`, which the sky band now uses too).  Hooks: gl.c +37
+  (`put_star`, `draw_corona` with its square, four calls, one line in
+  `Nu_3DViewInit`), main.c +3, screen.h +1, soft.c +3/-2, procfx.h +26.
+- **Put.**  `Nu_PutTwinklyCircle` and `Nu_PutCircle` add the star after the
+  disc's data: the model word of the object being drawn, and its seed
+  (the long at +118).  The model check keeps it to stars (`$98`-`$ae`),
+  and only while the player's 3D view fills the screen (a6+42, as
+  hdtip.c).  Every other disc gets model 0 and draws nothing.
+- **Draw.**  `draw_corona` runs before the disc: a square of half side
+  `3r - 0.016z`; the second term keeps a far star's glow at a fixed size
+  on screen, as far as the game's twinkle reaches.  The game's disc and
+  twinkle are drawn over it, so the disc stays readable.
+  - Gate, as the sky band: only in a 3D view where the background object
+    was put (`procfx_sky_seen`, set by `procfx_sky_put`, cleared in
+    `Nu_3DViewInit`).  The system map, the orrery and the galaxy map put
+    no sky, so their stars and markers stay the game's (and #37's).
+  - Colour by `star_light`: red, orange, yellow, white or blue.  The tone
+    is squared near the disc and paler further out, so a K star reads
+    orange and an M star red; Sol stays near white-yellow.
+  - Streamers: `pf_fbm` over the direction away from the star on the sky
+    (the eye ray less its part along the ray to the star's centre), turned
+    into the sky's frame and offset by the star's seed, so the same star
+    always gets the same streamers.
+  - Screen blend (`GL_ONE, GL_ONE_MINUS_SRC_COLOR`): light over the bright
+    disc tints it rather than burning it to white.  Enable, colour and
+    current state pushed and popped.
+  - `--flat-sky` keeps the streamers: the sky put records the sky's frame
+    and only then honours its switch.  `--flat-stars` is the corona's only
+    switch: no put, no program bound.
+  - The square leaves the depth mask alone; depth writes are not on in
+    the far-to-near znode pass.
+- **Checked** (this build, on the integration base, against the base
+  binary): see the stream's report for captures.  Captures from the first
+  build (ed7343a: additive blend, old tones; Sirius, Leesti, Lave) are not
+  evidence for this build and are not cited.
+- **Not checked.**  Blue stars, giants and white dwarfs; a planet in
+  front of a star (the game's draw order should cover it); frame time; a
+  star near enough to take the sphere path (it would get no corona).
+
+## Prototype notes: the limb glow (dropped)
+
+Dropped, superseded by #38.  The planets layer draws the lit limb rim
+(`uRim` in the planet shader) and the soft atmosphere halo
+(`draw_planet_halo`), both under `--flat-planets`.  The separate glow and
+its `--flat-limb` switch were removed, so planet drawing is the planets
+layer's code path unchanged.

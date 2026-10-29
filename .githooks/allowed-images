@@ -154,3 +154,9 @@ art/backdrops/surface-terran-red-a.jpg
 art/backdrops/surface-terran-red-b.jpg
 art/backdrops/surface-terran-yellow-a.jpg
 art/backdrops/surface-terran-yellow-b.jpg
+
+# art/hangar/ (hdback.c: the docked concourse behind the station-home cards)
+art/hangar/concourse-airless.jpg
+art/hangar/concourse-dusk.jpg
+art/hangar/concourse-orbital.jpg
+art/hangar/concourse-terran.jpg

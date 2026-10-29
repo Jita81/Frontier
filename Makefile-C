@@ -56,7 +56,7 @@ LIBS := $(VORBIS_LDFLAGS) -lvorbisfile -lvorbis -logg $(SDL_LIBS)
 
 WITH_GL=y
 ifeq ($(WITH_GL),y)
-	SRCOBJS += gl.o planet.o hdtext.o art.o hdstill.o hdface.o hdui.o hdback.o hdcontrols.o hull.o procfx.o hdtip.o fx.o
+	SRCOBJS += gl.o planet.o hdtext.o art.o hdstill.o hdface.o hdui.o hdback.o hdcontrols.o hull.o procfx.o hdtip.o fx.o hddamage.o
 	HOST_CFLAGS += -DWITH_GL
 ifeq ($(TARGET_OS),Darwin)
 	LIBS += -framework OpenGL -framework ApplicationServices -framework ImageIO
@@ -130,8 +130,8 @@ $(HOST_OBJS): $(HOST_OBJDIR)%.o: %.c $(HOST_STAMP) host.h
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(HOST_CFLAGS) -c -o $@ $<
 
-# gl.c, bindings.c, hdface.c and hdback.c read engine variables at their label addresses (P-2)
-$(HOST_OBJDIR)src/gl.o $(HOST_OBJDIR)src/bindings.o $(HOST_OBJDIR)src/hdface.o $(HOST_OBJDIR)src/hdback.o $(HOST_OBJDIR)src/fx.o: fixups.h
+# gl.c, bindings.c, hdface.c, hdback.c, hdstill.c, fx.c and hddamage.c read engine variables at their label addresses (P-2)
+$(HOST_OBJDIR)src/gl.o $(HOST_OBJDIR)src/bindings.o $(HOST_OBJDIR)src/hdface.o $(HOST_OBJDIR)src/hdback.o $(HOST_OBJDIR)src/hdstill.o $(HOST_OBJDIR)src/fx.o $(HOST_OBJDIR)src/hddamage.o: fixups.h
 
 $(CORE_STAMP): FORCE
 	@mkdir -p $(@D)

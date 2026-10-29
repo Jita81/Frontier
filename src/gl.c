@@ -52,6 +52,7 @@ typedef void (*_GLUfuncptr)();
 #include "procfx.h"
 #include "bindings.h"
 #include "hdtip.h"
+#include "hddamage.h"
 /* MEM_SIZE, and the engine's variables by label address (__D<label>) */
 #include "../host.h"
 #include "../fixups.h"
@@ -272,6 +273,7 @@ static void change_vidmode ()
 	}
 	procfx_forget ();
 	hdtip_forget ();
+	hddamage_forget ();
 	if (screen_tex) {
 		glDeleteTextures (1, &screen_tex);
 		screen_tex = 0;
@@ -833,6 +835,7 @@ static void draw_control_panel ()
 		hdback_frame (VideoRaster, hd_screen);
 		scr = hd_screen;
 		if (galmap == 2) galaxy_soften (VideoRaster, hd_screen);
+		if (use_renderer == R_GL) hdback_concourse (fb_w, fb_h, hd_screen);
 	}
 	
 	/* intro likes black at the bottom */
@@ -904,6 +907,7 @@ static void draw_control_panel ()
 	hdui_draw_over (MainRGBPalette, CtrlRGBPalette);
 	endcard_draw ();
 	controls_page_draw ();
+	hddamage_draw (fb_w, fb_h);
 	hdtip_draw ();
 	
 	glDisable (GL_TEXTURE_2D);
@@ -1359,6 +1363,7 @@ void Nu_3DViewInit ()
 	//printf ("%d bytes object data\n", obj_data_pos);
 	obj_data_pos = 0;
 	detached_pos = 0;
+	procfx_sky_seen = 0;
 
 	//add_node (&znode_start, 0);
 	znode_start = NULL;
@@ -3936,6 +3941,38 @@ void Nu_DrawQuad (void **data)
 		if (hull_glow) hull_glow_draw (p, 4);
 	}
 }
+/* procfx corona: which star a disc belongs to, after the disc's data */
+static void put_star (void)
+{
+	struct procfx_star s = { 0, 0 };
+
+	if (use_renderer == R_GL) procfx_star_put (&s);
+	znode_wrblock (&s, sizeof s);
+}
+
+/* under the disc of radius size at v: a square facing the eye, texture
+ * coordinates -1..1 across it */
+static void draw_corona (void **data, const int v[3], float size)
+{
+	static const float q[4][2] = { {-1, -1}, {1, -1}, {1, 1}, {-1, 1} };
+	struct procfx_star s;
+	float c[3] = { v[0], v[1], v[2] }, h;
+	int i;
+
+	memcpy (&s, *data, sizeof s);
+	*data += sizeof s;
+	if (!s.model || (h = procfx_corona_begin (&s, c, size > 0 ? size : 0)) <= 0) return;
+	billboard_begin (c[0], c[1], c[2]);
+	glBegin (GL_QUADS);
+	for (i = 0; i < 4; i++) {
+		glTexCoord2fv (q[i]);
+		glVertex2f (h * q[i][0], h * q[i][1]);
+	}
+	glEnd ();
+	billboard_end ();
+	procfx_corona_end ();
+}
+
 void Nu_PutTwinklyCircle ()
 {
 	if (use_renderer == R_OLD) return;
@@ -3943,6 +3980,7 @@ void Nu_PutTwinklyCircle ()
 	znode_wrlong (GetReg (REG_D2));
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrcolor (GetReg (REG_D6));
+	put_star ();
 }
 void Nu_DrawTwinklyCircle (void **data)
 {
@@ -3961,6 +3999,7 @@ void Nu_DrawTwinklyCircle (void **data)
 	//printf ("%x (%x)\n", GetReg (2), isize);
 	
 	size = -0.002*((short)dreg2)*v1[2];
+	draw_corona (data, v1, size);
 	
 	/* billboard: always face the camera, otherwise this twinkle/star
 	 * dot degenerates to an invisible line when viewed edge-on. */
@@ -4523,6 +4562,18 @@ static double planet_space (const struct PlanetPrim *p, double d)
 	return planet_ramp (1.02, 1.5, d / p->R);
 }
 
+/* 0 on the ground, 1 from 2% of the radius out (about the top of the
+ * atmosphere) and beyond: the weight of the lit rim and of the sun's
+ * fall-off.  From space the rim is the atmosphere seen edge on at the
+ * limb; down in it every distant patch of ground is seen edge on too, and
+ * the rim would wash it all towards the innermost layer's colour, while
+ * the game's own light zones already shade the ground.  The sky there is
+ * the halo's job. */
+static double planet_aloft (const struct PlanetPrim *p, double d)
+{
+	return planet_ramp (1.0, 1.02, d / p->R);
+}
+
 static int planet_smooth_begin (const struct PlanetPrim *p, double d, const struct LightZone *z,
 				int n, double *soft)
 {
@@ -4538,9 +4589,10 @@ static int planet_smooth_begin (const struct PlanetPrim *p, double d, const stru
 	}
 	if (p->rim >= 0) {
 		split_rgb444b (p->rim, &r, &g, &b);
-		rim[0] = r / 255.0f; rim[1] = g / 255.0f; rim[2] = b / 255.0f; rim[3] = 1.0f;
+		rim[0] = r / 255.0f; rim[1] = g / 255.0f; rim[2] = b / 255.0f;
+		rim[3] = planet_aloft (p, d);
 	}
-	look[0] = p->flags & 0x80 ? 1.0f : 0.0f;
+	look[0] = p->flags & 0x80 ? planet_aloft (p, d) : 0.0;
 	look[1] = 0.25 * planet_space (p, d);
 	look[2] = 0.08f;
 	return procfx_planet_begin (lo, hi, *soft, rim, look, p->seed);
@@ -5341,14 +5393,47 @@ static int circle_slices (double size, double z)
 	return (int) (rpx * 2.0 * M_PI / 16.0);
 }
 
+/*
+ * Hyperspace, restyled (read only).  In transit (flight state 8, the 3D
+ * view filling the screen) the game clears to one colour and draws its
+ * hypercloud model, flat concentric discs, at (0, 0, z), z the transit
+ * time left (the rear view: the time gone); on arrival it puts the same
+ * model in space, its discs shrinking over the cloud's life.  Here each
+ * of those discs is a soft glow at its own place and size, and under the
+ * transit a tunnel: the game's colour lit at the middle and falling away,
+ * streaks of light and a slow shimmer, all moved by the game's transit
+ * timer, so it starts and ends with the game's.  The old look stays with
+ * the old renderer, --classic-ui, --flat-hulls and --pixel-art.
+ */
+#define A6_TOOLS_MODE	42	/* byte: negative while the 3D view fills the screen */
+#define A6_FLIGHT_STATE	704	/* byte: 8 in hyperspace */
+#define A6_VIEW_MODE	706	/* byte: 1 the rear view */
+#define A6_HYPER_LEFT	722	/* long: transit time left */
+#define A6_HYPER_TOTAL	13882	/* long: the transit's time */
+#define HYPERCLOUD	0xba	/* the cloud's model word (hull_model_key) */
+#define BLOB_HYPER	0x80000000u	/* on a blob's colour, a circle's tag word: one of the cloud's */
+
+static int hyper_hd (void)
+{
+	return use_renderer == R_GL && !classic_ui && !flat_hulls && !pixel_art;
+}
+
+/* at a disc's Put: BLOB_HYPER when it is one of a hypercloud's */
+static unsigned int hyper_tag (void)
+{
+	return hyper_hd () && hull_model_key () == (0x80000000u | HYPERCLOUD) ? BLOB_HYPER : 0;
+}
+
 void Nu_PutCircle ()
 {
 	if (use_renderer == R_OLD) return;
 	put_fx ();
 	znode_wrlong (NU_CIRCLE);
-	znode_wrlong (GetReg (REG_D2));
+	znode_wrlong (GetReg (REG_D2));	/* untouched: its high word is the radius's fraction */
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrcolor (GetReg (REG_D6));
+	znode_wrlong (hyper_tag ());
+	put_star ();
 }
 /* The galaxy map's stars and markers: a camera-facing disc whose alpha
  * rises from 0 at r0 to a at r1, holds to r2 and falls to 0 at r3 (a
@@ -5387,6 +5472,89 @@ static void soft_ring (const int *v, float s, float r, float g, float b)
 	soft_disc (v, 0.68f * s, 0.76f * s, 0.86f * s, 0.94f * s, r, g, b, 1);
 }
 
+/* a disc of a hypercloud (radius s) as a glow */
+static void hyper_glow (const int *v, float s, float r, float g, float b)
+{
+	glPushAttrib (GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT);
+	glEnable (GL_BLEND);
+	glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	soft_disc (v, 0, 0, 0.5f * s, 1.3f * s, r, g, b, 0.55f);
+	glPopAttrib ();
+}
+
+/* The tunnel, in the 3D view's eye space (its centre is the view's
+ * centre in both frustums), under the game's discs */
+static void hyper_tunnel (void)
+{
+	static const float ring[6][2] = {	/* radius (picture half heights), light */
+		{ 0, 1.6f }, { 0.25f, 1.25f }, { 0.8f, 0.85f }, { 1.6f, 0.42f }, { 3, 0.18f }, { 12, 0.08f } };
+	const float d = 1000, u = d * tanf (36.5f * (float) M_PI / 360);
+	unsigned int a6 = __DL5eb6_a6_base, p = MainRGBPalette[fe2_bgcol];
+	float r = (p & 0xff) / 255.0f, g = (p >> 8 & 0xff) / 255.0f, b = (p >> 16 & 0xff) / 255.0f;
+	float t, dir;
+	int left, total, i, k;
+
+	if (!hyper_hd () || (STMemory_ReadByte (a6 + A6_FLIGHT_STATE) & 0xff) != 8 ||
+	    (signed char) STMemory_ReadByte (a6 + A6_TOOLS_MODE) >= 0)
+		return;
+	left = STMemory_ReadLong (a6 + A6_HYPER_LEFT);
+	total = STMemory_ReadLong (a6 + A6_HYPER_TOTAL);
+	t = total > 0 ? 1 - (float) left / total : 0;
+	t = t < 0 ? 0 : t > 1 ? 1 : t;
+	dir = (STMemory_ReadByte (a6 + A6_VIEW_MODE) & 0xff) == 1 ? -1 : 1;
+
+	glPushAttrib (GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_LINE_BIT | GL_LIGHTING_BIT);
+	glDisable (GL_LIGHTING);
+	glDisable (GL_TEXTURE_2D);
+	glShadeModel (GL_SMOOTH);
+	glMatrixMode (GL_MODELVIEW);
+	glPushMatrix ();
+	glLoadIdentity ();
+	/* the glow: rings of the game's colour, each a little uneven, the
+	 * unevenness turning with the time gone */
+	for (k = 0; k < 5; k++) {
+		glBegin (GL_TRIANGLE_STRIP);
+		for (i = 0; i <= 48; i++) {
+			float a = i * (float) M_PI / 24, c = cosf (a), s = sinf (a);
+			int j;
+			for (j = k; j <= k + 1; j++) {
+				float l = ring[j][1] * (1 + 0.1f * sinf (5 * a + dir * 6.3f * t) *
+							 sinf (3 * a - 4 * t + j));
+				float w = l > 1 ? l - 1 : 0;	/* past full: toward white */
+				glColor3f (r * l + w, g * l + w, b * l + w);
+				glVertex3f (ring[j][0] * u * c, ring[j][0] * u * s, -d);
+			}
+		}
+		glEnd ();
+	}
+	/* streaks: points of light on the tunnel's wall coming at the
+	 * view (the rear view: going away), each its own way round */
+	glEnable (GL_BLEND);
+	glBlendFunc (GL_SRC_ALPHA, GL_ONE);
+	glEnable (GL_LINE_SMOOTH);
+	glLineWidth (1.5f * px_scale ());
+	glBegin (GL_LINES);
+	for (i = 0; i < 96; i++) {
+		unsigned int h = (i + 1) * 2654435761u;
+		float a = (h & 0xffff) * (2 * (float) M_PI / 65536), c = cosf (a), s = sinf (a);
+		float sp = 0.6f + (h >> 16 & 255) / 320.0f;
+		float z = (h >> 24) / 256.0f - dir * 2 * sp * t;
+		float al, r0, r1;
+		z -= floorf (z);			/* 1 far, 0 at the view */
+		al = (1 - z) * (z < 0.15f ? z / 0.15f : 1) * 0.8f;
+		r0 = 0.1f * u / (z + 0.04f);
+		r1 = z + 0.04f + dir * 0.1f * sp;	/* its trail, behind it */
+		r1 = 0.1f * u / (r1 > 0.02f ? r1 : 0.02f);
+		glColor4f (0.6f + 0.4f * r, 0.6f + 0.4f * g, 0.6f + 0.4f * b, al);
+		glVertex3f (r0 * c, r0 * s, -d);
+		glColor4f (r, g, b, 0);
+		glVertex3f (r1 * c, r1 * s, -d);
+	}
+	glEnd ();
+	glPopMatrix ();
+	glPopAttrib ();
+}
+
 /* where v falls in the window, GL pixels (0: behind the eye) */
 static int project (const int *v, double *xy)
 {
@@ -5406,14 +5574,18 @@ static int here_n;
 void Nu_DrawCircle (void **data)
 {
 	int v1[3];
-	unsigned int dreg2, isize;
+	unsigned int dreg2, isize, hyper;
 	float size;
 	int r, g, b;
 
 	dreg2 = znode_rdlong (data);
 	znode_rdvertex (data, v1);
 	znode_rdcolor (data, &r, &g, &b);
-	if (fx_circle (v1, dreg2, r, g, b)) return;	/* an explosion's fireball */
+	hyper = znode_rdlong (data);
+	if (fx_circle (v1, dreg2, r, g, b)) {	/* an explosion's fireball */
+		*data += sizeof (struct procfx_star);	/* put_star's bytes, unread */
+		return;
+	}
 	
 	glColor3ub (r, g, b);
 
@@ -5421,6 +5593,7 @@ void Nu_DrawCircle (void **data)
 	//printf ("%x (%x)\n", GetReg (2), isize);
 	
 	size = -0.002*((short)dreg2)*v1[2];
+	draw_corona (data, v1, size);
 	if (galmap == 1) {
 		/* a star as a glow in its class's colour, white hot at the
 		 * middle; the selected one (the game's big disc) as a ring */
@@ -5438,6 +5611,10 @@ void Nu_DrawCircle (void **data)
 			soft_disc (v1, 0, 0, 0.55f * size, 0.85f * size,
 				   (R + 1) / 2, (G + 1) / 2, (B + 1) / 2, 1);
 		}
+		return;
+	}
+	if (hyper) {
+		hyper_glow (v1, size, (unsigned char) r / 255.0f, (unsigned char) g / 255.0f, (unsigned char) b / 255.0f);
 		return;
 	}
 	
@@ -5673,7 +5850,7 @@ void Nu_PutBlob ()
 	put_fx ();
 	znode_wrlong (NU_BLOB);
 	znode_wrvertex (GetReg (REG_A0)+4);
-	znode_wrlong (GetReg (REG_D0));
+	znode_wrlong ((GetReg (REG_D0) & ~BLOB_HYPER) | hyper_tag ());
 	znode_wrlong (GetReg (REG_D1));
 }
 void Nu_DrawBlob (void **data)
@@ -5700,6 +5877,10 @@ void Nu_DrawBlob (void **data)
 			soft_ring (v1, s, R, G, B);
 		} else
 			soft_disc (v1, 0, 0, 0.35f * s, 1.2f * s, R, G, B, 0.6f);
+		return;
+	}
+	if ((c & BLOB_HYPER) && rad >= 3) {
+		hyper_glow (v1, -0.002f * rad * v1[2], (c >> 8 & 15) / 15.0f, (c >> 4 & 15) / 15.0f, (c & 15) / 15.0f);
 		return;
 	}
 	glColor3ui (r, g, b);
@@ -6106,6 +6287,7 @@ static int draw_wide_flight (void)
 	wide_3d = 1;
 	v3d_x = x0; v3d_y = oy; v3d_w = x1 - x0; v3d_h = y1 - oy;
 	set_main_viewport ();
+	hyper_tunnel ();
 	draw_3dview (znode_start);
 	hull_end ();
 	glDisable (GL_SCISSOR_TEST);
@@ -6226,8 +6408,10 @@ void Nu_DrawScreen ()
 		/* a flight view with the panel up and no HD backdrop */
 		if (use_renderer != R_GL || classic_ui || !znode_start
 		    || !STMemory_ReadByte (__DL60cf_hblank_do_pal) || hdback_active ()
-		    || !bindings_in_flight_view (0, 0) || !draw_wide_flight ())
+		    || !bindings_in_flight_view (0, 0) || !draw_wide_flight ()) {
+			hyper_tunnel ();
 			draw_3dview (znode_start);
+		}
 		if (t) hull_log_frame (t);
 	}
 	hull_end ();

@@ -1916,7 +1916,82 @@ static void new_draw (const unsigned char *font, const unsigned int *pal, const 
 	glTexEnvf (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
 	glColor4ub (255, 255, 255, 255);
 }
+
+/* A lit sign's lettering, for hdback's concourse (hdtext.h) */
+static struct { char s[64]; int w, h; GLuint tex, glow; } sign[2];
+
+int hdtext_sign (int slot, const char *s, int w, int h, unsigned int *tex, unsigned int *glow)
+{
+	CFStringRef str;
+	CFDictionaryRef at;
+	CFAttributedStringRef as;
+	CFNumberRef kern;
+	CTFontRef font;
+	CTLineRef line;
+	CGContextRef g;
+	unsigned char *buf;
+	double cap = h * 0.46, size, tw, kw, sc;
+
+	if (slot < 0 || slot > 1 || !*s || w < 16 || h < 8 || w > 4096 || h > 1024) return 0;
+	/* kept, made or not: a sign that failed is not tried every frame */
+	if (sign[slot].w == w && sign[slot].h == h && !strcmp (sign[slot].s, s))
+		goto done;
+	if (sign[slot].tex) glDeleteTextures (1, &sign[slot].tex);
+	if (sign[slot].glow) glDeleteTextures (1, &sign[slot].glow);
+	memset (&sign[slot], 0, sizeof sign[0]);
+	snprintf (sign[slot].s, sizeof sign[0].s, "%s", s);
+	sign[slot].w = w;
+	sign[slot].h = h;
+	str = CFStringCreateWithCString (NULL, s, kCFStringEncodingISOLatin1);
+	if (!str || !face_load (F_TITLE)) {
+		if (str) CFRelease (str);
+		return 0;
+	}
+	/* the cap height near half the panel, letter-spaced; squeezed to fit */
+	size = faces[F_TITLE].size100 * cap / 100;
+	kw = size * 0.08;
+	font = face_font (F_TITLE, size);
+	kern = CFNumberCreate (NULL, kCFNumberDoubleType, &kw);
+	{
+		const void *k[3] = { kCTFontAttributeName, kCTForegroundColorFromContextAttributeName, kCTKernAttributeName };
+		const void *v[3] = { font, kCFBooleanTrue, kern };
+		at = CFDictionaryCreate (NULL, k, v, 3, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+	}
+	as = CFAttributedStringCreate (NULL, str, at);
+	line = CTLineCreateWithAttributedString (as);
+	CFRelease (as);
+	CFRelease (at);
+	CFRelease (kern);
+	CFRelease (font);
+	CFRelease (str);
+	tw = CTLineGetTypographicBounds (line, NULL, NULL, NULL) - kw;
+	sc = tw > w * 0.84 ? w * 0.84 / tw : 1;
+	buf = calloc ((size_t) w * h, 2);
+	g = buf ? CGBitmapContextCreate (buf, w, h, 8, w, NULL, kCGImageAlphaOnly) : NULL;
+	if (g) {
+		CGContextSetShouldAntialias (g, true);
+		CGContextSetGrayFillColor (g, 1.0, 1.0);
+		CGContextTranslateCTM (g, w / 2.0, h / 2.0);
+		CGContextScaleCTM (g, sc, sc);
+		CGContextSetTextPosition (g, -tw / 2, -cap / 2);
+		CTLineDraw (line, g);
+		CGContextRelease (g);
+		/* the glow: the same, blurred */
+		memcpy (buf + (size_t) w * h, buf, (size_t) w * h);
+		box_blur (buf + (size_t) w * h, w, h, (int) (cap * sc * 0.16) + 1);
+		sign[slot].tex = alpha_texture (buf, w, h);
+		sign[slot].glow = alpha_texture (buf + (size_t) w * h, w, h);
+	}
+	free (buf);
+	CFRelease (line);
+done:
+	*tex = sign[slot].tex;
+	*glow = sign[slot].glow;
+	return sign[slot].tex != 0;
+}
 #else
+int hdtext_sign (int slot, const char *s, int w, int h, unsigned int *tex, unsigned int *glow) { return 0; }
+
 float hdtext_measure (const struct hdtext_run *r)
 {
 	return r->ink1 - r->ink0;
@@ -1949,6 +2024,11 @@ void hdtext_forget (void)
 		int i;
 		for (i = 0; i < n_atl; i++) atlas_free (&atl[i]);
 		n_atl = 0;
+		for (i = 0; i < 2; i++) {
+			if (sign[i].tex) glDeleteTextures (1, &sign[i].tex);
+			if (sign[i].glow) glDeleteTextures (1, &sign[i].glow);
+		}
+		memset (sign, 0, sizeof sign);
 		vicon_forget ();
 	}
 #endif
