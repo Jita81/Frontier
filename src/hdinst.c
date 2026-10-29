@@ -288,7 +288,9 @@ void hdinst_mask (const unsigned char *raster)
 	for (i = 0; i < 52; i++) sight_mask[sight[i][1] * ST_W + sight[i][0]] = 0;
 	sight_col = -1;
 	hdtext_skip (NULL);
-	if (!on ()) return;
+	/* the concourse (last frame's: it runs after this) takes the sight
+	 * out itself; none is drawn over it */
+	if (!on () || hdback_concourse_up ()) return;
 	memset (count, 0, sizeof (count));
 	for (i = 0; i < 32; i++) count[raster[sight[i][1] * ST_W + sight[i][0]]]++;
 	for (i = 1; i < 256; i++)
@@ -721,8 +723,8 @@ void hdinst_draw (const unsigned int *pal, const unsigned int *ctrl_pal)
 		}
 	}
 
-	/* the gun sight */
-	if (sight_col >= 0) {
+	/* the gun sight, unless the concourse came up this frame */
+	if (sight_col >= 0 && !hdback_concourse_up ()) {
 		rgb (pal[sight_col], 1);
 		stroke (145, 84.5f, 153, 84.5f, 1);
 		stroke (167, 84.5f, 175, 84.5f, 1);

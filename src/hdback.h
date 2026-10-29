@@ -67,6 +67,11 @@ void hdback_frost_end (void);
  * the screen about to be uploaded; the gunsight is taken out of it. */
 void hdback_concourse (int fb_w, int fb_h, unsigned char *out);
 
+/* Nonzero when the last hdback_concourse took the gunsight out (the
+ * concourse is up): hdinst draws no HD sight then.  Valid until the next
+ * hdback_concourse, which runs every GL frame and resets it. */
+int hdback_concourse_up (void);
+
 /* The GL context is going away: drop the backdrop texture. */
 void hdback_forget (void);
 
