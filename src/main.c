@@ -50,6 +50,7 @@ extern enum RENDERERS use_renderer;
 
 int delta_x, delta_y, abs_delta_x, abs_delta_y;
 int flat_fx = 0;	/* --flat-fx: no HD weapon effects (fx.c); both renderers link this */
+int flat_biomes = 0;	/* --flat-biomes: flat seas, no coasts (worlds.c) */
 
 /*-----------------------------------------------------------------------*/
 /*
@@ -221,6 +222,7 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --flat-hulls          Flat ship faces, no hull plating.\n"
                "  --flat-sky            The game's flat Milky Way band (no star clouds).\n"
                "  --flat-planets        Hard light zones and flat atmosphere rings.\n"
+               "  --flat-biomes         Flat seas: no sea depth or beaches.\n"
                "  --flat-stars          No corona round the stars.\n"
                "  --pixel-text          Keep the original bitmap font (no HD text;\n"
                "                        FE2_HD_FONT=<PostScript name> picks the font).\n"
@@ -251,6 +253,8 @@ void Main_ReadParameters(int argc, char *argv[])
 		flat_sky = 1;
 	  else if (!strcmp(argv[i], "--flat-planets"))
 		flat_planets = 1;
+	  else if (!strcmp(argv[i], "--flat-biomes"))
+		flat_biomes = 1;
 	  else if (!strcmp(argv[i], "--flat-stars"))
 		flat_stars = 1;
 	  else if (!strcmp(argv[i], "--pixel-text"))
