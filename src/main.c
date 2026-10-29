@@ -222,6 +222,7 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --flat-sky            The game's flat Milky Way band (no star clouds).\n"
                "  --flat-planets        Hard light zones and flat atmosphere rings.\n"
                "  --flat-stars          No corona round the stars.\n"
+               "  --flat-rings          The game's flat planetary rings.\n"
                "  --pixel-text          Keep the original bitmap font (no HD text;\n"
                "                        FE2_HD_FONT=<PostScript name> picks the font).\n"
                "  --pixel-art           Keep the game's own bitmaps (no HD stills).\n"
@@ -253,6 +254,8 @@ void Main_ReadParameters(int argc, char *argv[])
 		flat_planets = 1;
 	  else if (!strcmp(argv[i], "--flat-stars"))
 		flat_stars = 1;
+	  else if (!strcmp(argv[i], "--flat-rings"))
+		flat_rings = 1;
 	  else if (!strcmp(argv[i], "--pixel-text"))
 		pixel_text = 1;
 	  else if (!strcmp(argv[i], "--pixel-art"))
