@@ -28,7 +28,7 @@ int flat_rings = 0;
 /* forgotten every frame (skies_frame_begin), so no later shape can match
  * a stale planet */
 static unsigned int put_rec, put_a6;
-static double put_c[3], put_r, put_light[3], put_n[3];
+static double put_c[3], put_r, put_n[3];
 
 static unsigned int frame_record (unsigned int a6)
 {
@@ -39,7 +39,7 @@ static unsigned int frame_record (unsigned int a6)
 	return rec <= 0x110000u - OBJ_SEED - 4 ? rec : 0;
 }
 
-void skies_planet_put (const double centre[3], double R, const double light[3])
+void skies_planet_put (const double centre[3], double R)
 {
 	unsigned int a6 = (unsigned int) GetReg (REG_A6);
 	int k;
@@ -48,7 +48,6 @@ void skies_planet_put (const double centre[3], double R, const double light[3])
 	put_a6 = a6;
 	for (k = 0; k < 3; k++) put_n[k] = (short) STMemory_ReadWord (a6 - FRAME_ROT + 2*(3+k)) / 32768.0;
 	put_c[0] = centre[0]; put_c[1] = centre[1]; put_c[2] = centre[2];
-	put_light[0] = light[0]; put_light[1] = light[1]; put_light[2] = light[2];
 	put_r = R;
 }
 
@@ -58,23 +57,20 @@ void skies_frame_begin (void)
 }
 
 /* The rings are drawn by the body's ring sub-model: a frame whose link
- * (the a6 its LINK saved) is the frame that put the body.  A ship's own
- * shapes after an engine-glow disc share the record but not the link. */
+ * (the a6 its LINK saved) is the frame that put the body.  Other shapes
+ * of the same object share the record but not the link. */
 int skies_ring_put (struct skies_ring *r)
 {
 	unsigned int a6 = (unsigned int) GetReg (REG_A6);
-	double len;
 	int k;
 
 	if (flat_rings || !put_rec || put_r <= 0 || frame_record (a6) != put_rec
 	    || (unsigned int) STMemory_ReadLong (a6) != put_a6) return 0;
-	len = sqrt (put_light[0]*put_light[0] + put_light[1]*put_light[1] + put_light[2]*put_light[2]);
-	/* GL eye is the view with z turned round; the sun is minus the light */
+	/* GL eye is the view with z turned round */
 	for (k = 0; k < 3; k++) {
 		double s = k == 2 ? -1 : 1;
 		r->c[k] = s * put_c[k] / put_r;
 		r->n[k] = s * put_n[k];
-		r->sun[k] = len > 0 ? -s * put_light[k] / len : 0;
 	}
 	r->seed = STMemory_ReadLong (put_rec + OBJ_SEED);
 	return 1;
@@ -85,11 +81,14 @@ int skies_ring_put (struct skies_ring *r)
  * Each tenth of a radius in r holds a gap with odd 0.4, at a place and of
  * a width drawn from the seed: in r, so every quarter of a band agrees.
  * The shape runs from its least to its greatest r (uBand.xy); both edges
- * fade over a pixel and a half or 4% of the band.  Edge on (uBand.z near
- * 0) r means nothing, so the detail goes and alpha is flat. */
+ * are anti-aliased over a pixel.  The band stays opaque, as the game's:
+ * ringlets and gaps only shade the game's colour, around a mean that
+ * stays the game's (the lift pays back the gaps' dark), so the grey
+ * shadow sector stays grey.  Edge on (uBand.z near 0) r means nothing,
+ * so the detail goes. */
 static const char ring_glsl[] =
 	"uniform vec4 uVp, uPrj, uBand;\n"
-	"uniform vec3 uC, uN, uSun;\n"
+	"uniform vec3 uC, uN;\n"
 	"uniform float uOn;\n"
 	"void main () {\n"
 	"	if (uOn < 0.5) { gl_FragColor = gl_Color; return; }\n"
@@ -99,21 +98,20 @@ static const char ring_glsl[] =
 	"	vec3 q = d * dot (uC, uN) / (abs (dn) < 1e-6 ? 1e-6 : dn) - uC;\n"
 	"	float r = length (q), w = uBand.y - uBand.x;\n"
 	"	float u = clamp ((r - uBand.x) / w, 0.0, 1.0);\n"
-	"	float e = max (1.5 * fwidth (r) / w, 0.04);\n"
+	"	float e = fwidth (r) / w;\n"
 	"	float edge = smoothstep (0.0, e, u) * smoothstep (0.0, e, 1.0 - u);\n"
-	"	float g = pf_fbm (vec3 (r * 24.0 + uBand.w, 0.5, 0.5), 3);\n"
+	"	float g = smoothstep (0.25, 0.75, pf_fbm (vec3 (r * 24.0 + uBand.w, 0.5, 0.5), 3));\n"
 	"	float x = r * 10.0, cell = floor (x);\n"
 	"	float hw = 0.15 + 0.2 * pf_hash (vec3 (cell, uBand.w, 19.0));\n"
 	"	float gap = pf_hash (vec3 (cell, uBand.w, 7.0)) < 0.4 ?\n"
 	"		smoothstep (0.0, hw, abs (fract (x) - 0.2 - 0.6 * pf_hash (vec3 (cell, uBand.w, 13.0)))) : 1.0;\n"
-	"	float a = (0.72 + 0.22 * g) * (0.3 + 0.7 * gap) * edge;\n"
-	"	float m = (0.95 + 0.2 * g) * (1.0 + 0.08 * max (dot (normalize (q), uSun), 0.0));\n"
-	"	gl_FragColor = vec4 (gl_Color.rgb * mix (1.0, m, uBand.z), mix (0.8, a, uBand.z));\n"
+	"	float m = 1.03 + 0.3 * (g - 0.5) - 0.5 * (1.0 - gap);\n"
+	"	gl_FragColor = vec4 (gl_Color.rgb * mix (1.0, m, uBand.z), mix (1.0, edge, uBand.z));\n"
 	"}\n";
 
 static GLuint ring_prog;
 static int ring_failed;
-static GLint u_vp, u_prj, u_band, u_on, u_c, u_n, u_sun;
+static GLint u_vp, u_prj, u_band, u_on, u_c, u_n;
 static struct skies_ring cur;
 static double cur_prj[4], cur_vp[4], r_lo, r_hi;
 
@@ -129,7 +127,6 @@ int skies_ring_begin (const struct skies_ring *r, const double proj[16], const i
 		u_on = glGetUniformLocation (ring_prog, "uOn");
 		u_c = glGetUniformLocation (ring_prog, "uC");
 		u_n = glGetUniformLocation (ring_prog, "uN");
-		u_sun = glGetUniformLocation (ring_prog, "uSun");
 	}
 	cur = *r;
 	cur_prj[0] = proj[0]; cur_prj[1] = proj[5]; cur_prj[2] = proj[8]; cur_prj[3] = proj[9];
@@ -143,7 +140,6 @@ int skies_ring_begin (const struct skies_ring *r, const double proj[16], const i
 	glUniform4f (u_prj, proj[0], proj[5], proj[8], proj[9]);
 	glUniform3fv (u_c, 1, r->c);
 	glUniform3fv (u_n, 1, r->n);
-	glUniform3fv (u_sun, 1, r->sun);
 	glUniform1f (u_on, 0);	/* off until a contour shows a ring */
 	return 1;
 }

@@ -3,9 +3,8 @@
  *
  * A ringed body's rings are its model's own complex shapes, flat bands
  * put right after the body (Nu_PutPlanet).  They keep the game's shape,
- * place and colour; a fragment shader gives each band soft ringlets, a
- * gap or two seeded from the body, anti-aliased edges, a little more
- * light on the sun side, and lets the planet show through (alpha < 1).
+ * place and mean colour; a fragment shader gives each band ringlets, a
+ * gap or two seeded from the body and anti-aliased edges.
  * Read only: every number comes from the hcall's registers and ST memory.
  * Off: --flat-rings.
  */
@@ -15,14 +14,14 @@
 extern int flat_rings;
 
 /* what one ring shape needs, in GL eye coordinates: the body's centre in
- * units of its radius, the ring plane's normal, the sun's direction */
-struct skies_ring { float c[3], n[3], sun[3]; unsigned int seed; };
+ * units of its radius and the ring plane's normal */
+struct skies_ring { float c[3], n[3]; unsigned int seed; };
 
 /* Put side.  In Nu_PutPlanet: the body just put (view coordinates, as the
  * hcall reads them).  In Nu_ComplexStart: 1, with r filled in, when the
  * shape belongs to that body's object. */
 void skies_frame_begin (void);	/* Nu_3DViewInit: forget the last body */
-void skies_planet_put (const double centre[3], double R, const double light[3]);
+void skies_planet_put (const double centre[3], double R);
 int skies_ring_put (struct skies_ring *r);
 
 /* Draw side, around one such shape: proj and vp as it was projected with;

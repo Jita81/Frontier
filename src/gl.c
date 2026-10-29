@@ -5460,7 +5460,7 @@ void Nu_PutPlanet ()
 		p.light[i] = (double) STMemory_ReadWord (a1 + 2*i);
 	}
 	p.R = (double) (unsigned int) GetReg (REG_D0);
-	skies_planet_put (p.centre, p.R, p.light);
+	skies_planet_put (p.centre, p.R);
 
 	/* the object rotation matrix at -36(a6): the ST computes viewing
 	 * x as M0*x + M3*y + M6*z (L3d452_PlanetFeatureLoop) */
