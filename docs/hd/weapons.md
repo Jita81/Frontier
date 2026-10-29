@@ -15,7 +15,9 @@ the start menu) and a 3D view fills the screen (42(a6) negative, so not a
 map or a 2D page). There are two exceptions, tested in this order. In the
 intro's scenes (bit 5 set and a part of the intro's own table, 114 or 116)
 the fireball circles take the explosion look (see hulls.md, the intro's
-scenes). In the death camera (state `$58` at 704(a6)), a 3D view too, every
+scenes); the tag carries an intro mark, and since the record there is the
+scene's (no clock at +122, no size at +88) the fireball draws young and hot,
+with no shock ring. In the death camera (state `$58` at 704(a6)), a 3D view too, every
 explosion (188) and smoke (194) record is tagged, not only the player's own
 (the one at 674(a6)); a death leaves several. The game-over screen after it
 is not touched. A recognised model puts an `NU_FX` op before its primitive,

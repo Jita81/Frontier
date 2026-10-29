@@ -285,7 +285,7 @@ after the table for a part of record N.
 | 130 | the ship of modules | freighter, panels x6 |
 | 212 | the large ship of the first space scene | armour, panels x2 |
 | 214 | the hypercloud's discs | the game's hypercloud glow (`hyper_tag`, `HYPERCLOUD_INTRO`) |
-| 114, 116 | the fireball's circles | the explosion fireball (`fx.c`, `I_FIRE`, as model 188) |
+| 114, 116 | the fireball's circles | the explosion fireball (`fx.c`, `I_FIRE`, as model 188, drawn young: the scene's record has no clock) |
 
 - **Classes are by role.** Comparing the first 40 header bytes of every
   intro model with every game model finds twins only for 90, 192, 194,
