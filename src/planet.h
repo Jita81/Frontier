@@ -52,4 +52,18 @@ int psurf_norm_radius (int radius_word);
  * high byte of the first word of the planet model. */
 int psurf_light_code (int flags, double cos_sun);
 
+/* W1 surface classes (docs/hd/planet-classes.md). */
+enum { PS_OTHER, PS_WATER, PS_LAND, PS_ICE, PS_CRATER };
+
+/* The class of a feature code (as psurf_raster writes it), from the
+ * colour the model draws it in, the kind of body and its temperature. */
+int psurf_code_class (struct PSurf *s, int code);
+
+/* Classes of a patch of codes[n*n] into cls[n*n], and, if dist is not
+ * NULL, the signed distance to the coast in dist[n*n]: 3 units a texel,
+ * negative in water, +-32767 where there is no coast. 0, or -1 if s is
+ * NULL. */
+int psurf_classify (struct PSurf *s, const unsigned char *codes, int n,
+		    unsigned char *cls, short *dist);
+
 #endif /* _PLANET_H */
