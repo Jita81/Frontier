@@ -1363,6 +1363,7 @@ void Nu_InsertZNode ()
 void Nu_3DViewInit ()
 {
 	fx_frame_begin ();
+	skies_frame_begin ();
 	queued_string_pos = 0;
 	//printf ("3dviewinit()\n");
 	znode_buf_pos = 0;

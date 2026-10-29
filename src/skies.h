@@ -21,6 +21,7 @@ struct skies_ring { float c[3], n[3], sun[3]; unsigned int seed; };
 /* Put side.  In Nu_PutPlanet: the body just put (view coordinates, as the
  * hcall reads them).  In Nu_ComplexStart: 1, with r filled in, when the
  * shape belongs to that body's object. */
+void skies_frame_begin (void);	/* Nu_3DViewInit: forget the last body */
 void skies_planet_put (const double centre[3], double R, const double light[3]);
 int skies_ring_put (struct skies_ring *r);
 

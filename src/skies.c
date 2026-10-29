@@ -25,7 +25,9 @@ int flat_rings = 0;
 #define FRAME_ROT	36
 #define OBJ_SEED	118
 
-static unsigned int put_rec;
+/* forgotten every frame (skies_frame_begin), so no later shape can match
+ * a stale planet */
+static unsigned int put_rec, put_a6;
 static double put_c[3], put_r, put_light[3], put_n[3];
 
 static unsigned int frame_record (unsigned int a6)
@@ -43,18 +45,29 @@ void skies_planet_put (const double centre[3], double R, const double light[3])
 	int k;
 
 	put_rec = frame_record (a6);
+	put_a6 = a6;
 	for (k = 0; k < 3; k++) put_n[k] = (short) STMemory_ReadWord (a6 - FRAME_ROT + 2*(3+k)) / 32768.0;
 	put_c[0] = centre[0]; put_c[1] = centre[1]; put_c[2] = centre[2];
 	put_light[0] = light[0]; put_light[1] = light[1]; put_light[2] = light[2];
 	put_r = R;
 }
 
+void skies_frame_begin (void)
+{
+	put_rec = 0;
+}
+
+/* The rings are drawn by the body's ring sub-model: a frame whose link
+ * (the a6 its LINK saved) is the frame that put the body.  A ship's own
+ * shapes after an engine-glow disc share the record but not the link. */
 int skies_ring_put (struct skies_ring *r)
 {
+	unsigned int a6 = (unsigned int) GetReg (REG_A6);
 	double len;
 	int k;
 
-	if (flat_rings || !put_rec || frame_record ((unsigned int) GetReg (REG_A6)) != put_rec || put_r <= 0) return 0;
+	if (flat_rings || !put_rec || put_r <= 0 || frame_record (a6) != put_rec
+	    || (unsigned int) STMemory_ReadLong (a6) != put_a6) return 0;
 	len = sqrt (put_light[0]*put_light[0] + put_light[1]*put_light[1] + put_light[2]*put_light[2]);
 	/* GL eye is the view with z turned round; the sun is minus the light */
 	for (k = 0; k < 3; k++) {
@@ -82,7 +95,8 @@ static const char ring_glsl[] =
 	"	if (uOn < 0.5) { gl_FragColor = gl_Color; return; }\n"
 	"	vec2 ndc = (gl_FragCoord.xy - uVp.xy) / uVp.zw * 2.0 - 1.0;\n"
 	"	vec3 d = vec3 ((ndc.x + uPrj.z) / uPrj.x, (ndc.y + uPrj.w) / uPrj.y, -1.0);\n"
-	"	vec3 q = d * dot (uC, uN) / dot (d, uN) - uC;\n"
+	"	float dn = dot (d, uN);\n"
+	"	vec3 q = d * dot (uC, uN) / (abs (dn) < 1e-6 ? 1e-6 : dn) - uC;\n"
 	"	float r = length (q), w = uBand.y - uBand.x;\n"
 	"	float u = clamp ((r - uBand.x) / w, 0.0, 1.0);\n"
 	"	float e = max (1.5 * fwidth (r) / w, 0.04);\n"
@@ -140,7 +154,7 @@ void skies_ring_contour (const double (*v)[3], int n)
 {
 	const float *c = cur.c, *nn = cur.n;
 	double cn = c[0]*nn[0] + c[1]*nn[1] + c[2]*nn[2], cl, open;
-	int i, k;
+	int i, k, on;
 
 	for (i = 0; i < n; i++) {
 		double d[3], dn, t, r = 0;
@@ -155,13 +169,15 @@ void skies_ring_contour (const double (*v)[3], int n)
 		if (r < r_lo) r_lo = r;
 		if (r > r_hi) r_hi = r;
 	}
-	/* a ring lies well outside its body; anything else stays the game's */
-	if (!(r_lo >= 1.02 && r_hi <= 8 && r_hi > r_lo + 0.01)) return;
+	/* a ring lies well outside its body; anything else stays the game's,
+	 * also when a later contour of the shape breaks the range */
+	on = r_lo >= 1.02 && r_hi <= 8 && r_hi > r_lo + 0.01;
+	glUniform1f (u_on, on);
+	if (!on) return;
 	cl = sqrt (c[0]*c[0] + c[1]*c[1] + c[2]*c[2]);
 	open = cl > 0 ? fabs (cn) / cl : 0;
 	open = open < 0.03 ? 0 : open > 0.12 ? 1 : (open - 0.03) / 0.09;
 	glUniform4f (u_band, r_lo, r_hi, open * open * (3 - 2*open), (cur.seed % 4093) * 0.37f);
-	glUniform1f (u_on, 1);
 }
 
 void skies_ring_end (void)
