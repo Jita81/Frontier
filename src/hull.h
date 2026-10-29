@@ -43,7 +43,10 @@ extern const struct HullProfile hull_profiles[HP_N];
 #define HULL_KEY_OK(k)	((unsigned int) (k) >> 31)
 #define HULL_TAB_INTRO	0x10000u
 #define HULL_TAB_OTHER	0x20000u
-#define HULL_KEY_MODEL(k)	((unsigned int) (k) & 0x3ffffu)
+/* with HULL_TAB_INTRO: a part of the intro's scenes, keyed by its own word
+ * (gl.c, hull_model_key); never set under the flags that keep the base look */
+#define HULL_TAB_SCENE	0x40000u
+#define HULL_KEY_MODEL(k)	((unsigned int) (k) & 0x7ffffu)
 int hull_profile_of_key (unsigned int key);
 
 /* Texture sets. Level 1 is plain plating (style 1), level 2 the full

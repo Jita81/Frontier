@@ -298,11 +298,15 @@ after the table for a part of record N.
   game circle), and its sun a set of circles, not the game's planet or
   star objects, so the HD planet and the star corona do not draw them.
 - **Lasers and plumes:** the scenes' beams and engine plumes are not
-  matched to a model and keep their look; so does the earlier, orange
-  fireball, whose model is not identified (only the later one is 114/116).
+  matched to a model and keep their look; so does the orange fireball of
+  the credits scene, after the HD one, whose model is not identified (only
+  the first, 114/116, is).
 - **Off:** `--classic-ui`, `--flat-hulls`, `--flat-fx`, `--pixel-*`
-  (`hull_intro_base`: a scene's key is then 0, so its models are flat, as
-  in the base) and `--old-renderer` give the base intro.
+  (`hull_intro_base`: a scene's key is then its record's, as in the base,
+  never marked `HULL_TAB_SCENE`, so the rows above are not reached and
+  `hull_intro_part` is 0) and `--old-renderer` give the base intro.
+- **Lights:** #57's halo tests the record's key (`hull_record_key`), as in
+  the base, so a part whose word is in the stars' range keeps its halo.
 - **Gate:** `fx.c`'s `put_model` tests the intro first (bit 5 of 598(a6)
   set and `hull_intro_part` 114 or 116), then the flight and death-camera
   gate, so the intro does not depend on 42(a6) and a death-camera record is

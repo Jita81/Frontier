@@ -111,11 +111,11 @@ static const struct {
 	{ 70,  HC_FREIGHT,	6.0f },	/* Transporter */
 	{ HULL_TAB_INTRO | 72, HC_STATION, 1.0f },	/* the orbital station behind the menu */
 	/* the intro's scenes: their own model, or a part keyed by its own (gl.c) */
-	{ HULL_TAB_INTRO | 62,  HC_STATION,	1.0f },	/* the ring station */
-	{ HULL_TAB_INTRO | 192, HC_STATION,	1.0f },	/* its hub (a twin of the game's 86) */
-	{ HULL_TAB_INTRO | 86,  HC_CIVIL,	2.0f },	/* the green ship, in several scenes */
-	{ HULL_TAB_INTRO | 130, HC_FREIGHT,	6.0f },	/* the ship of modules */
-	{ HULL_TAB_INTRO | 212, HC_ARMOUR,	2.0f },	/* the large ship of the first space scene */
+	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 62,  HC_STATION,	1.0f },	/* the ring station */
+	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 192, HC_STATION,	1.0f },	/* its hub (a twin of the game's 86) */
+	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 86,  HC_CIVIL,	2.0f },	/* the green ship, in several scenes */
+	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 130, HC_FREIGHT,	6.0f },	/* the ship of modules */
+	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 212, HC_ARMOUR,	2.0f },	/* the large ship of the first space scene */
 	{ 80,  HC_STATION,	1.0f },	/* orbital station, outside, close up */
 	{ 82,  HC_STATION,	1.0f },	/* launch structure */
 	{ 84,  HC_HANGAR,	1.0f },	/* docking bay seen through the slot */

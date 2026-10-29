@@ -2574,11 +2574,13 @@ static inline int st_readable (unsigned int addr, unsigned int len);
  *
  * In the intro's scenes (its records 34 to 70: not its title 4, its logo
  * 12, nor 72, the credits and the start menu) a part is keyed by its own
- * model instead: a scene draws its ships as parts (sub-objects,
- * hull_part_word), which carry the scene's record, so the ship and the
- * ground under it would share a key (not with --classic-ui, --flat-hulls,
- * --flat-fx or --pixel-*: the base intro). The game's own parts, and
- * those of the menu's station, keep their object's key (a hangar's doors).
+ * model instead, marked HULL_TAB_SCENE: a scene draws its ships as parts
+ * (sub-objects, hull_part_word), which carry the scene's record, so the
+ * ship and the ground under it would share a key. Not with --classic-ui,
+ * --flat-hulls, --flat-fx or --pixel-*: the key is then the record's, as
+ * in the base, and no HULL_TAB_SCENE row of hull_models[] is reached. The
+ * game's own parts, and those of the menu's station, keep their object's
+ * key (a hangar's doors). hull_record_key is the record's key, always.
  */
 static int hull_part_word (unsigned int key);
 /* the flags that keep the base look keep the intro's as it was */
@@ -2588,10 +2590,9 @@ static int hull_intro_base (void)
 }
 #define HULL_INTRO_SCENE(r)	((r) >= 34 && (r) <= 70)
 
-static unsigned int hull_model_key (void)
+static unsigned int hull_record_key (void)
 {
-	unsigned int a6 = GetReg (REG_A6), rec, gd, tab, key;
-	int w;
+	unsigned int a6 = GetReg (REG_A6), rec, gd, tab;
 
 	if (a6 > MEM_SIZE || !st_readable (a6 - 212, 4) || !st_readable (__DL973c_game_data, 4))
 		return 0;
@@ -2599,10 +2600,17 @@ static unsigned int hull_model_key (void)
 	if (rec > MEM_SIZE || !st_readable (rec + 90, 2)) return 0;
 	gd = STMemory_ReadLong (__DL973c_game_data);
 	tab = gd == __DL1afae_gamedata1 ? 0 : gd == __DL685d0_intro_gamedata ? HULL_TAB_INTRO : HULL_TAB_OTHER;
-	key = 0x80000000u | tab | STMemory_ReadWord (rec + 90);
-	if (tab == HULL_TAB_INTRO && HULL_INTRO_SCENE (key & 0xffff)) {
-		if (hull_intro_base ()) return 0;	/* the base intro's scenes: flat */
-		if ((w = hull_part_word (key)) >= 0) key = 0x80000000u | tab | w;
+	return 0x80000000u | tab | STMemory_ReadWord (rec + 90);
+}
+
+static unsigned int hull_model_key (void)
+{
+	unsigned int key = hull_record_key ();
+	int w;
+
+	if ((key & HULL_TAB_INTRO) && HULL_INTRO_SCENE (key & 0xffff) && !hull_intro_base ()) {
+		key |= HULL_TAB_SCENE;
+		if ((w = hull_part_word (key)) >= 0) key = (key & ~0xffffu) | w;
 	}
 	return key;
 }
@@ -2612,9 +2620,7 @@ unsigned int hull_intro_part (void)
 {
 	unsigned int key = hull_model_key ();
 
-	if (!(key & HULL_TAB_INTRO)) return 0;	/* reads checked there; 0 for the base intro */
-	return HULL_INTRO_SCENE (STMemory_ReadWord (STMemory_ReadLong (GetReg (REG_A6) - 212) + 90)) ?
-		key & 0xffff : 0;
+	return key & HULL_TAB_SCENE ? key & 0xffff : 0;	/* 0 for the base intro */
 }
 
 static int hull_model_unit (unsigned int key);
@@ -4062,7 +4068,7 @@ void Nu_PutTwinklyCircle ()
 	znode_wrcolor (GetReg (REG_D6));
 	put_star ();
 	/* a halo for a light (a station's, a port's), never for a star */
-	key = flat_lights ? 0 : hull_model_key ();
+	key = flat_lights ? 0 : hull_record_key ();	/* the record's: an intro part's word is no star */
 	znode_wrlong (key && !is_star (key & 0xffff));
 }
 void Nu_DrawTwinklyCircle (void **data)
