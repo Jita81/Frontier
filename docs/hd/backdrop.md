@@ -26,6 +26,9 @@ arrows. Over a picture that margin would be a block of flat colour, so it is
 cleared; the button keeps its bevel and face (see
 [The page colour the game draws itself](#the-page-colour-the-game-draws-itself)).
 
+The docked front and rear 3D views get their own picture, the station
+concourse with the port's name lit on a sign: see [hangar.md](hangar.md).
+
 ## Switches
 
 | Switch | Effect |
