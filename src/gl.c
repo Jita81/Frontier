@@ -1964,6 +1964,55 @@ void Nu_DrawComplexBezier (void **data)
 }
 
 
+static unsigned int hull_model_key (void);
+extern int flat_exhaust;	/* --flat-exhaust (main.c) */
+
+/* HD engine exhaust (C5): 0 for the game's flat teardrop, else bit 31 and
+ * a flicker byte. Only ships get it: the game's own table, the model words
+ * above the missiles' ($a-$10) and below the stations' and ports' ($50 on),
+ * so chimney flares and the intro's plumes keep the base look. The flicker
+ * is seeded by the object's record and the game's clock (A6+524, which
+ * stands still while paused), so a frame draws the same in every run. */
+static unsigned int exhaust_put (void)
+{
+	unsigned int key = flat_exhaust || use_renderer != R_GL ? 0 : hull_model_key ();
+	unsigned int m = HULL_KEY_MODEL (key);
+
+	if (!HULL_KEY_OK (key) || m < 0x12 || m > 0x4e) return 0;
+	return 0x80000000u | (hull_mix (STMemory_ReadLong (GetReg (REG_A6) - 212) ^
+		hull_mix (STMemory_ReadLong (__DL5eb6_a6_base + 524) >> 12)) & 0xff);
+}
+
+#define TD_STRETCH	1.3333333333
+#define TD_BEZIER_STEPS	40
+
+/* One layer of the HD plume: the teardrop from a point on its axis, alpha a
+ * out to a ring 85% of the way to the rim and 0 at the rim, so the body
+ * keeps the game's width and only its edge is soft. */
+static void exhaust_fan (GLfloat cp[4][3], const GLfloat mid[3], float r, float g, float b, float a)
+{
+	GLdouble rim[TD_BEZIER_STEPS + 1][3], ring[TD_BEZIER_STEPS + 1][3];
+	int i, k;
+
+	for (i = 0; i <= TD_BEZIER_STEPS; i++) {
+		eval_bezier (rim[i], i * (1.0f / TD_BEZIER_STEPS), cp);
+		for (k = 0; k < 3; k++) ring[i][k] = mid[k] + 0.85 * (rim[i][k] - mid[k]);
+	}
+	glBegin (GL_TRIANGLE_FAN);
+	glColor4f (r, g, b, a);
+	glVertex3fv (mid);
+	for (i = 0; i <= TD_BEZIER_STEPS; i++) glVertex3dv (ring[i]);
+	glEnd ();
+	glBegin (GL_QUAD_STRIP);
+	for (i = 0; i <= TD_BEZIER_STEPS; i++) {
+		glColor4f (r, g, b, a);
+		glVertex3dv (ring[i]);
+		glColor4f (r, g, b, 0.0f);
+		glVertex3dv (rim[i]);
+	}
+	glEnd ();
+}
+
 /* For engines and industry chimney flares.
  *
  * fe2.s draws this teardrop in 2D (the code after the Nu_PutTeardrop
@@ -1994,6 +2043,7 @@ void Nu_PutTeardrop ()
 	znode_wrcolor (GetReg (REG_D6));
 	/* projected engine radius, ST pixels (fe2.s only gets here with > 8) */
 	znode_wrlong ((short) (GetReg (REG_D7) & 0xffff));
+	znode_wrlong (exhaust_put ());
 }
 void Nu_DrawTeardrop (void **data)
 {
@@ -2003,16 +2053,15 @@ void Nu_DrawTeardrop (void **data)
 	GLfloat eng[3], dir[3], ppd[3], sight[3];
 	GLdouble out[3];
 	int r, g, b, rad_st;
+	unsigned int hd;
 	float len_dir, len_ppd, half_w;
 
-#define TD_STRETCH	1.3333333333
-#define TD_BEZIER_STEPS	40
-	
 	if (use_renderer == R_OLD) return;
 	znode_rdvertexf (data, eng);
 	znode_rdvertexf (data, ctrlpoints[0]);
 	znode_rdcolor (data, &r, &g, &b);
 	rad_st = znode_rdlong (data);
+	hd = znode_rdlong (data);
 	
 	/* dir: tail -> engine (ctrlpoints[0] is the pointed tail) */
 	dir[0] = eng[0] - ctrlpoints[0][0];
@@ -2053,6 +2102,32 @@ void Nu_DrawTeardrop (void **data)
 		ctrlpoints[3][i] = ctrlpoints[0][i];
 	}
 
+	if (hd) {
+		/* the halo: the game's outline and colour, soft to its rim; then
+		 * a core toward white, half as wide and 80% (+-8% flicker) as
+		 * long, from the engine end: the outline scaled about the engine
+		 * (by len along the axis, by half across), so it stays inside it. */
+		GLfloat core[4][3], mid[3];
+		float c[3] = { (unsigned char) r / 255.0f, (unsigned char) g / 255.0f, (unsigned char) b / 255.0f };
+		float len = 0.8f * (1.0f + 0.08f * ((float) (hd & 0xff) / 127.5f - 1.0f));
+
+		glPushAttrib (GL_COLOR_BUFFER_BIT | GL_CURRENT_BIT | GL_LIGHTING_BIT);
+		glEnable (GL_BLEND);
+		glShadeModel (GL_SMOOTH);
+		glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		for (i = 0; i < 3; i++) mid[i] = ctrlpoints[0][i] + 0.6f * dir[i];
+		exhaust_fan (ctrlpoints, mid, c[0], c[1], c[2], 0.8f);
+		for (i = 0; i < 3; i++) {
+			core[0][i] = core[3][i] = eng[i] - len * dir[i];
+			core[1][i] = core[0][i] + TD_STRETCH * len * dir[i] + 0.5f * ppd[i];
+			core[2][i] = core[0][i] + TD_STRETCH * len * dir[i] - 0.5f * ppd[i];
+			mid[i] = eng[i] - 0.4f * len * dir[i];
+		}
+		glBlendFunc (GL_SRC_ALPHA, GL_ONE);
+		exhaust_fan (core, mid, 0.3f * c[0] + 0.7f, 0.3f * c[1] + 0.7f, 0.3f * c[2] + 0.7f, 0.9f);
+		glPopAttrib ();
+		return;
+	}
 	delta = 1.0f/TD_BEZIER_STEPS;
 	glColor3ub (r, g, b);
 	glBegin (GL_TRIANGLE_FAN);
