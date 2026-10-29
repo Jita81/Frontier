@@ -22,6 +22,7 @@
 #define OBJ_HIT		186	/* word: $ffff when a beam hit nothing */
 /* the models with effects (docs/hd/weapons.md) */
 #define MISSILE(m)	((m) >= 10 && (m) <= 16 && !((m) & 1))	/* homing, smart, naval, nuclear */
+#define MISSILE_NOSE_PZ	1	/* a missile model's nose is on its +z axis */
 #define M_EXPL		188	/* an explosion */
 #define M_LASER		190	/* a laser beam, put each frame of a shot */
 #define M_SMOKE		194	/* smoke and sparks, also a missile's trail */
@@ -211,13 +212,28 @@ static int n_missiles, n_smoke;
 static struct ball { unsigned int rec, missile; float v[3], R, a; } balls[64];
 static float mprev[4][3];
 static int n_balls, n_mprev;
+/* this frame's missiles' rotations, put side: rot[3 j + k] is the view's
+ * k part of the model's axis j (nine 1.15 words at A6-36 while the object is
+ * put, as procfx_sky_put reads them); the view's z is GL's -z */
+#define FRAME_ROT	36
+static struct { unsigned int rec; float rot[9]; } mrot[4];
+static int n_mrot;
+static void missile_rot (unsigned int rec)
+{
+	unsigned int a6 = GetReg (REG_A6), i;
+	if (flat_missiles || n_mrot == 4 || !readable (a6 - FRAME_ROT, 18)) return;
+	for (i = 0; i < (unsigned int) n_mrot; i++) if (mrot[i].rec == rec) return;
+	mrot[n_mrot].rec = rec;
+	for (i = 0; i < 9; i++) mrot[n_mrot].rot[i] = (short) STMemory_ReadWord (a6 - FRAME_ROT + 2 * i) / 32768.0f;
+	n_mrot++;
+}
 void fx_frame_begin (void)
 {
 	unsigned int now = SDL_GetTicks (), d = now - last_tick;
 	last_tick = now, n_frames++;
 	drew_3d = 1;
 	for (n_mprev = 0; n_mprev < n_missiles; n_mprev++) memcpy (mprev[n_mprev], missiles[n_mprev].v[0], sizeof mprev[0]);
-	n_missiles = n_smoke = n_balls = 0;
+	n_missiles = n_smoke = n_balls = n_mrot = 0;
 	check_scene ();
 	if (STMemory_ReadLong (A6 + A6_TIME_RATE) != 0) fx_ms += d > 50 ? 50 : d;
 }
@@ -227,6 +243,7 @@ int fx_tag_for (unsigned int tag[3])
 	unsigned int rec;
 	int m = put_model (&rec);
 	if (!MISSILE (m) && m != M_SMOKE && (m != M_EXPL || flat_explosions)) return 0;
+	if (MISSILE (m)) missile_rot (rec);
 	tag[0] = m, tag[1] = m == M_SMOKE ? rb (rec + OBJ_AGE) : intro_fire, tag[2] = rec;
 	return 1;
 }
@@ -429,8 +446,39 @@ int fx_circle (const int *iv, unsigned int d2, int r, int g, int b)
 	return 1;
 }
 
+/* A missile's flame, every frame its body is drawn, off its tail: the end its
+ * rotation puts aft, else the end nearer its smoke (near_a), else the end
+ * farther from the eye.  From its look: hue, width, flicker and, from the
+ * width, heat (homing 0.1 to nuclear 1): length, core and glow grow with it. */
+static void draw_flame (const struct missile *m, const struct look *lk, const float *a, const float *b, int near_a)
+{
+	const float *tail = near_a >= 0 ? (near_a ? a : b) : a[2] < b[2] ? a : b, *nose, *h = lk->rgb;
+	float L = sqrtf (dist2 (a, b)), heat = (lk->halo - 0.2f) * 5, dot = 0, w, pt[3][3];
+	float flick = 0.75f + 0.5f * vnoise (fx_ms * lk->hz / 1000, 1 + (m->rec >> 2 & 63));
+	int i, k;
+	for (i = 0; i < n_mrot && mrot[i].rec != m->rec; i++) ;
+	for (k = 0; i < n_mrot && k < 3; k++)	/* (b - a) on the model's z axis */
+		dot += (b[k] - a[k]) * (k == 2 ? -1 : 1) * mrot[i].rot[6 + k];
+	if (fabsf (dot) > 0.5f * L) tail = (dot > 0) == MISSILE_NOSE_PZ ? a : b;
+	nose = tail == a ? b : a;
+	for (k = 0; k < 3; k++) {	/* the flame's end, its hot middle, the white core */
+		float u = (tail[k] - nose[k]) * flick;
+		pt[0][k] = tail[k] + u * 10 * lk->halo, pt[1][k] = tail[k] + u * 4 * lk->halo, pt[2][k] = tail[k] + u * (0.4f + 0.5f * heat);
+	}
+	w = fmaxf (3, fminf (lk->halo * L / px_world (tail[2]), 160 * lk->halo)) * (0.85f + 0.15f * flick);
+	col (h[0], h[1], h[2], 0.8f);
+	ribbon (tail, pt[0], w, 0, 1);
+	col (0.5f + 0.5f * h[0], 0.5f + 0.5f * h[1], 0.5f + 0.5f * h[2], 0.9f);
+	ribbon (tail, pt[1], 0.6f * w, 0, 1);
+	col (0.85f + 0.15f * h[0], 0.85f + 0.15f * h[1], 0.85f + 0.15f * h[2], 1);	/* the nozzle, near white */
+	ribbon (tail, pt[2], w * lk->core / lk->halo * (1.5f + heat), 0, 1);
+	col (0.6f + 0.4f * h[0], 0.6f + 0.4f * h[1], 0.6f + 0.4f * h[2], 0.55f + 0.35f * heat);
+	sprite (tail, (0.9f + 0.9f * heat) * w * px_world (tail[2]), 0);
+}
+
 /* A missile burns where its smoke starts: a plume off the end of its body
- * nearer the smoke.  One with no smoke near it is coasting: no plume. */
+ * nearer the smoke.  One with no smoke near it is coasting: no plume.
+ * (--flat-missiles; else draw_flame.) */
 static void draw_plume (const struct missile *m)
 {
 	const struct look *lk = &looks[16 + (m->kind - 10) / 2];
@@ -445,6 +493,7 @@ static void draw_plume (const struct missile *m)
 		float da = dist2 (smoke[k], a), db = dist2 (smoke[k], b);
 		if (fminf (da, db) < best) best = fminf (da, db), near_a = da < db;
 	}
+	if (!flat_missiles && dist2 (a, b) > 0) { draw_flame (m, lk, a, b, best <= 36 * dist2 (a, b) ? near_a : -1); return; }
 	if (!(dist2 (a, b) > 0) || best > 36 * dist2 (a, b)) return;
 	tail = near_a ? a : b, nose = near_a ? b : a;
 	for (k = 0; k < 3; k++) {
