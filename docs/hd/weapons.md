@@ -55,21 +55,33 @@ the same game time, whatever its size. k changes how it burns, not how long.
 The game draws each blob as rings of circles, outer first. fx draws the
 outer ring as one fireball and drops the inner rings, so the light no longer
 stacks into a white blow-out. Each fireball has three layers:
-- An alpha-blended noise body that goes from fire to soot, spreading and
-  thinning with age.
-- A capped additive light in the fire colour. It goes from yellow to orange
-  to red, and is gone once the blob is smoke.
-- A white flash, only in the first 3% of life (k = 0), up to 6% at k = 1
-  (+88 = +1, not seen).
+- A body: a ragged, near-opaque disc of noise (alpha 0.95 for the first
+  third of life, easing to 0.55 at the end), whose solid part is at least
+  the game's own outer circle, so it covers base's footprint. Its colour goes
+  from yellow-orange to orange to red, then to soot grey as it spreads.
+- A capped additive light in the fire colour, gone once the blob is smoke.
+- A yellow-white flash the size of the core, only in the first 3% of life
+  (k = 0), up to 6% at k = 1 (+88 = +1, not seen); 4% for a missile's.
 
-`GLOW_CAP` (0.4) is the most light one layer adds, so a hull behind still
-reads. Measured on the death replay at 0.25, 0.4 and 0.6: none of them blows
-out (near-white pixels stay at about 0%), and the higher caps mostly make
-the shock rings stronger, so 0.4 stays. A fighter is smoke by about half its
-life; a heavy ship burns on. Blue spark circles stay small capped glows.
-Each explosion also gets one shock ring, a soft pale annulus round its
-blobs. It grows fast and is gone by a fifth of its life. It is drawn after
-the 3D view with no depth test, like the beams.
+`GLOW_CAP` (0.6) is the most light one layer adds. The fire and near-white
+shares were measured on the two death replays against base (same frames,
+debug frame dumps): the fire share is at or above base's on every frame
+checked and near-white pixels stay at 0%, as on base. A fighter turns to
+smoke late in its life; a heavy ship burns on. The fireball lasts as long as
+the game draws the explosion (the game decides that, as on base). Blue
+spark circles stay small capped glows.
+
+There is one shock ring per explosion event: an explosion that starts
+within eight blob radii of another seen in the last two frames (the several
+records of one death) gets none of its own. The ring is a soft pale annulus
+round the first blob, fainter than the fire (alpha at most 0.3), out fast and
+gone by a quarter of its life. It fades out before it reaches the view's
+edge. It is drawn with the explosion, so in the painter's 3D view (no depth
+test) a nearer hull drawn after it covers it.
+
+Smoke (model 194) is an alpha-blended grey noise puff, opaque enough (0.8
+to 1) and large enough (about twice the game's circle) to read like base's
+grey clouds after the fire.
 
 An explosion that starts within a tenth of its depth of where a missile was
 drawn the frame before is taken as the missile's. This is a heuristic, not a
@@ -82,7 +94,7 @@ tags every 188 and 194 record while the death state is set (`704(a6)` =
 `$58`). Lasers and missiles are not tagged there. The game-over screen is not
 touched.
 
-The explosion and smoke sprites and the shock rings switch GL lighting off
+The explosion and smoke sprites and the shock ring switch GL lighting off
 while they draw and then restore whatever it was. With lighting left on by
 the hull renderer, GL ignores the sprite colour (an earlier build drew the
 death-camera fireball a flat blue). Beams and plumes leave GL state as base
