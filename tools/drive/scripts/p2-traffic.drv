@@ -1,0 +1,71 @@
+# p2-traffic.drv - Phase 2 tour: near a station after launch, other traffic.
+#
+# Verifies: X1 (e) ships and the station near the start station.
+# Run:  tools/p2shots --routes traffic --base BASE --branch BRANCH
+# Expect: 01 the rear view just after launch (the station), 02-03 the same
+#         view after 15 s and 30 s at 10x, 04 the external view; whatever
+#         traffic is near shows on the scanner and, when close, in the view.
+# Start 3 (docked), new game only, no purchase.
+wait 6000
+key space
+wait 2000
+key 3
+wait 11000
+mouse 57 193
+wait 300
+click 200
+wait 2500
+mouse 171 57
+wait 300
+click 200
+wait 3000
+wait 30000
+sdlkey f2
+wait 1500
+sdlkey f1
+wait 1500
+sdlkey f1
+wait 1500
+mouse 2 120
+wait 300
+sdlkey esc
+wait 500
+shot 01-rear
+sdlkey f1 shift
+wait 300
+mouse 25 182
+wait 300
+click 200
+wait 300
+wait 15000
+mouse 2 120
+wait 300
+sdlkey esc
+wait 500
+shot 02-rear-15s
+sdlkey f1 shift
+wait 300
+mouse 25 182
+wait 300
+click 200
+wait 300
+wait 15000
+mouse 2 120
+wait 300
+sdlkey esc
+wait 500
+shot 03-rear-30s
+sdlkey f1 shift
+wait 300
+mouse 8 193
+wait 300
+click 200
+wait 2500
+mouse 2 120
+wait 300
+sdlkey esc
+wait 500
+shot 04-external
+sdlkey f1 shift
+wait 300
+quit
