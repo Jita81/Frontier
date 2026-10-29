@@ -66,4 +66,10 @@ int psurf_code_class (struct PSurf *s, int code);
 int psurf_classify (struct PSurf *s, const unsigned char *codes, int n,
 		    unsigned char *cls, short *dist);
 
+/* W3 (worlds.c): the surface's seed, and 1 if its body is a temperate
+ * world with weather (terran or ocean, not ice), from the model it is drawn
+ * with. */
+unsigned int psurf_seed (struct PSurf *s);
+int psurf_temperate (struct PSurf *s);
+
 #endif /* _PLANET_H */

@@ -41,6 +41,7 @@ typedef void (*_GLUfuncptr)();
 #include "../m68000.h"
 #include "screen.h"
 #include "planet.h"
+#include "worlds.h"
 #include "hdtext.h"
 #include "hdstill.h"
 #include "hdface.h"
@@ -4382,13 +4383,13 @@ static void planet_sun (const struct PlanetPrim *p, double sun[3])
 }
 
 /* Turn a patch of feature codes into an RGB texture, for one light zone. */
-static void planet_bake (GLuint tex, const unsigned char *codes, int n, int light_code,
-			 const unsigned short table[16])
+static void planet_bake (GLuint tex, const unsigned char *codes, const struct PPatch *pt,
+			 int light_code, const unsigned short table[16], struct PSurf *s)
 {
+	int n = pt->n;
 	static unsigned char *rgb;
 	static int rgb_size;
 	unsigned char pal[16][3];
-	unsigned char *o;
 	int i;
 
 	for (i = 0; i < 16; i++) {
@@ -4404,13 +4405,7 @@ static void planet_bake (GLuint tex, const unsigned char *codes, int n, int ligh
 		rgb = nrgb;
 		rgb_size = n*n*3;
 	}
-	o = rgb;
-	for (i = 0; i < n*n; i++) {
-		const unsigned char *c = pal[(*codes++ >> 2) & 15];
-		*o++ = c[0];
-		*o++ = c[1];
-		*o++ = c[2];
-	}
+	worlds_bake (rgb, codes, pt, s, (const unsigned char (*)[3]) pal);
 
 	glBindTexture (GL_TEXTURE_2D, tex);
 	glPixelStorei (GL_UNPACK_ALIGNMENT, 1);
@@ -4439,6 +4434,7 @@ static void planet_forget_textures (void)
 {
 	int i, f;
 
+	worlds_forget (NULL);
 	for (i = 0; i < PLANET_TEX_CACHE; i++) {
 		struct PlanetTex *t = &planet_tex[i];
 		if (!t->used) continue;
@@ -4526,6 +4522,7 @@ static struct PlanetTex *planet_get_tex (const struct PlanetPrim *p)
 			struct PPatch pt;
 			planet_face_patch (i, &pt);
 			psurf_raster (s, &pt, t->face_codes[i]);
+			worlds_forget (t->face_codes[i]);
 		}
 	}
 	t->patch_valid = 0;
@@ -4539,13 +4536,17 @@ static GLuint planet_zone_texture (struct PlanetTex *t, int f, int z, int light_
 {
 	if (f < 0) {
 		if (t->patch_code[z] != light_code) {
-			planet_bake (t->patch_tex[z], t->patch_codes, t->patch.n, light_code, t->table);
+			planet_bake (t->patch_tex[z], t->patch_codes, &t->patch, light_code, t->table,
+				     psurf_get (t->feat_addr, t->seed, t->radius_word, t->detail));
 			t->patch_code[z] = light_code;
 		}
 		return t->patch_tex[z];
 	}
 	if (t->face_code[f][z] != light_code) {
-		planet_bake (t->face_tex[f][z], t->face_codes[f], PLANET_FACE_RES, light_code, t->table);
+		struct PPatch pt;
+		planet_face_patch (f, &pt);
+		planet_bake (t->face_tex[f][z], t->face_codes[f], &pt, light_code, t->table,
+			     psurf_get (t->feat_addr, t->seed, t->radius_word, t->detail));
 		t->face_code[f][z] = light_code;
 	}
 	return t->face_tex[f][z];
@@ -4585,6 +4586,7 @@ static void planet_update_patch (struct PlanetTex *t, const double down[3], doub
 	t->patch.n = PLANET_PATCH_RES;
 	psurf_raster (psurf_get (t->feat_addr, t->seed, t->radius_word, t->detail),
 		      &t->patch, t->patch_codes);
+	worlds_forget (t->patch_codes);
 	t->patch_valid = 1;
 	for (z = 0; z < PLANET_MAX_ZONES; z++) t->patch_code[z] = -1;
 }

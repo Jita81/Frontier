@@ -50,6 +50,7 @@ extern enum RENDERERS use_renderer;
 
 int delta_x, delta_y, abs_delta_x, abs_delta_y;
 int flat_fx = 0;	/* --flat-fx: no HD weapon effects (fx.c); both renderers link this */
+int flat_biomes = 0;	/* --flat-biomes: flat seas, no coasts (worlds.c) */
 int flat_explosions = 0;	/* --flat-explosions: the base explosions, other HD weapon effects kept */
 int flat_lights = 0;	/* --flat-lights: no halo round the game's lights (gl.c) */
 int flat_lasers = 0;	/* --flat-lasers: every laser one plain ribbon, as before bolts and hot cores */
@@ -227,6 +228,7 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --flat-hulls          Flat ship faces, no hull plating.\n"
                "  --flat-sky            The game's flat Milky Way band (no star clouds).\n"
                "  --flat-planets        Hard light zones and flat atmosphere rings.\n"
+               "  --flat-biomes         Flat seas: no sea depth or beaches.\n"
                "  --flat-stars          No corona round the stars.\n"
                "  --flat-rings          The game's flat planetary rings.\n"
                "  --flat-lights         The game's lights without their soft halo.\n"
@@ -264,6 +266,8 @@ void Main_ReadParameters(int argc, char *argv[])
 		flat_sky = 1;
 	  else if (!strcmp(argv[i], "--flat-planets"))
 		flat_planets = 1;
+	  else if (!strcmp(argv[i], "--flat-biomes"))
+		flat_biomes = 1;
 	  else if (!strcmp(argv[i], "--flat-stars"))
 		flat_stars = 1;
 	  else if (!strcmp(argv[i], "--flat-rings"))
