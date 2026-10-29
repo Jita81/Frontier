@@ -89,6 +89,10 @@ void procfx_star_put (struct procfx_star *s);
 float procfx_corona_begin (const struct procfx_star *s, const float c[3], float r);
 void procfx_corona_end (void);
 
+/* a layer's program: the shared noise library plus body, its main();
+ * 0, after a note on stderr, when it does not compile (skies.c too) */
+unsigned int procfx_program (const char *name, const char *body);
+
 /* change_vidmode, before the GL context goes */
 void procfx_forget (void);
 
