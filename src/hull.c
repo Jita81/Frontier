@@ -80,8 +80,9 @@ int hull_profile_of_key (unsigned int key)
  * at object+90 (a byte offset into the model table, so twice the model's
  * number) and the table: the game's own, or HULL_TAB_INTRO for the intro's,
  * whose words name other models (its 40 to 52 are the intro's scenes, not
- * the game's ships). FE2_HULL_LOG=1 prints the ones a session meets, and
- * says which are not listed here. One line per model; edit freely. scale multiplies
+ * the game's ships; in its scenes, 34 to 70, a part is keyed by its own
+ * word, so its ships are listed by theirs). FE2_HULL_LOG=1 prints the ones
+ * a session meets, and says which are not listed here. One line per model; edit freely. scale multiplies
  * the class's panel size for that model. Only ship and station hulls (and
  * the station's hangar inside) are listed: a model that is not listed is
  * drawn flat (gl.c, hull_paint), so the intro's titles, text, planets,
@@ -109,6 +110,12 @@ static const struct {
 	{ 66,  HC_FREIGHT,	6.0f },	/* Python */
 	{ 70,  HC_FREIGHT,	6.0f },	/* Transporter */
 	{ HULL_TAB_INTRO | 72, HC_STATION, 1.0f },	/* the orbital station behind the menu */
+	/* the intro's scenes: their own model, or a part keyed by its own (gl.c) */
+	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 62,  HC_STATION,	1.0f },	/* the ring station */
+	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 192, HC_STATION,	1.0f },	/* its hub (a twin of the game's 86) */
+	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 86,  HC_CIVIL,	2.0f },	/* the green ship, in several scenes */
+	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 130, HC_FREIGHT,	6.0f },	/* the ship of modules */
+	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 212, HC_ARMOUR,	2.0f },	/* the large ship of the first space scene */
 	{ 80,  HC_STATION,	1.0f },	/* orbital station, outside, close up */
 	{ 82,  HC_STATION,	1.0f },	/* launch structure */
 	{ 84,  HC_HANGAR,	1.0f },	/* docking bay seen through the slot */

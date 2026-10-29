@@ -265,7 +265,56 @@ Not listed, so drawn flat:
   seen in a capture and is not guessed at;
 - game table 176 (unit 2^0), seen beside the bay; not identified;
 - the intro's 4 (the title), 12, 34 (the banner), 36, 38, 40 to 54 (its
-  scenes, the city among them) and every other intro word but 72.
+  scenes, the city among them) and every other intro word but 72 and the
+  scene rows below.
+
+### The intro's scenes
+
+The intro's records 34 to 70 are its scenes (4 is its title, 12 its logo,
+72 the credits and the start menu, which keep their look). A scene draws its
+ships, clouds and fireballs as parts that carry the scene's record, so in
+those records `hull_model_key` keys a part by its own model: the word, in
+the intro's table, of the header at -4(a6) (`hull_part_word`). The scene's
+own model keeps the scene's word. `FE2_HULL_LOG=1` prints `a part of N`
+after the table for a part of record N.
+
+| intro word | what | HD path |
+|---|---|---|
+| 62 (a scene's own model) and 192 | the ring station and its hub | station plating |
+| 86 | the green ship, in several scenes | civilian, panels x2 |
+| 130 | the ship of modules | freighter, panels x6 |
+| 212 | the large ship of the first space scene | armour, panels x2 |
+| 214 | the hypercloud's discs | the game's hypercloud glow (`hyper_tag`, `HYPERCLOUD_INTRO`) |
+| 114, 116 | the fireball's circles | the explosion fireball (`fx.c`, `I_FIRE`, as model 188, drawn young: the scene's record has no clock) |
+
+- **Classes are by role.** Comparing the first 40 header bytes of every
+  intro model with every game model finds twins only for 90, 192, 194,
+  214, 220, 222 and 224; none of the intro's ships is a game ship, so each
+  takes the class of the game's ships of its size and role.
+- **Flat:** the ground, the city, its buildings and the parts not
+  identified (76, 206, 124 to 128, 190, 218 to 222, 220 and 222 being
+  twins of game models that are not listed either).
+- **Planets and stars:** the intro's planet is a circle (90, a twin of a
+  game circle), and its sun a set of circles, not the game's planet or
+  star objects, so the HD planet and the star corona do not draw them.
+- **Lasers and plumes:** the scenes' beams and engine plumes are not
+  matched to a model and keep their look; so does the orange fireball of
+  the credits scene, after the HD one, whose model is not identified (only
+  the first, 114/116, is).
+- **Off:** `--classic-ui`, `--flat-hulls`, `--flat-fx`, `--pixel-*`
+  (`hull_intro_base`: a scene's key is then its record's, as in the base,
+  never marked `HULL_TAB_SCENE`, so the rows above are not reached and
+  `hull_intro_part` is 0) and `--old-renderer` give the base intro.
+- **Lights:** #57's halo tests the record's key (`hull_record_key`), as in
+  the base, so a part whose word is in the stars' range keeps its halo.
+- **Gate:** `fx.c`'s `put_model` tests the intro first (bit 5 of 598(a6)
+  set and `hull_intro_part` 114 or 116), then the flight and death-camera
+  gate, so the intro does not depend on 42(a6) and a death-camera record is
+  never read as an intro part. The fireball takes the explosions' layered
+  look (weapons.md).
+- **No carry-over:** a fireball is drawn from its circle at once; nothing
+  is added to fx's list of live effects, so nothing reaches the menu or a
+  game started from it.
 
 ## Switches
 
@@ -422,8 +471,9 @@ a kd-tree panel layout on a torus, from a seed.
 - **Off switch:** `--flat-hulls` draws the earlier build's flat faces.
   Styles 0 to 4 plate only the listed models too (they used to plate every
   face).
-- **Intro and menu:** the title, the banner, the city and the intro's
-  other scenes are flat; only the station behind the menu is plated.
+- **Intro and menu:** the title, the logo, the city and the credits are
+  flat; the station behind the menu and the scenes' ships and stations
+  (above) are plated.
 
 Known limits:
 - Bright, saturated liveries (an orange or red Krait) show little plating,
@@ -449,8 +499,8 @@ Known limits:
 - The binding of moving faces was checked from logged corner values (the
   290 door's fixed edge stays at the same tile coordinate through the
   slide and through the closed door's origin jump), not yet by eye.
-- The intro's ships fly inside its scene models, which are not listed, so
-  they are flat.
+- Some of the intro's parts (76, 206 and others above) are not identified
+  and are flat.
 - The hyperspace and fade-in flashes were not captured with plating.
 - The Viper, Python, Moray, Eagle and Transporter were not met in the test
   captures. They use their classes untested in-game.
