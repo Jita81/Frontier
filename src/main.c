@@ -51,6 +51,7 @@ extern enum RENDERERS use_renderer;
 int delta_x, delta_y, abs_delta_x, abs_delta_y;
 int flat_fx = 0;	/* --flat-fx: no HD weapon effects (fx.c); both renderers link this */
 int flat_explosions = 0;	/* --flat-explosions: the base explosions, other HD weapon effects kept */
+int flat_exhaust = 0;	/* --flat-exhaust: the game's flat engine plumes (gl.c) */
 
 /*-----------------------------------------------------------------------*/
 /*
@@ -230,6 +231,7 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --classic-ui          Keep the game's own flat 2D screens.\n"
                "  --flat-fx             Flat lasers, missiles and explosions (no HD effects).\n"
                "  --flat-explosions     Flat explosions only (HD lasers and missiles kept).\n"
+               "  --flat-exhaust        The game's flat engine plumes (no HD exhaust).\n"
                "  --hull-style N        Hull look, 0 plating, 1 big texture, 2 panels,\n"
                "                        3 bump and weathering, 4 per model, 5 a material\n"
                "                        per class of ship (default).\n"
@@ -267,6 +269,8 @@ void Main_ReadParameters(int argc, char *argv[])
 		flat_fx = 1;
 	  else if (!strcmp(argv[i], "--flat-explosions"))
 		flat_explosions = 1;
+	  else if (!strcmp(argv[i], "--flat-exhaust"))
+		flat_exhaust = 1;
 	  else if (!strcmp(argv[i], "--hull-style") && i + 1 < argc) {
 		hull_style = atoi (argv[++i]);
 		if (hull_style < 0 || hull_style > 5) hull_style = 5;
