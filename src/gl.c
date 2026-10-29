@@ -4559,6 +4559,18 @@ static double planet_space (const struct PlanetPrim *p, double d)
 	return planet_ramp (1.02, 1.5, d / p->R);
 }
 
+/* 0 on the ground, 1 from 2% of the radius out (about the top of the
+ * atmosphere) and beyond: the weight of the lit rim and of the sun's
+ * fall-off.  From space the rim is the atmosphere seen edge on at the
+ * limb; down in it every distant patch of ground is seen edge on too, and
+ * the rim would wash it all towards the innermost layer's colour, while
+ * the game's own light zones already shade the ground.  The sky there is
+ * the halo's job. */
+static double planet_aloft (const struct PlanetPrim *p, double d)
+{
+	return planet_ramp (1.0, 1.02, d / p->R);
+}
+
 static int planet_smooth_begin (const struct PlanetPrim *p, double d, const struct LightZone *z,
 				int n, double *soft)
 {
@@ -4574,9 +4586,10 @@ static int planet_smooth_begin (const struct PlanetPrim *p, double d, const stru
 	}
 	if (p->rim >= 0) {
 		split_rgb444b (p->rim, &r, &g, &b);
-		rim[0] = r / 255.0f; rim[1] = g / 255.0f; rim[2] = b / 255.0f; rim[3] = 1.0f;
+		rim[0] = r / 255.0f; rim[1] = g / 255.0f; rim[2] = b / 255.0f;
+		rim[3] = planet_aloft (p, d);
 	}
-	look[0] = p->flags & 0x80 ? 1.0f : 0.0f;
+	look[0] = p->flags & 0x80 ? planet_aloft (p, d) : 0.0;
 	look[1] = 0.25 * planet_space (p, d);
 	look[2] = 0.08f;
 	return procfx_planet_begin (lo, hi, *soft, rim, look, p->seed);

@@ -52,8 +52,10 @@ extern int flat_planets;
 
 /* Layer 3: around one textured planet.  lo, hi: each light zone's cos(sun) range
  * (9, 9 for none); soft: half width of the blend at a boundary; rim: the
- * innermost atmosphere colour, alpha 1 with an atmosphere; look: sun
- * shading on (1 lit), limb darkening, detail amplitude; seed: the body's.
+ * innermost atmosphere colour, alpha its weight (0 when airless or down
+ * on the ground, 1 seen from space); look: the sun's fall-off (1 lit and
+ * seen from space, 0 unlit or on the ground), limb darkening, detail
+ * amplitude; seed: the body's.
  * 0, changing nothing, when off or when the shader is not available. */
 int procfx_planet_begin (const float lo[4], const float hi[4], float soft,
 			 const float rim[4], const float look[3], unsigned int seed);
