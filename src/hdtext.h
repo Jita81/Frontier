@@ -48,6 +48,10 @@ void hdtext_glyph (const unsigned char *font, int x, int y, int col, int chr,
 void hdtext_frame (const unsigned char *font, const unsigned char *raster,
 		   unsigned char *out);
 
+/* Pixels (a 320x200 mask, or NULL) another HD layer draws over and
+ * takes out: hdtext_frame does not check a glyph's pixels there. */
+void hdtext_skip (const unsigned char *mask);
+
 /* Draw the runs hdtext_frame found, in the current viewport, with ST
  * coordinates (0..320, 0..200 from the bottom) as the modelview.  pal is
  * the RGBA palette of rows 0..167, ctrl_pal (16 entries) of 168..199. */

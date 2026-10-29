@@ -49,6 +49,7 @@ typedef void (*_GLUfuncptr)();
 #include "art.h"
 #include "hdback.h"
 #include "fx.h"
+#include "hdinst.h"
 #include "procfx.h"
 #include "bindings.h"
 #include "hdtip.h"
@@ -826,6 +827,7 @@ static void draw_control_panel ()
 	/* the screen with what the HD layers redraw taken out */
 	scr = VideoRaster;
 	if (!pixel_text || !pixel_art || !pixel_faces || !classic_ui) {
+		hdinst_mask (VideoRaster);
 		hdtext_frame (font_bmp, VideoRaster, hd_screen);
 		hdui_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
 		/* before hdstill: the face parts and the message thumbnail
@@ -833,6 +835,7 @@ static void draw_control_panel ()
 		hdface_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
 		hdstill_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
 		hdback_frame (VideoRaster, hd_screen);
+		hdinst_frame (VideoRaster, hd_screen);
 		scr = hd_screen;
 		if (galmap == 2) galaxy_soften (VideoRaster, hd_screen);
 		if (use_renderer == R_GL) hdback_concourse (fb_w, fb_h, hd_screen);
@@ -903,6 +906,7 @@ static void draw_control_panel ()
 	}
 	hdstill_draw (MainRGBPalette, CtrlRGBPalette);
 	hdface_draw (MainRGBPalette, CtrlRGBPalette);
+	hdinst_draw (MainRGBPalette, CtrlRGBPalette);
 	hdtext_draw (font_bmp, MainRGBPalette, CtrlRGBPalette);
 	hdui_draw_over (MainRGBPalette, CtrlRGBPalette);
 	endcard_draw ();

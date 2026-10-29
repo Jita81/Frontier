@@ -37,14 +37,28 @@ void hdstill_frame (const unsigned char *raster, unsigned char *out,
  * GL_REPLACE and the colour white, as hdtext_draw leaves them. */
 void hdstill_draw (const unsigned int *pal, const unsigned int *ctrl_pal);
 
-/* The HD gauges' red marks, shared with hdtip: the laser will not fire
- * above LASER_CUT; the hull temperature destroys the ship when it passes
- * $ffff (fe2.s L623bc, L61c26), and is red from HEAT_WARN, 3/4 of that. */
-#define HDSTILL_LASER_CUT	0xf000
-#define HDSTILL_HEAT_WARN	0xc000
-/* What of the gauges' SPEED/HEAT plate is at ST (x, y) this frame:
- * 1 the speed, 2 the hull temperature, 0 neither or no plate */
-int hdstill_gauge_at (int x, int y);
+/* The ship-status panel's limits, shared with hdtip.  The game's own:
+ * the laser will not fire above LASER_CUT (fe2.s L45dc8) and the hull
+ * temperature destroys the ship when it passes $ffff (l623bc, L61c26).
+ * The rest are the port's safety margins, not the game's. */
+#define HDSTILL_LASER_CUT	0xf000	/* game: no firing above it */
+#define HDSTILL_LASER_WARN	0xc000	/* port: amber from 80% of the cut-out */
+#define HDSTILL_HEAT_WARN	0xc000	/* port: amber from 3/4 of the hull's limit */
+#define HDSTILL_HEAT_CRIT	0xe000	/* port: red from 7/8 */
+#define HDSTILL_FUEL_LOW	0x2000	/* port: the last tank's final 1/8 is red */
+
+/* What the panel shows in a row, for hdtip's state line */
+enum {
+	HS_COOL = 1, HS_NORMAL, HS_HOT, HS_CRIT,			/* hull */
+	HS_READY, HS_RECHARGE, HS_TOOHOT, HS_NOFUEL, HS_NOLASER,	/* laser */
+	HS_FUEL, HS_LAST, HS_EMPTY,					/* fuel */
+	HS_SPEED
+};
+/* The row of the ship-status panel at ST (x, y) this frame: 1 hull
+ * temperature, 2 laser temperature, 3 fuel, 4 speed (row 2 off the 3D
+ * views), 0 none; *state its HS_ state, as drawn.  r (4 ints) gets the
+ * row's band, x0 y0 x1 y1 inclusive. */
+int hdstill_gauge_at (int x, int y, int *state, int *r);
 
 /* The icons in the function keys, as this layer names them */
 enum {
