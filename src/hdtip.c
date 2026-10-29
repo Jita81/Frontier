@@ -124,11 +124,12 @@ struct tip {
 	int x0, y0, x1, y1;	/* the part, ST pixels, inclusive */
 	int code;		/* the game's click code, -1 none */
 	char title[64], key[24], body[200], why[200];
+	int calm;		/* why is a state, not a warning: no triangle */
 };
 
 enum {
-	T_NONE, T_HIT, T_SLAT_FUEL, T_SLAT_LASER, T_SLAT_HULL, T_STATUS, T_VIEWNAME,
-	T_CLOCK, T_ACTUAL, T_SET, T_RELATIVE, T_PLATE_SPEED, T_PLATE_HEAT
+	T_NONE, T_HIT, T_ST_HULL, T_ST_LASER, T_ST_FUEL, T_ST_SPEED, T_STATUS, T_VIEWNAME,
+	T_CLOCK, T_ACTUAL, T_SET, T_RELATIVE
 };
 
 static const char *view_name (int v)
@@ -385,7 +386,7 @@ static void time_tip (struct tip *t, int code)
 static int find (int x, int y, struct tip *t)
 {
 	struct hdstill_panel p;
-	int r[4], code;
+	int r[4], code, row, hs = 0;
 
 	memset (t, 0, sizeof (*t));
 	t->code = -1;
@@ -414,49 +415,37 @@ static int find (int x, int y, struct tip *t)
 	}
 	if (y < 168) return 0;
 
-	/* the gauges: three slats slanting down to the right, 5 pixels apart,
-	 * picked by where the pointer's slant line meets the top row */
-	if (x >= 235 && x <= 264 && y >= 169 && y <= 178 &&
-	    x - (y - 169.5f) * 1.75f >= 235 && x - (y - 169.5f) * 1.75f <= 252) {
-		float top = x - (y - 169.5f) * 1.75f;
+	/* the ship-status panel beside the scanner: what each row shows,
+	 * then the state it is drawn in */
+	if ((row = hdstill_gauge_at (x, y, &hs, r))) {
+		static const char *const state[] = { "",
+			"Cool.", "Normal.", HEAT_WHY, "Critical: move away from the heat source now.",
+			"Ready to fire.", "Recharging between shots.", "Too hot: cooling. It fires again below its limit.",
+			"Off: no fuel in the tank.", "No laser fitted.",
+			"Normal.", "Last tank: no fuel in the hold.", "Empty.", "" };
 		unsigned int pl = player ();
-		int ch = top < 241 ? 1 : top < 246 ? 2 : 3;
-		t->x0 = 235, t->y0 = 169, t->x1 = 264, t->y1 = 178;
-		if (ch == 1) {
-			t->id = T_SLAT_FUEL;
-			SET (title, "Fuel gauge");
-			SET (body, "Fuel left in the unit being burnt; a new unit is used when it runs out.");
-		} else if (ch == 2) {
-			t->id = T_SLAT_LASER;
+		t->x0 = r[0], t->y0 = r[1], t->x1 = r[2], t->y1 = r[3];
+		t->id = T_ST_HULL + row - 1;
+		if (row == 1) {
+			SET (title, "Hull temperature");
+			SET (body, "Heat from stars and from flying fast in atmosphere. At 100% the ship is destroyed. "
+				   "In air, speed itself also damages the hull, at any temperature.");
+		} else if (row == 2) {
 			SET (title, "Laser temperature");
-			SET (body, "Rises as the lasers fire.");
-			if (pl && rw (pl + OBJ_LASER_TEMP) > HDSTILL_LASER_CUT)
-				SET (why, "Too hot to fire: let the lasers cool.");
-			else if (pl && rl (pl + OBJ_FUEL) == 0)
-				SET (why, "No fuel in the drive: the lasers cannot fire.");
+			SET (body, "Firing heats the laser. Above its limit it stops firing until it cools.");
+		} else if (row == 3) {
+			SET (title, "Fuel");
+			/* the tank is refilled from the hold only with this fitted (L451ea) */
+			SET (body, pl && rl (pl + OBJ_EQUIP) & 1u << 17 ?
+				   "Bar: fuel in the tank. Number: tonnes of fuel in the hold. When the tank runs dry, a tonne from the hold refills it." :
+				   "Bar: fuel in the tank. Number: tonnes of fuel in the hold.");
 		} else {
-			t->id = T_SLAT_HULL;
-			SET (title, "Hull temperature");
-			SET (body, "Rises close to stars and planets; keep it out of the top.");
-		}
-		if (ch == 3 && rw (A6 + A6_HULL_TEMP) >= HDSTILL_HEAT_WARN)
-			SET (why, HEAT_WHY);
-		return t->id;
-	}
-	/* the HD gauges' plate beside them */
-	if ((r[0] = hdstill_gauge_at (x, y))) {
-		t->x0 = 212, t->y0 = 168, t->x1 = 243, t->y1 = 177;
-		if (r[0] == 1) {
-			t->id = T_PLATE_SPEED;
 			SET (title, "Speed");
-			SET (body, "How fast you are moving, relative to the nearest large body: the front view's Actual speed, on every view.");
-		} else {
-			t->id = T_PLATE_HEAT;
-			SET (title, "Hull temperature");
-			SET (body, "Heat from a nearby star, or from air friction, as a share of what the hull can take. It falls away from them.");
-			if (rw (A6 + A6_HULL_TEMP) >= HDSTILL_HEAT_WARN)
-				SET (why, HEAT_WHY);
+			SET (body, "How fast you are moving, relative to the nearest large body: the 3D views' Actual speed.");
 		}
+		SET (why, state[hs]);
+		t->calm = hs != HS_HOT && hs != HS_CRIT && hs != HS_TOOHOT && hs != HS_NOFUEL &&
+			  hs != HS_LAST && hs != HS_EMPTY;
 		return t->id;
 	}
 	/* the two displays on the right, where the game has no click */
@@ -665,8 +654,8 @@ static int paint (const struct tip *t, float u, int max_w, int see)
 	CGColorSpaceRef cs;
 	CGContextRef g;
 
-	snprintf (key, sizeof (key), "%s|%s|%s|%s|%d|%d|%d", t->title, t->key, t->body, t->why,
-		  (int) (u * 1000), max_w, see);
+	snprintf (key, sizeof (key), "%s|%s|%s|%s|%d|%d|%d|%d", t->title, t->key, t->body, t->why,
+		  (int) (u * 1000), max_w, see, t->calm);
 	if (tex && !strcmp (key, tex_key)) return 1;
 
 	ft = CTFontCreateWithName (CFSTR ("DINAlternate-Bold"), 25 * u, NULL);
@@ -689,7 +678,8 @@ static int paint (const struct tip *t, float u, int max_w, int see)
 		kcw = ceilf (kw + 16 * u);
 	}
 	nb = wrap (t->body, fb, c2, wrapw, body, MAX_LINES);
-	nw = wrap (t->why, fw, 0xffb347, wrapw - tri, why, MAX_LINES);
+	if (t->calm) tri = 0;
+	nw = wrap (t->why, fw, t->calm ? 0x8fd8ff : 0xffb347, wrapw - tri, why, MAX_LINES);
 
 	wmax = tw + (keyl ? 14 * u + kcw : 0);
 	for (i = 0; i < nb; i++) {
@@ -743,7 +733,7 @@ static int paint (const struct tip *t, float u, int max_w, int see)
 		}
 		if (nw) y += 8 * u;
 		for (i = 0; i < nw; i++, y += lh) {
-			if (i == 0) {
+			if (i == 0 && !t->calm) {
 				/* a caution triangle, drawn here */
 				float s = 15 * u, cx = px + s / 2, cy = y + lh / 2;
 				CGMutablePathRef p = CGPathCreateMutable ();

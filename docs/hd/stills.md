@@ -94,6 +94,52 @@ examples.
 Art textures are built on demand for the framebuffer's size (up to 96 are kept) and
 rebuilt when the window size changes.
 
+## Status panel
+
+The three gauge slats right of the scanner (ST x 216.6-261, y 168.8-177.5) are drawn
+as one status panel with three rows. Each row has an icon, a track and a value with its
+unit. The panel has no words. A hover tip on the icon, track or value names the row,
+says what it measures and gives its state.
+
+| Row | Icon | Track | Value |
+|---|---|---|---|
+| Hull temperature | thermometer | hull heat, 0 to the point where the ship is lost | percent |
+| Laser temperature | laser emitter with a beam | laser heat, 0 to the cut where it stops firing | percent |
+| Fuel | droplet | the tank, as the game's own gauge works it out | tonnes of fuel in the hold |
+| Speed (off the 3D views) | speedometer, in the laser's row | none | the speed the 3D views print as Actual, in km/h or km/s |
+
+The 3D views print their own speed, so the panel shows the laser there and the speed
+row everywhere else.
+
+The icon carries the state:
+
+| Look | Means |
+|---|---|
+| Solid, coloured | working: laser ready to fire, fuel in the hold |
+| Grey-white, value faded | idle: hull cold, no laser fitted |
+| Hollow | the laser is recharging between shots |
+| Struck through, red and flashing | the laser is too hot to fire |
+| Struck through, amber, steady | the laser has no fuel to fire |
+| Amber droplet | the last tank: no fuel left in the hold |
+| Red outline droplet, struck through | the tank is empty |
+| Amber, then red | hull caution, then critical. Critical adds a red wash on the flash. |
+
+A small chevron by the hull's value shows the hull is warming: hotter than about 64
+frames ago, held for 60 frames. Tracks are neutral grey at rest and take the state's
+colour from caution up. Strokes sit inside their shapes, with no glow.
+
+The laser's state follows the checks the game makes before it fires (L45dc8): a laser
+is fitted, it is below its cut, its recharge is done and the tank is not empty. The
+fuel value reads the military hold from drive class 10 (L451ea). The fuel tip says the
+hold refills the tank only when the ship carries the equipment that does it.
+
+When the bay shows a message or an armed missile over the panel's left end, the panel
+moves right of the bay's edge. The track then starts nearer its icon. A row with less
+than 4 px of track left shows its icon and value only.
+
+The panel only reads the game. Under `--classic-ui`, `--pixel-art` or the software
+renderer, the game's own slats show as before.
+
 ## Switches
 
 | Switch | Effect |
@@ -102,6 +148,7 @@ rebuilt when the window size changes.
 | `FE2_HD_DEBUG=1` | Logs every bitmap seen on the screen, once each: its hash, size, place and whether it was replaced, kept (palette) or deferred, plus the running coverage as replaced of seen. |
 | `FE2_HD_DEBUG=2` | Also logs the colours each bitmap is shown in. |
 | `FE2_HD_DUMP=dir` | Writes each bitmap that was not replaced to `dir` as a PPM, to work out what it is. These are pictures of the game. **Never put them in the repository.** |
+| `FE2_HD_GAUGES=h,l,hold,tank[,flags]` | Shows these hex values in the status panel instead of the ship's, for captures: hull and laser temperature (0-ffff), tonnes in the hold, and the tank (0 is empty). Flags: 1 the laser recharging, 2 the flash held on, 4 the flash held off, 8 the hull warming, 10 the bay busy. Read once at start. It changes only the picture; the game is not touched. |
 
 The art is drawn with CoreGraphics, so builds other than macOS have an empty table and
 show the game's own bitmaps.
@@ -178,8 +225,14 @@ land as before.
 
 ## Known gaps
 
-- Pixels the game draws live stay at ST resolution, on top of the new art: the gauge
-  bars, scanner contacts and panel text that HD text does not cover.
+- Pixels the game draws live stay at ST resolution, on top of the new art: panel text
+  that HD text does not cover. Scanner contacts are drawn again as vectors by the
+  instruments layer (`src/hdinst.c`), which also redraws the gun sight and the lock boxes.
+- The status panel's laser heat was not seen rising in play. The start ship's pulse
+  laser cools faster than it heats, so its heat stays near 0. The hot states were
+  checked with `FE2_HD_GAUGES` only.
+- The bay-busy layout was checked with `FE2_HD_GAUGES` only. A missile armed or a
+  message in the bay did not cover the panel's test point in the runs made.
 - Faces (the station portrait and the comms face in the bay) are not drawn by this
   layer. They belong to the HD faces layer. Coverage lists every one seen.
 - The scanner is drawn in cyan where the game's is red. This is a design choice, not a

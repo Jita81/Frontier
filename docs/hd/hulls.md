@@ -303,6 +303,11 @@ after the table for a part of record N.
 - **Off:** `--classic-ui`, `--flat-hulls`, `--flat-fx`, `--pixel-*`
   (`hull_intro_base`: a scene's key is then 0, so its models are flat, as
   in the base) and `--old-renderer` give the base intro.
+- **Gate:** `fx.c`'s `put_model` tests the intro first (bit 5 of 598(a6)
+  set and `hull_intro_part` 114 or 116), then the flight and death-camera
+  gate, so the intro does not depend on 42(a6) and a death-camera record is
+  never read as an intro part. The fireball takes the explosions' layered
+  look (weapons.md).
 - **No carry-over:** a fireball is drawn from its circle at once; nothing
   is added to fx's list of live effects, so nothing reaches the menu or a
   game started from it.
