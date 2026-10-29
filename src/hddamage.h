@@ -1,8 +1,9 @@
 /*
  * Hit feedback for the HD flight view: when the player's ship is hit, a
- * brief red glow at the edges of the view (gone in 0.4 s), and while it
- * is damaged a small glass readout of its shields and hull, with a
- * warning when the hull is nearly gone.
+ * brief glow at the edges of the view (a cyan shimmer when the shields
+ * took it, a red pulse when the hull did), a slow red tint at the edges
+ * while the hull is critical, and while it is damaged a small glass
+ * readout of its shields and hull.
  *
  * Same contract as the other HD layers: everything is read from ST
  * memory, nothing is written (the oracle hashes that).  Only over a
@@ -10,6 +11,8 @@
  */
 #ifndef _HDDAMAGE_H
 #define _HDDAMAGE_H
+
+extern int flat_hud_hits;	/* --flat-hud-hits: one red flash, no tint (main.c) */
 
 /* In gl.c's draw_control_panel, before hdtip_draw; fb_w x fb_h is the
  * framebuffer.  Leaves the GL state as it found it. */

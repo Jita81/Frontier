@@ -4,11 +4,15 @@
  * Each frame: the player's shields and hull, read where the game keeps
  * them (the figures its own HUD and the F3 page show, with the same
  * arithmetic).  A drop since the last frame is a hit: the edges of the
- * view glow red and fade out within FLASH_MS.  The game does not keep
- * who fired, so the glow has no direction.  While the shields are down,
- * for LINGER_MS after a hit, and whenever the hull is under a quarter, a
- * small glass card at the top right of the view shows both as bars, the
- * figure just hit lit red, and a warning line when the hull is critical.
+ * view glow, a quick cyan shimmer when only the shields took it, a deeper
+ * red pulse when the hull did (--flat-hud-hits: one red flash for both).
+ * While the hull is critical a slow red tint breathes at the edges.  The
+ * game does not keep who fired, so the glow has no direction.
+ *
+ * While the shields are down, for LINGER_MS after a hit, and whenever the
+ * hull is under a quarter, a small glass card at the top right of the view
+ * shows both as bars, the figure just hit lit red, and a warning line when
+ * the hull is critical.
  *
  * Nothing here writes to ST memory: the oracle hashes it.
  */
@@ -40,7 +44,10 @@
 #define OBJ_SHIELD_MAX		182	/* word: shields full, 64 a generator */
 #define OBJ_HULL		184	/* word: hull left; full is four times the type's hull mass */
 
-#define FLASH_MS	400	/* the edge glow, gone */
+#define FLASH_MS	400	/* --flat-hud-hits: the one red glow, gone */
+#define SH_MS		300	/* a shield hit's cyan shimmer, gone */
+#define HULL_MS		550	/* a hull hit's red pulse, gone */
+#define CRIT_MS		1600	/* the critical tint's period */
 #define HOT_MS		1500	/* the figure hit stays lit */
 #define LINGER_MS	6000	/* the card stays after the last hit */
 #define CRIT_TENTHS	250	/* hull under 25.0%: the warning */
@@ -56,9 +63,47 @@ static int rw (p68K a) { return STMemory_ReadWord (a) & 0xffff; }
 static unsigned int rl (p68K a) { return (unsigned int) STMemory_ReadLong (a); }
 
 static unsigned int last_pl;
-static int last_sh = -1, last_hull = -1, was_flying, log_on = -1;
-static Uint32 flash_at, sh_hit, hull_hit, last_hit, last_ms;
+static int last_sh = -1, last_hull = -1, was_flying, log_on = -1, flash_hull;
+static Uint32 flash_at, sh_hit, hull_hit, last_hit, last_ms, crit_at;
 static float flash_a, card_a;
+
+/* A hit's glow from t; a shield hit does not cut short a hull pulse */
+static void hit (Uint32 t, int hull)
+{
+	if (!hull && !flat_hud_hits && flash_hull && flash_at && t - flash_at < HULL_MS) return;
+	flash_at = t, flash_hull = hull;
+	flash_a = hull ? (flat_hud_hits ? 0.55f : 0.6f) : 0.35f;
+}
+
+/* FE2_DMG_TEST, a test hook: "s@2000,h@4000+275,c@6000" draws a shield
+ * hit, a hull hit, or the critical tint (on from then), that many ms after
+ * the first flight frame; "+ms" holds that look still at that age.  Only
+ * what is drawn changes: no figures, no ST memory. */
+static struct { int k, at, hold; } ev[16];
+static int n_ev = -1, next_ev, test_crit;
+static Uint32 t0, hold_at;
+
+static void test_events (Uint32 now)
+{
+	const char *s;
+	int used;
+
+	if (n_ev < 0)
+		for (n_ev = 0, s = getenv ("FE2_DMG_TEST"); s && *s && n_ev < 16; n_ev++) {
+			ev[n_ev].k = *s, ev[n_ev].hold = -1;
+			if (sscanf (s + 1, "@%d%n", &ev[n_ev].at, &used) < 1) break;
+			s += 1 + used;
+			if (*s == '+' && sscanf (s + 1, "%d%n", &ev[n_ev].hold, &used) == 1) s += 1 + used;
+			if (*s == ',') s++;
+		}
+	if (!t0) t0 = now;
+	for (; next_ev < n_ev && now - t0 >= (Uint32) ev[next_ev].at; next_ev++) {
+		Uint32 at = t0 + ev[next_ev].at;
+		if (ev[next_ev].k == 'c') test_crit = 1, crit_at = at;
+		else hit (at, ev[next_ev].k == 'h');
+		hold_at = ev[next_ev].hold >= 0 ? at + ev[next_ev].hold : 0;
+	}
+}
 
 /* The figures as the game shows them: shields in whole percent (none
  * fitted: -1), the hull in tenths of a percent (L7e142, F3's condition) */
@@ -202,20 +247,28 @@ static void rect (float x, float y, float w, float h)
 	glEnd ();
 }
 
-/* The red glow: a frame from the edges of x0..x1, y0..y1 (y down) to d
- * inside them, a at the edge and nothing inside */
-static void glow (float x0, float y0, float x1, float y1, float d, float a)
+/* A glow: a frame from the edges of x0..x1, y0..y1 (y down) to d inside
+ * them, rgb at a at the edge and nothing inside.  shimmer: the inner edge
+ * ripples along its length, three waves a side drifting with t (s) */
+static void glow (float x0, float y0, float x1, float y1, float d, float a, unsigned int rgb, int shimmer, float t)
 {
 	float o[5][2] = { { x0, y0 }, { x1, y0 }, { x1, y1 }, { x0, y1 }, { x0, y0 } };
 	float in[5][2] = { { x0 + d, y0 + d }, { x1 - d, y0 + d }, { x1 - d, y1 - d }, { x0 + d, y1 - d }, { x0 + d, y0 + d } };
-	int i;
+	int i, n = shimmer ? 24 : 1;
 
 	glBegin (GL_QUAD_STRIP);
-	for (i = 0; i < 5; i++) {
-		col (T_RED, a);
-		glVertex2f (o[i][0], o[i][1]);
+	for (i = 0; i <= 4 * n; i++) {
+		int c = i / n, e = c < 4 ? c + 1 : c;
+		float f = (i % n) / (float) n, ox = o[c][0] + (o[e][0] - o[c][0]) * f, oy = o[c][1] + (o[e][1] - o[c][1]) * f;
+		float ix = in[c][0] + (in[e][0] - in[c][0]) * f, iy = in[c][1] + (in[e][1] - in[c][1]) * f;
+		if (shimmer) {
+			float m = 1 + 0.4f * sinf (6.2832f * (3 * (c + f) + 5 * t));
+			ix = ox + (ix - ox) * m, iy = oy + (iy - oy) * m;
+		}
+		col (rgb, a);
+		glVertex2f (ox, oy);
 		glColor4f (0, 0, 0, 0);
-		glVertex2f (in[i][0], in[i][1]);
+		glVertex2f (ix, iy);
 	}
 	glEnd ();
 }
@@ -224,8 +277,8 @@ void hddamage_draw (int fb_w, int fb_h)
 {
 	unsigned int pl = rl (A6 + A6_PLAYER);
 	int flying, sh, sh_pct, hull, hull_t, px, py, pw, ph, show, hot_sh, hot_hull, rows, crit;
-	float u, dt, a, x, y, view_top;
-	Uint32 now = SDL_GetTicks ();
+	float u, dt, a, x, y, view_top, tint;
+	Uint32 now = SDL_GetTicks (), fx_now, ms;
 
 	if (classic_ui || pixel_art || use_renderer == R_OLD) return;
 	flying = pl && bindings_in_flight_view (0, 0) && !controls_page_open ();
@@ -241,11 +294,9 @@ void hddamage_draw (int fb_w, int fb_h)
 	if (flying && was_flying && pl == last_pl) {
 		if (sh < last_sh) sh_hit = last_hit = now;
 		if (hull < last_hull) hull_hit = last_hit = now;
-		if (sh < last_sh || hull < last_hull) {
-			flash_at = now;
-			flash_a = hull < last_hull ? 0.55f : 0.35f;
-		}
+		if (sh < last_sh || hull < last_hull) hit (now, hull < last_hull);
 	}
+	if (flying) test_events (now);
 	/* FE2_DMG_LOG set: each change of the figures to stderr, to check
 	 * them against the F3 page */
 	if (log_on < 0) log_on = getenv ("FE2_DMG_LOG") != NULL;
@@ -254,18 +305,24 @@ void hddamage_draw (int fb_w, int fb_h)
 	last_pl = pl, last_sh = sh, last_hull = hull, was_flying = flying;
 	if (!flying) {
 		card_a = 0;
-		flash_at = 0;
+		flash_at = crit_at = 0;
 		return;
 	}
 
 	crit = hull_t < CRIT_TENTHS;
+	if (flat_hud_hits || !(crit || test_crit)) crit_at = 0;
+	else if (!crit_at) crit_at = now;
 	show = (sh_pct >= 0 && sh_pct < 100) || (last_hit && now - last_hit < LINGER_MS) || crit;
 	card_a += (show ? dt / 0.15f : -dt / 0.3f);
 	if (card_a < 0) card_a = 0;
 	if (card_a > 1) card_a = 1;
-	a = flash_at && now - flash_at < FLASH_MS ? 1 - (now - flash_at) / (float) FLASH_MS : 0;
+	fx_now = hold_at ? hold_at : now;
+	ms = flat_hud_hits ? FLASH_MS : flash_hull ? HULL_MS : SH_MS;
+	a = flash_at && fx_now - flash_at < ms ? 1 - (fx_now - flash_at) / (float) ms : 0;
 	if (!a) flash_at = 0;
-	if (!a && !card_a) return;
+	/* the critical tint: 0.06 to 0.18 and back every CRIT_MS */
+	tint = crit_at ? 0.12f - 0.06f * cosf (6.2832f * ((fx_now - crit_at) % CRIT_MS) / CRIT_MS) : 0;
+	if (!a && !card_a && !tint) return;
 
 	gl_picture_rect (&px, &py, &pw, &ph);
 	if (pw < 32 || ph < 32) return;
@@ -293,15 +350,23 @@ void hddamage_draw (int fb_w, int fb_h)
 	glBlendFunc (GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 	glTexEnvf (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 
-	if (a) {
-		/* the whole window above the panel: the 3D view, wide or not */
+	if (a || tint) {
+		/* the whole window above the panel: the 3D view, wide or not;
+		 * every band under a fifth of it deep, clear of its middle */
+		float dm, e = 1 - a;
 		glViewport (0, 0, fb_w, fb_h);
 		glMatrixMode (GL_PROJECTION);
 		glLoadIdentity ();
 		glOrtho (0, fb_w, fb_h, 0, -1, 1);
 		glMatrixMode (GL_MODELVIEW);
 		view_top = fb_h - (py + 32.0f * ph / 200);
-		glow (0, 0, fb_w, view_top, 0.16f * (fb_w < view_top ? fb_w : view_top), flash_a * a * a);
+		dm = fb_w < view_top ? fb_w : view_top;
+		if (tint) glow (0, 0, fb_w, view_top, 0.19f * dm, tint, T_RED, 0, 0);
+		/* flat: #52's flash; else a tenth rising, then easing out */
+		if (a && flat_hud_hits) glow (0, 0, fb_w, view_top, 0.16f * dm, flash_a * a * a, T_RED, 0, 0);
+		else if (a) glow (0, 0, fb_w, view_top, (flash_hull ? 0.19f : 0.10f) * dm,
+				  flash_a * (e < 0.1f ? e / 0.1f : a * a / 0.81f), flash_hull ? T_RED : T_ACCENT,
+				  !flash_hull, (fx_now - flash_at) / 1000.0f);
 	}
 
 	rows = sh_pct >= 0 ? 2 : 1;

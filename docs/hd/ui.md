@@ -303,9 +303,25 @@ The other HD streams have their own switches: `--pixel-art` (stills) and
   hit leaves the hull word wrapped round (`L44c96`, fe2.s:26968); that reads
   as 0.
 - **Hit flash.** A drop in shields or hull since the last frame of the
-  same flight is a hit: a red glow at the edges of the view, never across
-  its middle, fading out within 0.4 s. The game keeps no attacker for the
-  player's hits, so the glow has no direction. Nothing moves the 3D view.
+  same flight is a hit, drawn as a glow at the edges of the view (every band
+  under a fifth of it deep, so never across its middle) in one of three
+  looks:
+  - *Shield hit* (the shields dropped, the hull did not): a thin cyan
+    (accent) band whose inner edge ripples, three waves a side drifting
+    with time, peak alpha 0.35, gone in 0.3 s.
+  - *Hull hit* (the hull dropped, shields or not; it outranks a shield hit
+    in the same frame, and a shield hit does not cut a hull pulse short):
+    a deeper red band, peak alpha 0.6, rising in the first tenth then
+    easing out, gone in 0.55 s.
+  - *Hull critical* (under 25%): a slow red tint at the edges, as deep as
+    the hull pulse, alpha 0.06 to 0.18 and back every 1.6 s, under any hit
+    flash. It stops at once when the hull is repaired above the line, the
+    flight ends or the ship changes.
+
+  The game keeps no attacker for the player's hits, so the glow has no
+  direction. Nothing moves the 3D view. `--flat-hud-hits` restores the
+  single red flash of the first version (alpha 0.55 hull, 0.35 shields,
+  0.4 s) and no critical tint.
 - **Readout.** A small frosted card (`hdui_glass_px`, the hdui tokens) at
   the top right of the 4:3 picture, clear of the console and its gauges:
   shields (when fitted) and hull as figures and bars, the figure just hit
@@ -317,6 +333,13 @@ The other HD streams have their own switches: `--pixel-art` (stills) and
 - **Switches.** Off with `--classic-ui`, `--pixel-art` and
   `--old-renderer`. `FE2_DMG_LOG=1` writes each change of the figures to
   stderr, to check them against the F3 page.
+- **Test hook.** `FE2_DMG_TEST` (read once) injects looks into what is
+  drawn, never into the figures or ST memory: a comma list of `kind@ms`,
+  ms after the first flight frame, kind `s` a shield hit, `h` a hull hit,
+  `c` the critical tint (on from then). `+ms` after an entry holds that
+  look still at that age, for clean captures:
+  `FE2_DMG_TEST=s@45000+30,h@53000+275,c@61000+800`. Unset, it does
+  nothing.
 
 ## Art and provenance
 
