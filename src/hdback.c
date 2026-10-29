@@ -833,6 +833,13 @@ static void sign_text (int k, const char *s, const float *q, float fade)
 	sign_quad (q, t);
 }
 
+static int conc_up;	/* the concourse took the gunsight out this frame */
+
+int hdback_concourse_up (void)
+{
+	return conc_up;
+}
+
 /* out: the screen hdui and the rest have edited, before it is drawn */
 void hdback_concourse (int fb_w, int fb_h, unsigned char *out)
 {
@@ -847,6 +854,7 @@ void hdback_concourse (int fb_w, int fb_h, unsigned char *out)
 	int px, py, pw, ph_i, top, k, i, bare;
 
 	last = now;
+	conc_up = 0;
 	if (dts > 0.1f) dts = 0.1f;
 	if (off < 0) read_env ();
 	if (pixel_art || classic_ui || off) return;
@@ -866,7 +874,7 @@ void hdback_concourse (int fb_w, int fb_h, unsigned char *out)
 		fade = 0;
 		return;
 	}
-	if (fade > 0.5f)	/* the gunsight off the signs and the door */
+	if ((conc_up = fade > 0.5f))	/* the gunsight off the signs and the door */
 		for (i = 60; i < 108; i++) memset (out + i * ST_W + 136, CLEAR, 48);
 
 	/* over the 3D view and the bars beside it, down to the console */

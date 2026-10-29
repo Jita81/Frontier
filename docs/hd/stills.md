@@ -225,8 +225,9 @@ land as before.
 
 ## Known gaps
 
-- Pixels the game draws live stay at ST resolution, on top of the new art: scanner
-  contacts and panel text that HD text does not cover.
+- Pixels the game draws live stay at ST resolution, on top of the new art: panel text
+  that HD text does not cover. Scanner contacts are drawn again as vectors by the
+  instruments layer (`src/hdinst.c`), which also redraws the gun sight and the lock boxes.
 - The status panel's laser heat was not seen rising in play. The start ship's pulse
   laser cools faster than it heats, so its heat stays near 0. The hot states were
   checked with `FE2_HD_GAUGES` only.

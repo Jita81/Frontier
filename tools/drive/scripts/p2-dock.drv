@@ -1,0 +1,127 @@
+# p2-dock.drv - Phase 2 tour: station approach, docking and the bay.
+#
+# Verifies: X1 (d) the start station outside, the approach and the docked bay.
+# Run:  tools/p2shots --routes dock --base BASE --branch BRANCH
+# Expect: 01 the station in the rear view after launch, 02 the same with the
+#         station targeted, 03 the external view under autopilot, 04 the
+#         approach at 1000x, 05 docked (the arrival comms page).
+# Start 3 (docked), new game only: buy an autopilot, launch, target the
+# station and let the autopilot dock.  Each shot is paused (Esc), the pointer
+# parked off the controls, and resumed (Shift+F1, then the time icon).
+wait 6000
+key space
+wait 2000
+key 3
+wait 11000
+# Comms, shipyard, new ships: part-exchange for the third ship in the list
+# (it leaves cash), then shipyard, upgrades: fit the automatic pilot.
+mouse 57 193
+wait 300
+click 200
+wait 2500
+mouse 271 57
+wait 300
+click 200
+wait 2500
+mouse 171 146
+wait 300
+click 200
+wait 3000
+mouse 129 54
+wait 300
+click 200
+wait 3000
+mouse 57 193
+wait 300
+click 200
+wait 2500
+mouse 271 57
+wait 300
+click 200
+wait 2500
+mouse 171 57
+wait 300
+click 200
+wait 3000
+mouse 129 94
+wait 300
+click 200
+wait 3000
+# Comms, launch request; the station launches the ship.
+mouse 57 193
+wait 300
+click 200
+wait 2500
+mouse 171 57
+wait 300
+click 200
+wait 3000
+wait 30000
+# F2, F1, F1: the rear view, the station behind.
+sdlkey f2
+wait 1500
+sdlkey f1
+wait 1500
+sdlkey f1
+wait 1500
+mouse 2 120
+wait 300
+sdlkey esc
+wait 500
+shot 01-station
+sdlkey f1 shift
+wait 300
+mouse 160 85
+wait 300
+click 200
+wait 1500
+mouse 2 120
+wait 300
+sdlkey esc
+wait 500
+shot 02-target
+sdlkey f1 shift
+wait 300
+sdlkey f1
+wait 1500
+# The autopilot icon twice: engines, then the autopilot to the target.
+mouse 264 193
+wait 300
+click 200
+wait 1500
+mouse 264 193
+wait 300
+click 200
+wait 1500
+mouse 2 120
+wait 300
+sdlkey esc
+wait 500
+shot 03-autopilot
+sdlkey f1 shift
+wait 300
+mouse 48 182
+wait 300
+click 200
+wait 300
+wait 20000
+mouse 2 120
+wait 300
+sdlkey esc
+wait 500
+shot 04-approach
+sdlkey f1 shift
+wait 300
+mouse 48 182
+wait 300
+click 200
+wait 300
+wait 25000
+mouse 2 120
+wait 300
+sdlkey esc
+wait 500
+shot 05-docked
+sdlkey f1 shift
+wait 300
+quit

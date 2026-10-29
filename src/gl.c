@@ -49,9 +49,11 @@ typedef void (*_GLUfuncptr)();
 #include "art.h"
 #include "hdback.h"
 #include "fx.h"
+#include "hdinst.h"
 #include "procfx.h"
 #include "bindings.h"
 #include "hdtip.h"
+#include "hddamage.h"
 /* MEM_SIZE, and the engine's variables by label address (__D<label>) */
 #include "../host.h"
 #include "../fixups.h"
@@ -272,6 +274,7 @@ static void change_vidmode ()
 	}
 	procfx_forget ();
 	hdtip_forget ();
+	hddamage_forget ();
 	if (screen_tex) {
 		glDeleteTextures (1, &screen_tex);
 		screen_tex = 0;
@@ -824,6 +827,7 @@ static void draw_control_panel ()
 	/* the screen with what the HD layers redraw taken out */
 	scr = VideoRaster;
 	if (!pixel_text || !pixel_art || !pixel_faces || !classic_ui) {
+		hdinst_mask (VideoRaster);
 		hdtext_frame (font_bmp, VideoRaster, hd_screen);
 		hdui_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
 		/* before hdstill: the face parts and the message thumbnail
@@ -831,6 +835,7 @@ static void draw_control_panel ()
 		hdface_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
 		hdstill_frame (VideoRaster, hd_screen, MainRGBPalette, CtrlRGBPalette);
 		hdback_frame (VideoRaster, hd_screen);
+		hdinst_frame (VideoRaster, hd_screen);
 		scr = hd_screen;
 		if (galmap == 2) galaxy_soften (VideoRaster, hd_screen);
 		if (use_renderer == R_GL) hdback_concourse (fb_w, fb_h, hd_screen);
@@ -901,10 +906,12 @@ static void draw_control_panel ()
 	}
 	hdstill_draw (MainRGBPalette, CtrlRGBPalette);
 	hdface_draw (MainRGBPalette, CtrlRGBPalette);
+	hdinst_draw (MainRGBPalette, CtrlRGBPalette);
 	hdtext_draw (font_bmp, MainRGBPalette, CtrlRGBPalette);
 	hdui_draw_over (MainRGBPalette, CtrlRGBPalette);
 	endcard_draw ();
 	controls_page_draw ();
+	hddamage_draw (fb_w, fb_h);
 	hdtip_draw ();
 	
 	glDisable (GL_TEXTURE_2D);
@@ -4559,6 +4566,18 @@ static double planet_space (const struct PlanetPrim *p, double d)
 	return planet_ramp (1.02, 1.5, d / p->R);
 }
 
+/* 0 on the ground, 1 from 2% of the radius out (about the top of the
+ * atmosphere) and beyond: the weight of the lit rim and of the sun's
+ * fall-off.  From space the rim is the atmosphere seen edge on at the
+ * limb; down in it every distant patch of ground is seen edge on too, and
+ * the rim would wash it all towards the innermost layer's colour, while
+ * the game's own light zones already shade the ground.  The sky there is
+ * the halo's job. */
+static double planet_aloft (const struct PlanetPrim *p, double d)
+{
+	return planet_ramp (1.0, 1.02, d / p->R);
+}
+
 static int planet_smooth_begin (const struct PlanetPrim *p, double d, const struct LightZone *z,
 				int n, double *soft)
 {
@@ -4574,9 +4593,10 @@ static int planet_smooth_begin (const struct PlanetPrim *p, double d, const stru
 	}
 	if (p->rim >= 0) {
 		split_rgb444b (p->rim, &r, &g, &b);
-		rim[0] = r / 255.0f; rim[1] = g / 255.0f; rim[2] = b / 255.0f; rim[3] = 1.0f;
+		rim[0] = r / 255.0f; rim[1] = g / 255.0f; rim[2] = b / 255.0f;
+		rim[3] = planet_aloft (p, d);
 	}
-	look[0] = p->flags & 0x80 ? 1.0f : 0.0f;
+	look[0] = p->flags & 0x80 ? planet_aloft (p, d) : 0.0;
 	look[1] = 0.25 * planet_space (p, d);
 	look[2] = 0.08f;
 	return procfx_planet_begin (lo, hi, *soft, rim, look, p->seed);

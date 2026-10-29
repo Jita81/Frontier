@@ -1,0 +1,226 @@
+#!/usr/bin/env python3
+"""p2shots - the Phase 2 capture tour.
+
+Replays the fixed drive routes (tools/drive/scripts/p2-*.drv) against a base
+binary and a branch binary (and optionally the branch with extra flags, e.g.
+--flat-hulls), saves every `shot` as a JPEG, builds one side-by-side contact
+sheet per route and prints a per-shot difference table.  --repeat runs one
+binary twice instead and reports which shots are bit-identical.
+
+Each run gets a fresh stage directory (symlinks to the binary and its data, no
+frontier.ini, no saves), so every run starts from the same defaults.  Output
+goes to tools/drive/out/p2shots/<stamp>/ (ignored) or --out; shots are never
+committed.  Standard library + ffmpeg only.
+"""
+import argparse
+import concurrent.futures as cf
+import glob
+import hashlib
+import json
+import os
+import shlex
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.dirname(HERE)
+DRIVE = os.path.join(HERE, "drive")
+DATA = ("fe2.s.bin", "art", "sfx", "music", "cursor.png", "joystick.ini")
+CELL = (480, 360)            # contact-sheet cell
+VIEW = (0.035, 0.83)         # rows below the title bar, above the HD console
+CHANGED = 16                 # a pixel "differs" above this grey difference
+GT = bytes(0 if i <= CHANGED else 1 for i in range(256))
+
+
+def ff(*args, **kw):
+    return subprocess.run(["ffmpeg", "-v", "error", "-y", *args], capture_output=True, **kw)
+
+
+def stage(binary, where):
+    """A run directory: the binary plus its data, linked; nothing written back."""
+    os.makedirs(where, exist_ok=True)
+    os.symlink(os.path.abspath(binary), os.path.join(where, "frontier"))
+    for name in DATA:
+        for root in (os.path.dirname(os.path.abspath(binary)), REPO):
+            if os.path.exists(os.path.join(root, name)):
+                os.symlink(os.path.join(root, name), os.path.join(where, name))
+                break
+    return os.path.join(where, "frontier")
+
+
+def drive(col, route, out, a, slot):
+    """Play one route with one column's binary; return {shot name: png path}."""
+    run = os.path.join(out, route, col["name"])
+    exe = stage(col["bin"], os.path.join(run, "stage"))
+    game = "--size %d %d %s" % (a.size[0], a.size[1], col["flags"])
+    cmd = [sys.executable, "-I", os.path.join(DRIVE, "drive.py"), "--bin", exe,
+           "--script", os.path.join(DRIVE, "scripts", "p2-%s.drv" % route),
+           "--out", run, "--timeout", str(a.timeout), "--quiet", "--max-png-kb", "4000",
+           "--pos", "%d,640" % (1300 - 1200 * slot), "--args=" + game]
+    if a.lib:
+        cmd += ["--lib", a.lib]
+    env = dict(os.environ, PATH=os.path.join(out, "bin") + os.pathsep + os.environ["PATH"])
+    for attempt in (1, 2):  # a failed run, or one that lost a shot, is played once more
+        r = subprocess.run(cmd, capture_output=True, text=True, env=env)
+        try:
+            m = json.load(open(os.path.join(run, "manifest.json")))
+        except (OSError, ValueError):
+            m = {"shots": [], "duration_s": 0, "shot_errors": ["no manifest"]}
+        if r.returncode == 0 and not m.get("shot_errors"):
+            break
+    lines = r.stdout.strip().splitlines() or r.stderr.strip().splitlines() or ["no output"]
+    return {s["name"]: os.path.join(run, s["file"]) for s in m.get("shots", []) if "file" in s}, \
+        "%s: %s%s (%.0f s)" % (col["name"], lines[-1].split("->")[0].replace("drive.py: ", ""),
+                               " after a retry" if attempt == 2 else "", m.get("duration_s", 0))
+
+
+def rgb_sha(png):
+    """Hash of the decoded pixels below the title bar (its focus colour varies)."""
+    r = ff("-i", png, "-vf", "crop=iw:ih-trunc(ih*%g):0:trunc(ih*%g)" % (VIEW[0], VIEW[0]),
+           "-f", "rawvideo", "-pix_fmt", "rgb24", "-")
+    return hashlib.sha256(r.stdout).hexdigest() if r.returncode == 0 else None
+
+
+def diff(a_png, b_png):
+    """(mean grey difference 0-255, % pixels changed, % changed in the view)."""
+    probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                            "stream=width,height", "-of", "csv=p=0", a_png],
+                           capture_output=True, text=True).stdout.strip().split(",")
+    w, h = int(probe[0]), int(probe[1])
+    r = ff("-i", a_png, "-i", b_png, "-lavfi",
+           "[1][0]scale2ref[b][a];[a][b]blend=all_mode=difference,format=gray",
+           "-f", "rawvideo", "-")
+    d = r.stdout
+    if r.returncode or len(d) != w * h:
+        return None
+    view = d[int(h * VIEW[0]) * w:int(h * VIEW[1]) * w]
+    return (sum(d) / len(d), 100.0 * sum(d.translate(GT)) / len(d),
+            100.0 * sum(view.translate(GT)) / len(view))
+
+
+def jpeg(png, dest):
+    ff("-i", png, "-vf", "scale=960:-2:flags=area", "-q:v", "4", dest)
+    return dest
+
+
+def sheet(rows, dest):
+    """rows: [[jpg or None, ...], ...] -> one JPEG, a row per shot, a column per run."""
+    ins, chains, w, h = [], [], CELL[0], CELL[1]
+    for row in rows:
+        for path in row:
+            ins += ["-i", path] if path else ["-f", "lavfi", "-i", "color=gray:s=%dx%d" % CELL]
+    n = len(ins) // 2
+    for i in range(n):
+        chains.append("[%d]scale=%d:%d,pad=%d:%d:2:2:black[c%d]" % (i, w - 4, h - 4, w, h, i))
+    cols = len(rows[0])
+    for r in range(len(rows)):
+        cells = "".join("[c%d]" % (r * cols + c) for c in range(cols))
+        chains.append(cells + ("hstack=inputs=%d" % cols if cols > 1 else "null") + "[r%d]" % r)
+    rows_in = "".join("[r%d]" % r for r in range(len(rows)))
+    chains.append(rows_in + ("vstack=inputs=%d" % len(rows) if len(rows) > 1 else "null") + "[o]")
+    ff(*ins, "-filter_complex", ";".join(chains), "-map", "[o]", "-frames:v", "1",
+       "-q:v", "4", dest)
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    p.add_argument("--base", help="base binary (left column)")
+    p.add_argument("--branch", default=os.path.join(REPO, "frontier"), help="branch binary")
+    p.add_argument("--flags", default="", help="also run the branch with these game flags "
+                   "(write --flags=--flat-hulls)")
+    p.add_argument("--repeat", action="store_true",
+                   help="run --branch twice and report which shots are bit-identical")
+    p.add_argument("--routes", default="all", help="all, or names like dock,kill")
+    p.add_argument("--out", help="output dir (default tools/drive/out/p2shots/<stamp>)")
+    p.add_argument("--lib", help="libfe2drive.dylib (default: drive.py's)")
+    p.add_argument("--size", type=int, nargs=2, default=(1280, 960), metavar=("W", "H"))
+    p.add_argument("--timeout", type=float, default=600, help="per run, seconds")
+    p.add_argument("--jobs", type=int, default=1, choices=(1, 2), help="runs at once")
+    p.add_argument("--keep-png", action="store_true")
+    a = p.parse_args()
+
+    avail = sorted(os.path.basename(f)[3:-4]
+                   for f in glob.glob(os.path.join(DRIVE, "scripts", "p2-*.drv")))
+    routes = avail if a.routes == "all" else a.routes.split(",")
+    for r in routes:
+        if r not in avail:
+            sys.exit("p2shots: no route p2-%s.drv (have: %s)" % (r, ", ".join(avail)))
+    if a.repeat:
+        cols = [{"name": "run1", "bin": a.branch, "flags": a.flags},
+                {"name": "run2", "bin": a.branch, "flags": a.flags}]
+    else:
+        cols = ([{"name": "base", "bin": a.base, "flags": ""}] if a.base else []) + \
+               [{"name": "branch", "bin": a.branch, "flags": ""}]
+        if a.flags:
+            cols.append({"name": "flags", "bin": a.branch, "flags": a.flags})
+    for c in cols:
+        if not os.path.exists(c["bin"]):
+            sys.exit("p2shots: no binary %s" % c["bin"])
+    out = os.path.abspath(a.out or os.path.join(DRIVE, "out", "p2shots",
+                                                time.strftime("%Y%m%d-%H%M%S")))
+    os.makedirs(os.path.join(out, "bin"))
+    # screencapture now and then fails ("could not create image from window")
+    # when the host is busy: drive.py finds this retrying wrapper first on PATH.
+    retry = os.path.join(out, "bin", "screencapture")
+    with open(retry, "w") as f:
+        f.write('#!/bin/bash\nfor i in 1 2 3 4 5 6 7 8 9 10; do /usr/sbin/screencapture "$@" && exit 0;'
+                ' sleep 1; done; exit 1\n')
+    os.chmod(retry, 0o755)
+    t0 = time.time()
+    report = {"columns": [dict(c, sha256=hashlib.sha256(open(c["bin"], "rb").read())
+                               .hexdigest()) for c in cols], "routes": {}}
+    print("p2shots: %s -> %s" % (" | ".join("%s=%s %s" % (c["name"], c["bin"], c["flags"])
+                                             for c in cols), out))
+    for route in routes:
+        with cf.ThreadPoolExecutor(a.jobs) as pool:
+            jobs = [pool.submit(drive, c, route, out, a, i % a.jobs) for i, c in enumerate(cols)]
+            runs = [j.result() for j in jobs]
+        names = []
+        for shots, _ in runs:
+            names += [n for n in shots if n not in names]
+        rows, table = [], []
+        for n in names:
+            pngs = [shots.get(n) for shots, _ in runs]
+            row = {"shot": n, "exact": [], "diff": []}
+            ref = pngs[0]
+            for i, png in enumerate(pngs[1:], 1):
+                if ref and png:
+                    row["exact"].append(rgb_sha(ref) == rgb_sha(png))
+                    row["diff"].append(diff(ref, png))
+                else:
+                    row["exact"].append(None)
+                    row["diff"].append(None)
+            rows.append([jpeg(png, os.path.join(out, route, "%s-%s.jpg" % (n, c["name"])))
+                         if png else None for png, c in zip(pngs, cols)])
+            table.append(row)
+        if rows:
+            sheet(rows, os.path.join(out, "%s-sheet.jpg" % route))
+        report["routes"][route] = {"runs": [s for _, s in runs], "shots": table}
+        print("\n== %s  (%s)" % (route, "; ".join(s for _, s in runs)))
+        hdr = "".join("  %-40s" % ("%s vs %s" % (c["name"], cols[0]["name"])) for c in cols[1:])
+        print("%-24s%s" % ("shot", hdr))
+        for row in table:
+            cells = ""
+            for ex, d in zip(row["exact"], row["diff"]):
+                cells += "  %-40s" % ("missing" if d is None else "%s mean %5.2f chg %5.2f%% view %5.2f%%"
+                                      % ("SAME" if ex else "diff", d[0], d[1], d[2]))
+            print("%-24s%s" % (row["shot"], cells))
+        if not a.keep_png:
+            for shots, _ in runs:
+                for png in shots.values():
+                    os.unlink(png)
+        if not table:
+            print("(no shots)")
+    report["wall_s"] = round(time.time() - t0, 1)
+    with open(os.path.join(out, "report.json"), "w") as f:
+        json.dump(report, f, indent=1)
+    print("\np2shots: %d route(s) in %.0f s; sheets and report.json in %s"
+          % (len(routes), report["wall_s"], out))
+    print("columns: " + " | ".join(c["name"] for c in cols)
+          + "  (mean = mean grey difference 0-255; chg = %% of pixels differing by > %d;"
+          " view = the same between the title bar and the console)" % CHANGED)
+
+
+if __name__ == "__main__":
+    main()

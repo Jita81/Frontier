@@ -87,12 +87,13 @@ void glPopAttrib (void) { }
 /* procfx layer 2: test_render.c runs both paths, smooth and exact */
 int flat_planets;
 static int planet_shader = 1;
-static float planet_rim_alpha;
+static float planet_rim_alpha, planet_sun_falloff;
 int procfx_planet_begin (const float lo[4], const float hi[4], float soft,
 			 const float rim[4], const float look[3], unsigned int seed)
 {
-	(void) lo; (void) hi; (void) soft; (void) look; (void) seed;
+	(void) lo; (void) hi; (void) soft; (void) seed;
 	planet_rim_alpha = rim[3];
+	planet_sun_falloff = look[0];
 	return planet_shader && !flat_planets;
 }
 void procfx_planet_attr (double c, double mu, const double m[3])
