@@ -51,6 +51,7 @@ extern enum RENDERERS use_renderer;
 int delta_x, delta_y, abs_delta_x, abs_delta_y;
 int flat_fx = 0;	/* --flat-fx: no HD weapon effects (fx.c); both renderers link this */
 int flat_explosions = 0;	/* --flat-explosions: the base explosions, other HD weapon effects kept */
+int flat_buildings = 0;	/* --flat-buildings: a surface port's buildings unplated (hull.c) */
 int flat_lights = 0;	/* --flat-lights: no halo round the game's lights (gl.c) */
 
 /*-----------------------------------------------------------------------*/
@@ -224,6 +225,8 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --flat-sky            The game's flat Milky Way band (no star clouds).\n"
                "  --flat-planets        Hard light zones and flat atmosphere rings.\n"
                "  --flat-stars          No corona round the stars.\n"
+               "  --flat-buildings      A surface port's buildings without plating\n"
+               "                        and windows.\n"
                "  --flat-lights         The game's lights without their soft halo.\n"
                "  --pixel-text          Keep the original bitmap font (no HD text;\n"
                "                        FE2_HD_FONT=<PostScript name> picks the font).\n"
@@ -257,6 +260,8 @@ void Main_ReadParameters(int argc, char *argv[])
 		flat_planets = 1;
 	  else if (!strcmp(argv[i], "--flat-stars"))
 		flat_stars = 1;
+	  else if (!strcmp(argv[i], "--flat-buildings"))
+		flat_buildings = 1;
 	  else if (!strcmp(argv[i], "--flat-lights"))
 		flat_lights = 1;
 	  else if (!strcmp(argv[i], "--pixel-text"))

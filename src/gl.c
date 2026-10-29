@@ -2399,7 +2399,7 @@ static void hull_make_class (int cls, int shader)
 {
 	const struct HullClass *c = &hull_classes[cls];
 	int n = 512, i;
-	unsigned char *lum = hull_class_tile (cls, &n), *buf;
+	unsigned char *lum = c->tile ? hull_class_tile (cls, &n) : NULL, *buf;
 	int tiled = lum != NULL;
 	Uint32 t = SDL_GetTicks ();
 
@@ -3604,6 +3604,13 @@ static int hull_paint5 (double p[][3], int n, const struct HullCtx *cx, int host
 	}
 	/* the hangar's floor and ceiling are its deck plating */
 	if (cls == HC_HANGAR && cx->wok && hull_obj_axis (cx->w, n) == HULL_DECK_AXIS) cls = HC_DECK;
+	/* a port's apron and roofs, a face too small for a storey or two (a
+	 * sign board, a kiosk) and a face with no model frame stay flat */
+	if (cls == HC_BUILDING && (!cx->wok || hull_obj_axis (cx->w, n) == HULL_DECK_AXIS ||
+				   hull_obj_span (cx->w, n) < 0.6 * hull_classes[cls].panel * sc)) {
+		hull_end ();
+		return 0;
+	}
 	if (hull_log_on () && (mark || pure || lamp || (host && !calm && cls != HC_STATION)))
 		hull_log_face (cx->key, cx->seed, rgb, mark ? "sign/marking (yellow paint), drawn flat" :
 			       pure ? "lamp, window or lit sign (pure colour), drawn flat" :
@@ -3729,6 +3736,7 @@ static int hull_complex_begin (GLdouble c[][3], int n, void **data)
 	hull_chain = calm;
 	if (!hull_cc_on || hull_style < 5 || flat_hulls || fx_tagged () || n < 3) return 0;
 	cls = hull_class_of_key (hull_cc.key, &sc, off);
+	if (cls == HC_BUILDING) return 0;	/* a port's ground, roads and hills */
 	mx = mn = c8[0];
 	for (k = 1; k < 3; k++) {
 		if (c8[k] > mx) mx = c8[k];

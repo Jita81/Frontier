@@ -15,7 +15,7 @@
 
 /* Material profiles. HP_GENERIC is what styles 1 to 3 give every model;
  * style 4 picks one of the four classes per model from hull_models[]. */
-enum { HP_GENERIC, HP_SMALL, HP_TRADER, HP_MILITARY, HP_STATION, HP_N };
+enum { HP_GENERIC, HP_SMALL, HP_TRADER, HP_MILITARY, HP_STATION, HP_BUILDING, HP_N };
 
 struct HullProfile {
 	const char *name;
@@ -83,11 +83,13 @@ unsigned int hull_mix (unsigned int x);
  * it flat.
  */
 enum { HC_GENERIC, HC_POLICE, HC_CIVIL, HC_FREIGHT, HC_ARMOUR, HC_FIGHTER,
-       HC_STATION, HC_HANGAR, HC_DECK, HC_N };
+       HC_STATION, HC_HANGAR, HC_DECK, HC_BUILDING, HC_N };
 /* HC_STATION and after are buildings and interiors: their decal hosts and
  * complex shapes (signs) stay flat. HC_DECK is no model's class: it is the
  * hangar's floor and ceiling (a hangar face that looks along the model's
- * HULL_DECK_AXIS), see hull_obj_axis. */
+ * HULL_DECK_AXIS), see hull_obj_axis. HC_BUILDING is a port's buildings
+ * (seeded storeys and windows, no tile); its faces that look along
+ * HULL_DECK_AXIS (the apron, the roofs) stay flat. */
 #define HULL_BUILDING(cls)	((cls) >= HC_STATION)
 #define HULL_DECK_AXIS	1
 
