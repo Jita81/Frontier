@@ -228,6 +228,10 @@ land as before.
 - Pixels the game draws live stay at ST resolution, on top of the new art: panel text
   that HD text does not cover. Scanner contacts are drawn again as vectors by the
   instruments layer (`src/hdinst.c`), which also redraws the gun sight and the lock boxes.
+  The lock's acquire zoom starts with boxes larger than the 3D view: while a box's
+  corners are off screen, its corner brackets are drawn clamped just inside the view
+  (above the speed strip at the bottom), not as bare edge-to-edge lines. A box cut off
+  on one side only keeps a faint line on that edge.
 - The status panel's laser heat was not seen rising in play. The start ship's pulse
   laser cools faster than it heats, so its heat stays near 0. The hot states were
   checked with `FE2_HD_GAUGES` only.
