@@ -4019,20 +4019,57 @@ static void draw_corona (void **data, const int v[3], float size)
 	procfx_corona_end ();
 }
 
+extern int flat_lights;	/* --flat-lights (main.c) */
+
+/* A light's halo (B4): an additive glow in its colour, white toward the
+ * core, round the game's disc (radius r, eye units, at distance d).  It
+ * reaches past the disc by twice the disc, kept between a glint of 1.5
+ * px_scale pixels and 2% of the view's height, and fades as the root of
+ * 2 km / d beyond 2 km (eye units are millimetres), so a far station is
+ * a sparkle of points, not a fog.  No depth test, as everywhere in the 3D
+ * view: it is painted back to front, so whatever the game paints over the
+ * disc hides the halo as it hides the disc. */
+static void light_halo (float r, float d, int R, int G, int B)
+{
+	GLfloat pm[16];
+	GLint vp[4];
+	float px, w, a = d > 2e6f ? sqrtf (2e6f / d) : 1, cr = (unsigned char) R / 255.0f,
+	      cg = (unsigned char) G / 255.0f, cb = (unsigned char) B / 255.0f;
+
+	glGetFloatv (GL_PROJECTION_MATRIX, pm);
+	glGetIntegerv (GL_VIEWPORT, vp);
+	px = 2 * d / (pm[5] * vp[3]);		/* eye units per pixel at d */
+	w = 2 * r / px;
+	w = w < 1.5f * px_scale () ? 1.5f * px_scale () : w > 0.02f * vp[3] ? 0.02f * vp[3] : w;
+	w = r + w * px;
+	glPushAttrib (GL_COLOR_BUFFER_BIT | GL_CURRENT_BIT | GL_LIGHTING_BIT);
+	glEnable (GL_BLEND);
+	glBlendFunc (GL_SRC_ALPHA, GL_ONE);
+	glShadeModel (GL_SMOOTH);
+	disc_strips (0, 0, 0.15f * w, w, cr, cg, cb, 0.6f * a);
+	disc_strips (0, 0, 0.1f * w, 0.45f * w, (cr + 1) / 2, (cg + 1) / 2, (cb + 1) / 2, 0.8f * a);
+	glPopAttrib ();
+}
+
 void Nu_PutTwinklyCircle ()
 {
+	unsigned int key;
+
 	if (use_renderer == R_OLD) return;
 	znode_wrlong (NU_TWINKLYCIRCLE);
 	znode_wrlong (GetReg (REG_D2));
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrcolor (GetReg (REG_D6));
 	put_star ();
+	/* a halo for a light (a station's, a port's), never for a star */
+	key = flat_lights ? 0 : hull_model_key ();
+	znode_wrlong (key && !is_star (key & 0xffff));
 }
 void Nu_DrawTwinklyCircle (void **data)
 {
 	int v1[3];
-	unsigned int dreg2, isize;
-	float size;
+	unsigned int dreg2, isize, halo;
+	float size, disc;
 	int r, g, b;
 
 	dreg2 = znode_rdlong (data);
@@ -4044,8 +4081,9 @@ void Nu_DrawTwinklyCircle (void **data)
 	isize = (dreg2 << 16) | (dreg2 >> 16);
 	//printf ("%x (%x)\n", GetReg (2), isize);
 	
-	size = -0.002*((short)dreg2)*v1[2];
+	size = disc = -0.002*((short)dreg2)*v1[2];
 	draw_corona (data, v1, size);
+	halo = znode_rdlong (data);
 	
 	/* billboard: always face the camera, otherwise this twinkle/star
 	 * dot degenerates to an invisible line when viewed edge-on. */
@@ -4063,6 +4101,7 @@ void Nu_DrawTwinklyCircle (void **data)
 			glVertex3f (0.0f, -size, 0.0f);
 			glVertex3f (0.0f, +size, 0.0f);
 		glEnd ();
+		if (halo) light_halo (disc > 0 ? disc : 0, -v1[2], r, g, b);
 	}
 	billboard_end ();
 }

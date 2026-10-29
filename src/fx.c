@@ -29,15 +29,18 @@
 /* The look of each type.  A laser's class is bits 3-6 of its type byte (the
  * game's own damage table is indexed so): 1-3 are pulse lasers ($88 the start
  * ship's, $9a mining), 4-9 beam lasers ($a1 the police's) and accelerators.
- * A laser: hue, core and halo widths in pixels, shimmer in Hz (0 steady).
+ * A laser: hue, core and halo widths in pixels, shimmer in Hz (0 steady), and
+ * its shape: a pulse laser's BOLT flies out along the beam, a BEAM laser holds
+ * a beam with hot spots running along its core, PLASMA is a beam that crackles.
  * A missile (16 + (model - 10) / 2): flame hue, core and flame widths as a
  * share of its body's length, flicker in Hz.  Procedural: no art. */
-static const struct look { float rgb[3], core, halo, hz; } looks[20] = {
-	{ { 1, .2f, .1f }, 4, 32, 0 }, { { 1, .2f, .1f }, 5, 40, 0 },	/* 0 (none seen), 1: pulse, red */
-	{ { 1, .45f, .1f }, 6, 48, 0 }, { { 1, .8f, .25f }, 4, 30, 8 },	/* 2: orange; 3: mining, amber, throbs */
-	{ { .3f, 1, .4f }, 4, 34, 0 }, { { .2f, .85f, 1 }, 5, 42, 0 },	/* 4: beam, green; 5: cyan */
-	{ { .35f, .5f, 1 }, 6, 50, 0 }, { { .7f, .4f, 1 }, 7, 58, 0 },	/* 6: blue; 7: violet */
-	{ { 1, .45f, .9f }, 8, 66, 12 }, { { 1, .6f, 1 }, 10, 80, 12 },	/* 8, 9 (and 10-15): plasma, crackles */
+enum { BOLT = 1, BEAM, PLASMA };
+static const struct look { float rgb[3], core, halo, hz; int shape; } looks[20] = {
+	{ { 1, .2f, .1f }, 4, 32, 0, BOLT }, { { 1, .2f, .1f }, 5, 40, 0, BOLT },	/* 0 (none seen), 1: pulse, red */
+	{ { 1, .45f, .1f }, 6, 48, 0, BOLT }, { { 1, .8f, .25f }, 4, 30, 8, BOLT },	/* 2: orange; 3: mining, amber, throbs */
+	{ { .3f, 1, .4f }, 4, 34, 0, BEAM }, { { .2f, .85f, 1 }, 5, 42, 0, BEAM },	/* 4: beam, green; 5: cyan */
+	{ { .35f, .5f, 1 }, 6, 50, 0, BEAM }, { { .7f, .4f, 1 }, 7, 58, 0, BEAM },	/* 6: blue; 7: violet */
+	{ { 1, .45f, .9f }, 8, 66, 12, PLASMA }, { { 1, .6f, 1 }, 10, 80, 12, PLASMA },	/* 8, 9 (and 10-15): plasma, crackles */
 	[16] = { { .3f, .85f, 1 }, .08f, .22f, 30 }, { { .4f, 1, .55f }, .08f, .24f, 40 },	/* homing blue, smart green */
 	{ { 1, .6f, .25f }, .1f, .3f, 25 }, { { 1, .35f, .75f }, .12f, .4f, 20 },	/* naval orange, nuclear magenta */
 };
@@ -146,7 +149,9 @@ static void sprite (const float *p, float r, float rot)
 
 /* a strip of glow from a to b, wa and wb pixels wide at its ends; texture q is
  * the depth, so a beam spanning 2000:1 in depth keeps its core */
-static void ribbon (const float *a, const float *b, float wa, float wb)
+/* trap: shade it as the trapezoid it is on screen (texture q scaled by each
+ * end's width), so a strip tapering to a point stays even about its line */
+static void ribbon (const float *a, const float *b, float wa, float wb, int trap)
 {
 	float s[3], l; int k;
 	if (a[2] > -1 || b[2] > -1) return;
@@ -159,8 +164,8 @@ static void ribbon (const float *a, const float *b, float wa, float wb)
 	glBegin (GL_TRIANGLE_STRIP);
 	for (k = 0; k < 4; k++) {
 		const float *e = k < 2 ? a : b;
-		float h = (k & 1 ? 1.25f : -1.25f) * (k < 2 ? wa : wb) * px_world (e[2]) / l;
-		glTexCoord4f ((k & 1) * -e[2], 0.5f * -e[2], 0, -e[2]);
+		float h = (k & 1 ? 1.25f : -1.25f) * (k < 2 ? wa : wb) * px_world (e[2]) / l, q = -e[2] * (trap ? (k < 2 ? wa : wb) : 1);
+		glTexCoord4f ((k & 1) * q, 0.5f * q, 0, q);
 		glVertex3f (e[0] + s[0] * h, e[1] + s[1] * h, e[2] + s[2] * h);
 	}
 	glEnd ();
@@ -448,28 +453,61 @@ static void draw_plume (const struct missile *m)
 	}
 	w = fmaxf (2, fminf (lk->halo * sqrtf (dist2 (a, b)) / px_world (tail[2]), 160 * lk->halo)) * flick;
 	col (h[0], h[1], h[2], 0.85f);	/* the flame */
-	ribbon (tail, end, w, 0);
+	ribbon (tail, end, w, 0, 0);
 	col (0.7f + 0.3f * h[0], 0.7f + 0.3f * h[1], 0.7f + 0.3f * h[2], 1);	/* its white core, the nozzle */
-	ribbon (tail, core, w * lk->core / lk->halo, 0);
+	ribbon (tail, core, w * lk->core / lk->halo, 0, 0);
 	sprite (tail, 0.8f * w * px_world (tail[2]), 0);
+}
+
+/* the stretch of beam e from u0 to u1 of the way along it on screen, wa and wb
+ * pixels wide there, cut to the beam (1/z runs evenly along it on screen) */
+static void piece (const struct effect *e, float u0, float u1, float wa, float wb)
+{
+	float p[2][3], u[2] = { fmaxf (u0, 0), fminf (u1, 1) };
+	int i, k;
+	if (!(u[1] > u[0])) return;
+	for (i = 0; i < 2; i++) {
+		float t = u[i] * e->a[2] / ((1 - u[i]) * e->b[2] + u[i] * e->a[2]);
+		for (k = 0; k < 3; k++) p[i][k] = e->a[k] + (e->b[k] - e->a[k]) * t;
+	}
+	ribbon (p[0], p[1], wa + (wb - wa) * (u[0] - u0) / (u1 - u0), wa + (wb - wa) * (u[1] - u0) / (u1 - u0), 1);
 }
 
 static void draw_effect (const struct effect *e)
 {
-	float age = (float) (fx_ms - e->t0) / e->fade;
+	float age = (float) (fx_ms - e->t0) / e->fade, shim;
 	const float *c = e->rgb;
+	int i;
 	if (e->t != T_BEAM) {
 		col (c[0], c[1], c[2], 1 - age);
 		sprite (e->a, e->size * (1 + e->grow * age) * px_world (e->a[2]), 0);
 		return;
 	}
-	/* a beam is held bright, then gone: a halo round a near-white core */
 	c = e->lk->rgb;
-	age = (1 - age * age) * (e->lk->hz ? 0.75f + 0.25f * sinf (fx_ms * e->lk->hz * 0.00628f) : 1);
+	shim = e->lk->hz ? 0.75f + 0.25f * sinf (fx_ms * e->lk->hz * 0.00628f) : 1;
+	if (e->lk->shape == BOLT && !flat_lasers) {	/* a bolt: its head reaches the far end at 70% of its life, */
+		float u = 0.1f + 1.3f * age, h = 1 - 0.6f * fminf (u, 1);	/* its tapered trail sinks in after */
+		for (i = 0; i < 2; i++) {	/* halo, then near-white core */
+			float k = i ? 0.4f : 1, m = i ? 0.6f : 0, w = (i ? 1.4f * e->lk->core : e->lk->halo) * h;
+			col (k * c[0] + m, k * c[1] + m, k * c[2] + m, (1 - age * age * age * age) * shim);
+			piece (e, u - 0.3f, u, 0, w);
+			piece (e, u, u + 0.03f, w, 0);	/* a rounded nose */
+		}
+		return;
+	}
+	/* a beam is held bright, then gone: a halo round a near-white core */
+	age = (1 - age * age) * shim;
 	col (c[0], c[1], c[2], age);
-	ribbon (e->a, e->b, e->lk->halo, e->lk->halo * 0.35f);
+	ribbon (e->a, e->b, e->lk->halo, e->lk->halo * 0.35f, 0);
 	col (0.4f * c[0] + 0.6f, 0.4f * c[1] + 0.6f, 0.4f * c[2] + 0.6f, age);
-	ribbon (e->a, e->b, e->lk->core, e->lk->core * 0.48f);
+	ribbon (e->a, e->b, e->lk->core, e->lk->core * 0.48f, 0);
+	for (i = 0; i < 4 && !flat_lasers; i++) {	/* a beam's two hot spots, glow then core, run out along it, a length in 400 ms */
+		float u = fmodf (fx_ms * 0.0025f + 0.5f * (i >> 1), 1), k = i & 1 ? 0.2f : 1, m = 1 - k;
+		float w = (i & 1 ? 2.5f * e->lk->core : 0.7f * e->lk->halo) * (1 - 0.65f * u);
+		col (k * c[0] + m, k * c[1] + m, k * c[2] + m, 0.8f * age);
+		piece (e, u - 0.15f, u, 0, w);
+		piece (e, u, u + 0.15f, w, 0);
+	}
 }
 
 void fx_frame_end (void)
