@@ -5,7 +5,8 @@ made from two procedural 64x64 textures: a glow and a noise puff. There are
 no image files, shaders or FBOs. `--flat-fx` gives the base HD look,
 `--flat-explosions` gives the base explosions with the other effects kept,
 `--flat-lasers` gives every laser the one steady ribbon it had before bolts
-and hot cores (below), and `--old-renderer` never runs fx.
+and hot cores (below), `--flat-missiles` gives a missile its old plume, drawn
+only near its smoke (below), and `--old-renderer` never runs fx.
 
 ## When
 
@@ -29,7 +30,7 @@ it.
 | Model | What | HD look |
 |---|---|---|
 | 190 | laser beams, every type | per class (bits 3-6 of the type byte, see `looks[]`): a halo in the class's hue round a near-white core, muzzle bloom, a flare where it hits; pulse red/orange, mining amber, beams green to violet, plasma magenta |
-| 10, 12, 14, 16 | homing, smart, naval and nuclear missiles | flame plume per type (hue, width, flicker) off the end of the body where its smoke starts; no smoke, no plume |
+| 10, 12, 14, 16 | homing, smart, naval and nuclear missiles | a flame off the tail every frame the body is drawn: near-white nozzle, a flame in the type's hue, flicker; longer, wider and hotter from homing to nuclear (see Missiles) |
 | 188 | explosion circles | one layered fireball per blob, by age and size (see Explosions) |
 | 194 | smoke blobs | noise puffs that spread and thin with age |
 
@@ -68,6 +69,40 @@ Laser classes 0 and 10-15 were never seen; they take the nearest entry (1
 and 9). Which shop laser is which class past 1 (`$88`), 3 (`$9a`, mining) and
 4 (`$a1`, police) is inferred from the order of the game's damage table, not
 seen in flight.
+
+## Missiles
+
+`fx_tri` keeps the body triangles of a missile (models 10, 12, 14, 16), and
+`fx_frame_end` draws its flame after the 3D view, every frame the body is
+drawn. The flame keys off:
+- the type, `looks[16..19]`: hue (homing blue, smart green, naval orange,
+  nuclear magenta), core and halo widths as a share of the body's length,
+  and flicker rate. Heat is `(halo - 0.2) * 5`, 0.1 for homing up to 1 for
+  nuclear; it lengthens the white core and grows the nozzle glow;
+- the body's long axis (the two vertices farthest apart): the flame runs
+  back from the tail about `10 * halo` body lengths (2.2 for homing, 4 for
+  nuclear), as three ribbons (hue, a paler middle, the near-white nozzle)
+  tapering to a point, and a glow at the nozzle;
+- flicker: value noise on game time (`fx_ms`) seeded by the missile's
+  record, so each missile flickers on its own and a pause freezes it;
+- width: the halo share of the body's length on screen, at least 3 pixels
+  and capped at `160 * halo`.
+
+Which end is the tail, in order:
+1. The missile's own rotation. When the object is put, `fx_tag_for` reads
+   the nine 1.15 words at A6-36 (as `procfx_sky_put` does; read only). The
+   model's nose is on its +z axis (measured: the body's long axis is the
+   model z axis within about 7 degrees, and +z leads the flight). The tail is the
+   end on -z. This holds through camera turns and view changes, so the tail
+   never flips while the body is drawn.
+2. With no rotation for it (more than four missiles put in a frame, or the
+   frame unreadable), the end nearer its smoke.
+3. With no smoke near it either, the end farther from the eye.
+A missile is never skipped. Motion against the previous frame is not used:
+it flips when the camera turns.
+
+`--flat-missiles` restores the base plume: drawn only where the missile's
+smoke starts, off the end nearer the smoke, nothing when it coasts.
 
 ## Explosions
 
@@ -172,4 +207,10 @@ Not yet seen on screen:
 - A heavy ship's explosion (+88 = +1) and the missile palette.
 
 The red pulse beam (`$88`) and the smart, naval and nuclear missiles were not
-fired.
+fired. Their flames were checked by drawing a fired homing missile with each
+type's look (a scratch build only), not in play.
+
+Missile flames, checked on a fired homing missile in the external view: the
+long axis stayed on the model z axis over 35 frames while the camera turned,
+and the tail held; paused, the flame stays and holds still; with
+`--flat-missiles` the same paused frame has no plume (no smoke near it).
