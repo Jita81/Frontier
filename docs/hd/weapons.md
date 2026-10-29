@@ -13,7 +13,8 @@ That means a game is on (bit 5 of 598(a6) clear, so not the intro or the
 start menu) and a 3D view fills the screen (42(a6) negative, so not a map or
 a 2D page). A recognised model puts an `NU_FX` op before its primitive, and
 the draw side replaces that primitive. Tagged polygons are not hull-plated.
-The oracle is unchanged.
+The oracle is unchanged. The one exception is the intro's scenes: their
+fireball circles take the explosion look (see hulls.md, the intro's scenes).
 
 Effects that outlive their frame (a beam, its muzzle bloom, a hit flare) are
 aged on game time, which stops while the time rate, 10428(a6), is 0. Pause

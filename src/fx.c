@@ -9,6 +9,7 @@
 #include "../host.h"	/* MEM_SIZE */
 #include "../fixups.h"	/* __DL5eb6_a6_base */
 #include "fx.h"
+#include "hull.h"	/* hull_intro_part */
 #define A6		__DL5eb6_a6_base
 #define A6_TOOLS_MODE	42	/* byte: negative while a 3D view fills the screen */
 #define A6_START_FLAGS	598	/* byte: bit 5 set in the intro and the start menu */
@@ -24,6 +25,7 @@
 #define M_EXPL		188	/* an explosion */
 #define M_LASER		190	/* a laser beam, put each frame of a shot */
 #define M_SMOKE		194	/* smoke and sparks, also a missile's trail */
+#define I_FIRE(w)	((w) == 114 || (w) == 116)	/* the intro's fireballs (parts in its table) */
 /* The look of each type.  A laser's class is bits 3-6 of its type byte (the
  * game's own damage table is indexed so): 1-3 are pulse lasers ($88 the start
  * ship's, $9a mining), 4-9 beam lasers ($a1 the police's) and accelerators.
@@ -49,8 +51,10 @@ static int in_flight (void) { return !(rb (A6 + A6_START_FLAGS) & 0x20) && (sign
 static int put_model (unsigned int *rec)
 {
 	unsigned int a6 = GetReg (REG_A6);
-	if (flat_fx || !in_flight () || !readable (a6 - FRAME_OBJ, 4)) return 0;
+	if (flat_fx || !readable (a6 - FRAME_OBJ, 4)) return 0;
 	*rec = STMemory_ReadLong (a6 - FRAME_OBJ);
+	if (!in_flight ())	/* the intro's scenes: by the part's own model */
+		return I_FIRE (hull_intro_part ()) ? M_EXPL : 0;
 	return readable (*rec, 192) ? STMemory_ReadWord (*rec + OBJ_MODEL) & 0xffff : 0;
 }
 /* an integer hash, 0..1 (never the game's random numbers) */

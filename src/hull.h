@@ -115,6 +115,10 @@ int hull_class_of_key (unsigned int key, float *scale, float off[2]);
 /* 1 if the model is listed in hull_models[] (a ship or station hull, the
  * only models plated), 0 if not */
 int hull_key_listed (unsigned int key);
+/* gl.c, at a put: in the intro's own scenes (not its title, logo, credits
+ * or start menu) the model word of the part being put, its own (hull_models'
+ * key less the table); 0 anywhere else */
+unsigned int hull_intro_part (void);
 /* 1 if the face (n corners in the model's frame) of a docking bay's model
  * lies partly out of the bay: it is the station's outside around the slot */
 int hull_bay_outside (unsigned int key, const float w[][3], int n);

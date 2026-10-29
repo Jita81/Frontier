@@ -2564,10 +2564,27 @@ static inline int st_readable (unsigned int addr, unsigned int len);
  * where the game's are ships. So the key is the word, the table (hull.h,
  * HULL_TAB_*) and the top bit; 0 when the state is not what that expects
  * (every read is checked: the 68k's memory has no guard).
+ *
+ * In the intro's scenes (its records 34 to 70: not its title 4, its logo
+ * 12, nor 72, the credits and the start menu) a part is keyed by its own
+ * model instead: a scene draws its ships as parts (sub-objects,
+ * hull_part_word), which carry the scene's record, so the ship and the
+ * ground under it would share a key (not with --classic-ui, --flat-hulls,
+ * --flat-fx or --pixel-*: the base intro). The game's own parts, and
+ * those of the menu's station, keep their object's key (a hangar's doors).
  */
+static int hull_part_word (unsigned int key);
+/* the flags that keep the base look keep the intro's as it was */
+static int hull_intro_base (void)
+{
+	return classic_ui || flat_hulls || flat_fx || pixel_art || pixel_text || pixel_faces;
+}
+#define HULL_INTRO_SCENE(r)	((r) >= 34 && (r) <= 70)
+
 static unsigned int hull_model_key (void)
 {
-	unsigned int a6 = GetReg (REG_A6), rec, gd, tab;
+	unsigned int a6 = GetReg (REG_A6), rec, gd, tab, key;
+	int w;
 
 	if (a6 > MEM_SIZE || !st_readable (a6 - 212, 4) || !st_readable (__DL973c_game_data, 4))
 		return 0;
@@ -2575,12 +2592,27 @@ static unsigned int hull_model_key (void)
 	if (rec > MEM_SIZE || !st_readable (rec + 90, 2)) return 0;
 	gd = STMemory_ReadLong (__DL973c_game_data);
 	tab = gd == __DL1afae_gamedata1 ? 0 : gd == __DL685d0_intro_gamedata ? HULL_TAB_INTRO : HULL_TAB_OTHER;
-	return 0x80000000u | tab | STMemory_ReadWord (rec + 90);
+	key = 0x80000000u | tab | STMemory_ReadWord (rec + 90);
+	if (tab == HULL_TAB_INTRO && HULL_INTRO_SCENE (key & 0xffff)) {
+		if (hull_intro_base ()) return 0;	/* the base intro's scenes: flat */
+		if ((w = hull_part_word (key)) >= 0) key = 0x80000000u | tab | w;
+	}
+	return key;
+}
+
+/* hull.h: the model word of what an intro scene is drawing */
+unsigned int hull_intro_part (void)
+{
+	unsigned int key = hull_model_key ();
+
+	if (!(key & HULL_TAB_INTRO)) return 0;	/* reads checked there; 0 for the base intro */
+	return HULL_INTRO_SCENE (STMemory_ReadWord (STMemory_ReadLong (GetReg (REG_A6) - 212) + 90)) ?
+		key & 0xffff : 0;
 }
 
 static int hull_model_unit (unsigned int key);
 
-#define HULL_SEEN	64
+#define HULL_SEEN	256	/* the intro's scenes key some 70 parts, the game more */
 static void hull_log_model (unsigned int key)
 {
 	static unsigned int seen[HULL_SEEN];
@@ -2589,8 +2621,14 @@ static void hull_log_model (unsigned int key)
 
 	for (i = 0; i < nseen; i++)
 		if (seen[i] == key) return;
-	if (nseen < HULL_SEEN) seen[nseen++] = key;
-	const char *tab = key & HULL_TAB_INTRO ? " (intro's table)" : key & HULL_TAB_OTHER ? " (other table)" : "";
+	if (nseen == HULL_SEEN) return;	/* full: once a model, never a line a frame */
+	seen[nseen++] = key;
+	unsigned int a6 = GetReg (REG_A6), rec = st_readable (a6 - 212, 4) ? STMemory_ReadLong (a6 - 212) : 0;
+	unsigned int rw = st_readable (rec + 90, 2) ? STMemory_ReadWord (rec + 90) : key & 0xffff;
+	char tab[48];
+	snprintf (tab, sizeof tab, "%s%s", key & HULL_TAB_INTRO ? " (intro's table)" : key & HULL_TAB_OTHER ? " (other table)" : "",
+		  rw != (key & 0xffff) ? " a part of" : "");
+	if (rw != (key & 0xffff)) snprintf (tab + strlen (tab), sizeof tab - strlen (tab), " %u", rw);
 	if (hull_key_listed (key)) {
 		float sc, off[2];
 		fprintf (stderr, "hull: model %u%s -> class %s (style 4 profile %s), unit 2^%d\n",
@@ -2676,7 +2714,7 @@ static int hull_frame_words (unsigned int f, int V[9], int o[3], int *s)
 static int hull_model_frame (unsigned int key, double M[9], int o[3], double Mo[9], int oo[3])
 {
 	unsigned int a6 = GetReg (REG_A6), gd, mh, rec, top;
-	int V[9], Vt[9], ot[3], s, h10, j, depth;
+	int V[9], Vt[9], ot[3], s, h10, j, depth, own;
 
 	if (!HULL_KEY_OK (key) || a6 > MEM_SIZE || !st_readable (a6 - 212, 4) ||
 	    !st_readable (__DL973c_game_data, 4))
@@ -2687,10 +2725,13 @@ static int hull_model_frame (unsigned int key, double M[9], int o[3], double Mo[
 	if (!st_readable (mh + 10, 2)) return 0;
 	h10 = (short) STMemory_ReadWord (mh + 10);
 	if (!hull_frame_words (a6, V, o, &s)) return 0;
-	/* the object's own frame: up the links while they carry its record */
+	/* the object's own frame: up the links while they carry its record;
+	 * a part keyed by its own model (the intro's, hull_model_key) is one */
 	rec = STMemory_ReadLong (a6 - 212);
 	top = a6;
-	for (depth = 0; depth < 8; depth++) {
+	if (!st_readable (rec + 90, 2)) return 0;
+	own = STMemory_ReadWord (rec + 90) != (key & 0xffff);
+	for (depth = 0; depth < 8 && !own; depth++) {
 		unsigned int up;
 		if (!st_readable (top, 4)) return 0;
 		up = STMemory_ReadLong (top);
@@ -2727,7 +2768,7 @@ static int hull_model_frame (unsigned int key, double M[9], int o[3], double Mo[
  */
 static int hull_part_word (unsigned int key)
 {
-	static unsigned int kh[32];
+	static unsigned int kh[32], kg[32];
 	static int kw[32], kn;
 	unsigned int a6 = GetReg (REG_A6), gd, hdr, mh;
 	int i, w = -2;
@@ -2741,13 +2782,14 @@ static int hull_part_word (unsigned int key)
 	mh = gd + STMemory_ReadWord (gd + (key & 0xffff));
 	if (hdr == mh) return -1;
 	for (i = 0; i < kn && i < 32; i++)
-		if (kh[i] == hdr) return kw[i];
+		if (kh[i] == hdr && kg[i] == gd) return kw[i];
 	for (i = 0; i < 1024 && st_readable (gd + i, 2); i += 2)
 		if (gd + STMemory_ReadWord (gd + i) == hdr) {
 			w = i;
 			break;
 		}
 	kh[kn & 31] = hdr;
+	kg[kn & 31] = gd;
 	kw[kn & 31] = w;
 	kn++;
 	return w;
@@ -5395,6 +5437,7 @@ static int circle_slices (double size, double z)
 #define A6_HYPER_LEFT	722	/* long: transit time left */
 #define A6_HYPER_TOTAL	13882	/* long: the transit's time */
 #define HYPERCLOUD	0xba	/* the cloud's model word (hull_model_key) */
+#define HYPERCLOUD_INTRO	0xd6	/* the intro's, in its scenes (hull_intro_part) */
 #define BLOB_HYPER	0x80000000u	/* on a blob's colour, a circle's tag word: one of the cloud's */
 
 static int hyper_hd (void)
@@ -5405,7 +5448,8 @@ static int hyper_hd (void)
 /* at a disc's Put: BLOB_HYPER when it is one of a hypercloud's */
 static unsigned int hyper_tag (void)
 {
-	return hyper_hd () && hull_model_key () == (0x80000000u | HYPERCLOUD) ? BLOB_HYPER : 0;
+	return hyper_hd () && (hull_model_key () == (0x80000000u | HYPERCLOUD) ||
+			       hull_intro_part () == HYPERCLOUD_INTRO) ? BLOB_HYPER : 0;
 }
 
 void Nu_PutCircle ()
