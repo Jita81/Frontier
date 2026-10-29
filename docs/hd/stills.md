@@ -179,7 +179,9 @@ land as before.
 ## Known gaps
 
 - Pixels the game draws live stay at ST resolution, on top of the new art: the gauge
-  bars, scanner contacts and panel text that HD text does not cover.
+  bars and panel text that HD text does not cover. Scanner contacts are drawn again
+  as vectors by the instruments layer (`src/hdinst.c`), which also redraws the gun
+  sight and the lock boxes.
 - Faces (the station portrait and the comms face in the bay) are not drawn by this
   layer. They belong to the HD faces layer. Coverage lists every one seen.
 - The scanner is drawn in cyan where the game's is red. This is a design choice, not a
