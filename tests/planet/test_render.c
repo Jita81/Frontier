@@ -15,6 +15,10 @@
  * far as the ST's formula says.  Both with the smooth planets of procfx
  * layer 2 (its stub says the shader is there) and with --flat-planets.
  *
+ * The lit rim and the sun's fall-off of the smooth planet are for a body
+ * seen from space: on the ground they would wash the distant ground towards
+ * the atmosphere's colour, so their weight falls to 0 there (check_aloft).
+ *
  * run.sh cuts the block between the PLANET BEGIN and PLANET END markers
  * out of src/gl.c into planet_block.c, which this includes.
  */
@@ -232,6 +236,34 @@ static int check_lave (void)
 	return bad;
 }
 
+/* The rim's weight and the sun's fall-off: full from 2% of the radius out,
+ * none on the ground, in between on the way down. */
+static int check_aloft (void)
+{
+	static const struct { double alt, lo, hi; } t[] = {
+		{ 0.0, 0.0, 1e-3 }, { 1e-4, 0.0, 0.05 }, { 0.01, 0.2, 0.8 },
+		{ 0.025, 1.0, 1.0 }, { 0.05, 1.0, 1.0 }, { 3.0, 1.0, 1.0 },
+	};
+	int k, bad = 0;
+
+	flat_planets = 0;
+	for (k = 0; k < (int) (sizeof (t) / sizeof (t[0])); k++) {
+		struct PlanetPrim p;
+		void *data = &p;
+		/* make_planet puts the centre 1.005 dist radii away */
+		make_planet (&p, 1, (1.0 + t[k].alt) / sqrt (1.01), 0.2);
+		planet_rim_alpha = planet_sun_falloff = -1.0f;
+		Nu_DrawPlanet (&data);
+		if (planet_rim_alpha < t[k].lo || planet_rim_alpha > t[k].hi ||
+		    planet_sun_falloff < t[k].lo || planet_sun_falloff > t[k].hi) {
+			printf ("at %g radii up: rim %g, sun fall-off %g, want %g..%g\n", t[k].alt,
+				planet_rim_alpha, planet_sun_falloff, t[k].lo, t[k].hi);
+			bad++;
+		}
+	}
+	return bad;
+}
+
 int main (void)
 {
 	int round, i, frame;
@@ -260,6 +292,7 @@ int main (void)
 		}
 	}
 	if (check_tint ()) return 1;
+	if (check_aloft ()) return 1;
 	if (check_limb ()) return 1;
 	flat_planets = 0;
 	if (check_limb ()) return 1;

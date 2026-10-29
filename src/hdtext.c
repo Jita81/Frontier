@@ -183,6 +183,14 @@ void hdtext_glyph (const unsigned char *font, int x, int y, int col, int chr,
 	s[0].str = str_id;
 }
 
+/* pixels another HD layer drew over (and redraws), not checked */
+static const unsigned char *skip;
+
+void hdtext_skip (const unsigned char *mask)
+{
+	skip = mask;
+}
+
 /* the keys under the second display: a page's keys blitted there cut the
  * descenders of the title above them, which still stands */
 #define UNDER_KEYS(x, y)	((y) >= 186 && (x) >= 240)
@@ -211,6 +219,7 @@ static int on_screen (const unsigned char *g, const unsigned char *r, int x, int
 	for (row = 0; row < 8; row++) {
 		for (c = 0; c < 8 && x + c < ST_W; c++) {
 			int i = (y + row) * ST_W + x + c, p = r[i];
+			if (skip && skip[i]) continue;
 			if (ink (g, c, row)) {
 				if (p != col && UNDER_KEYS (x + c, y + row)) continue;
 				if (p == col) pixels++;
