@@ -79,7 +79,7 @@ and dropped: layer 2 already owns the planet's rim and halo.
 | 1 | **Planets (built, with 6)** | Every textured planet gets a soft terminator, a darker limb, a lit rim and a soft halo from its own atmosphere layers. | 85 + 210 in gl.c | noise, program | Low |
 | 2 | **Star corona by class (built, layer 3)** | The star becomes a glowing sun with soft streamers, not a flat disc. | ~95 + ~45 hooks | noise, program, glow square, object reader, star class | Low |
 | 3 | **Sky band (built)** | The flat blue cut-outs become soft star clouds with dust lanes, on every space screen. | 150 + 33 hooks | noise, program, object reader | Low |
-| 4 | Planet rings | Probably also a fix: rings look to be black discs today. They would become banded and see-through. | ~90 | noise, program, object reader | Medium |
+| 4 | **Planet rings (built)** | Not a fix: GL already drew them right. The flat bands become soft, see-through ringlets with gaps. | ~150 + 22 hooks | noise, program, object reader | Low |
 | 5 | Backdrop variation | Ports of the same class stop looking identical. | ~30 | identity tables | Low |
 | 6 | **Close planet detail (built, in 1)** | The ground keeps its grain when flying low. | in 1 | noise, program | Medium |
 
@@ -98,12 +98,9 @@ oracle is nil.  The risk column is about visuals and code.
   - Streamers: `pf_fbm` over the direction away from the star on the sky, seeded by the star.
   - Verify: red, yellow and white stars.
   - Switch: `--flat-stars`.
-- **Rings.**
-  - Path: L3d648_PutPlanetRings (fe2.s 17221) → L3b9aa_FilledOvalThingy (14525) → L37fb2_ProjectOvalXYZ (9464) → `Nu_PutOval`.
-  - `Nu_DrawOval` draws black, and its rotation code is commented out.
-  - Orient with the object reader, and band with `pf_fbm` seeded by the planet.
-  - First check the oval opcode's other users.
-  - Verify: needs a save in a ringed system.
+- **Rings.**  Built; see [rings.md](rings.md).
+  - Path: the gas-giant model's own complex shapes after `Nu_PutPlanet`, not the oval opcode, which only the intro logo uses.
+  - Hooks: `Nu_PutPlanet`, `Nu_ComplexStart`, `Nu_DrawComplexStart`, `flush_contour`, `Nu_DrawComplexEnd`.
   - Switch: `--flat-rings`.
 - **Backdrops.**
   - Hook: `pick` in hdback.c.
@@ -116,8 +113,7 @@ oracle is nil.  The risk column is about visuals and code.
   - Switch: `--flat-planets`, as for the limb.
 
 **Recommendation.**  The sky band, the planets (with their limb and
-close detail) and the corona are built.  Do rings once a ringed save
-exists.
+close detail), the corona and the rings are built.
 
 ## Left out, and why
 
@@ -300,3 +296,39 @@ Dropped, superseded by #38.  The planets layer draws the lit limb rim
 (`draw_planet_halo`), both under `--flat-planets`.  The separate glow and
 its `--flat-limb` switch were removed, so planet drawing is the planets
 layer's code path unchanged.
+
+## Engine exhaust
+
+Host-side only: `Nu_PutTeardrop` / `Nu_DrawTeardrop` in `src/gl.c`, no
+shader, no new file.
+
+- **What is drawn.**  A ship's plume is two translucent fills of the
+  game's own Bezier teardrop (same control points, same 40 steps):
+  - Halo: the game's colour and outline, alpha 0.8 from a point on the
+    axis out to 85% of the way to the rim, then 0 at the rim (normal
+    blend), so the body keeps the game's width and only the edge is soft.
+  - Core: the outline scaled about the engine end, half as wide and 80% as
+    long, in the game's colour mixed 70% toward white, alpha 0.9,
+    additive.  It lies inside the halo, so nothing is drawn outside the
+    game's silhouette.
+  - Flicker: the core's length moves by up to +-8%, from a byte hashed
+    from the object's record and the game clock (A6+524 >> 12).  The same
+    frame draws the same in every run; it stands still while paused.  No
+    game RNG, no wall clock.
+  - Colour, blend, current and lighting state are pushed and popped.
+- **Which plumes.**  Decided at put time and carried as one extra znode
+  long: `hull_model_key()` must name the game's own table and a model word
+  from `$12` to `$4e` (above the missiles, below stations and ports).
+  Chimney flares and the intro's plumes keep the game's flat fill.  The
+  range is inferred from the model tables; only the player's own hull has
+  been seen to take it.
+- **Small plumes.**  The engine draws a plume whose projected radius is 8
+  or less as a 3D line (fe2.s, the branch before the `$70` hostcall), so it
+  never reaches the teardrop and keeps the game's look.
+- **Switches.**  `--flat-exhaust` puts a 0 and the draw takes the game's
+  path: frames byte-identical to the base build.  `--old-renderer` never
+  puts a teardrop, so it is unaffected.
+- **Not checked.**  Another ship's plume; an in-game chimney flare (the
+  intro's flares were checked); missiles.  The plume code does not test
+  `--flat-fx`, `--classic-ui` or `--pixel-art`; whether they should also
+  turn it off is open.

@@ -52,6 +52,9 @@ int delta_x, delta_y, abs_delta_x, abs_delta_y;
 int flat_fx = 0;	/* --flat-fx: no HD weapon effects (fx.c); both renderers link this */
 int flat_explosions = 0;	/* --flat-explosions: the base explosions, other HD weapon effects kept */
 int flat_lights = 0;	/* --flat-lights: no halo round the game's lights (gl.c) */
+int flat_lasers = 0;	/* --flat-lasers: every laser one plain ribbon, as before bolts and hot cores */
+int flat_hud_hits = 0;	/* --flat-hud-hits: one red hit flash, no critical tint (hddamage.c) */
+int flat_exhaust = 0;	/* --flat-exhaust: the game's flat engine plumes (gl.c) */
 
 /*-----------------------------------------------------------------------*/
 /*
@@ -224,6 +227,7 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --flat-sky            The game's flat Milky Way band (no star clouds).\n"
                "  --flat-planets        Hard light zones and flat atmosphere rings.\n"
                "  --flat-stars          No corona round the stars.\n"
+               "  --flat-rings          The game's flat planetary rings.\n"
                "  --flat-lights         The game's lights without their soft halo.\n"
                "  --pixel-text          Keep the original bitmap font (no HD text;\n"
                "                        FE2_HD_FONT=<PostScript name> picks the font).\n"
@@ -232,6 +236,9 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --classic-ui          Keep the game's own flat 2D screens.\n"
                "  --flat-fx             Flat lasers, missiles and explosions (no HD effects).\n"
                "  --flat-explosions     Flat explosions only (HD lasers and missiles kept).\n"
+               "  --flat-lasers         Every laser one steady ribbon (no bolts or hot cores).\n"
+               "  --flat-hud-hits       One red flash for every hit, no critical hull tint.\n"
+               "  --flat-exhaust        The game's flat engine plumes (no HD exhaust).\n"
                "  --hull-style N        Hull look, 0 plating, 1 big texture, 2 panels,\n"
                "                        3 bump and weathering, 4 per model, 5 a material\n"
                "                        per class of ship (default).\n"
@@ -257,6 +264,8 @@ void Main_ReadParameters(int argc, char *argv[])
 		flat_planets = 1;
 	  else if (!strcmp(argv[i], "--flat-stars"))
 		flat_stars = 1;
+	  else if (!strcmp(argv[i], "--flat-rings"))
+		flat_rings = 1;
 	  else if (!strcmp(argv[i], "--flat-lights"))
 		flat_lights = 1;
 	  else if (!strcmp(argv[i], "--pixel-text"))
@@ -271,6 +280,12 @@ void Main_ReadParameters(int argc, char *argv[])
 		flat_fx = 1;
 	  else if (!strcmp(argv[i], "--flat-explosions"))
 		flat_explosions = 1;
+	  else if (!strcmp(argv[i], "--flat-lasers"))
+		flat_lasers = 1;
+	  else if (!strcmp(argv[i], "--flat-hud-hits"))
+		flat_hud_hits = 1;
+	  else if (!strcmp(argv[i], "--flat-exhaust"))
+		flat_exhaust = 1;
 	  else if (!strcmp(argv[i], "--hull-style") && i + 1 < argc) {
 		hull_style = atoi (argv[++i]);
 		if (hull_style < 0 || hull_style > 5) hull_style = 5;
