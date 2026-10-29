@@ -4,7 +4,8 @@ With the GL renderer, some weapon effects are drawn as soft light and smoke
 made from two procedural 64x64 textures: a glow and a noise puff. There are
 no image files, shaders or FBOs. `--flat-fx` gives the base HD look,
 `--flat-explosions` gives the base explosions with the other effects kept,
-and `--old-renderer` never runs fx.
+`--flat-lasers` gives every laser the one steady ribbon it had before bolts
+and hot cores (below), and `--old-renderer` never runs fx.
 
 ## When
 
@@ -31,6 +32,37 @@ it.
 | 10, 12, 14, 16 | homing, smart, naval and nuclear missiles | flame plume per type (hue, width, flicker) off the end of the body where its smoke starts; no smoke, no plume |
 | 188 | explosion circles | one layered fireball per blob, by age and size (see Explosions) |
 | 194 | smoke blobs | noise puffs that spread and thin with age |
+
+## Lasers
+
+For class 1 the game draws one quad for each shot, for one frame (measured:
+one every 640 ms; other classes not yet measured). fx keeps the beam for
+90 ms of game time, always on the segment the game gave, from the muzzle to
+the far end, so a hit flare is still where the game put the hit. Its class
+(bits 3-6 of the type byte) picks its look and shape from `looks[]`:
+
+| Class | Laser | Hue | Shape |
+|---|---|---|---|
+| 0 (not seen), 1 (`$88`, the start ship's), 2 | pulse | red, orange | bolt |
+| 3 (`$9a`, mining) | pulse | amber, throbs at 8 Hz | bolt |
+| 4 (`$a1`, the police's) to 7 | beam | green, cyan, blue, violet | beam |
+| 8, 9 (and 10-15) | plasma | magenta, pink, crackles at 12 Hz | plasma |
+
+- Bolt: a short bright bolt flies from the muzzle and reaches the far end
+  at 70% of the shot's 90 ms, then its trail sinks into the hit. The trail is
+  30% of the beam's on-screen length, widest at the rounded head and tapering
+  to nothing behind it. "Along the beam" is measured on screen (1/z runs
+  evenly), so a beam that runs 2000:1 in depth does not reach its far end in
+  the first frame. Its pieces are shaded as the trapezoids they are on screen,
+  so a strip that tapers to a point stays even about its line.
+- Beam: the steady ribbon, plus two hot spots running out along it at one
+  beam length in 400 ms, half a length apart: each a swell of the beam's hue
+  round a near-white core, tapering to nothing at both ends.
+- Plasma: a beam, with its crackle.
+
+Every timing is game time from fx's clock and the beam's start: never the
+game's random numbers. Muzzle blooms and hit flares are as before.
+`--flat-lasers` draws the plain ribbon for every class.
 
 Laser classes 0 and 10-15 were never seen; they take the nearest entry (1
 and 9). Which shop laser is which class past 1 (`$88`), 3 (`$9a`, mining) and
