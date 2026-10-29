@@ -67,12 +67,21 @@
  * hemisphere.
  */
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <time.h>
 
 #include "../m68000.h"
 #include "planet.h"
+/* label addresses, for the W1 body lookup only: the planet tests build
+ * this file without the game data, and then the lookup finds no body */
+#if defined (__has_include)
+#if __has_include ("../fixups.h")
+#include "../fixups.h"
+#endif
+#endif
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -102,7 +111,11 @@ struct PSPoly {
 	double ref[3];
 };
 
+struct PInfo;
+
 struct PSurf {
+	/* W1 surface classes, NULL until asked for */
+	struct PInfo *info;
 	unsigned int feat_addr, seed;
 	int radius_word, detail;
 	/* normalized radius mantissa, 0x4000..0x7fff */
@@ -322,6 +335,7 @@ static unsigned int cache_clock;
 static void psurf_free (struct PSurf *s)
 {
 	int i;
+	free (s->info);
 	for (i = 0; i < s->npolys; i++) {
 		free (s->polys[i].v);
 		free (s->polys[i].state);
@@ -634,6 +648,9 @@ static int clamp_int (double v, int lo, int hi)
 	return (int) v;
 }
 
+static int w1_enabled (void);
+static void w1_after_raster (struct PSurf *s, const struct PPatch *pt, const unsigned char *codes);
+
 int psurf_raster (struct PSurf *s, const struct PPatch *pt, unsigned char *codes)
 {
 	struct Ctx x;
@@ -793,6 +810,8 @@ int psurf_raster (struct PSurf *s, const struct PPatch *pt, unsigned char *codes
 	free (row_start);
 	free (left);
 	free (segs);
+	/* W1: off unless asked for, and never changes codes */
+	if (w1_enabled ()) w1_after_raster (s, pt, codes);
 	return 0;
 
 fail:
@@ -819,4 +838,392 @@ int psurf_light_code (int flags, double cos_sun)
 	}
 	if (cos_sun > 0.25) return 0x10;
 	return 0x20;
+}
+
+/* ---- W1: surface classes ---------------------------------------------
+ *
+ * Which parts of a planet are water, land, ice or craters, worked out at
+ * run time from the game's own data: the colour each feature code is
+ * drawn in (the model header), the kind of body (the model the object is
+ * drawn with) and its temperature. See docs/hd/planet-classes.md.
+ * Everything here only reads 68000 memory, and nothing here runs unless
+ * FE2_DUMP_PLANET is set (FE2_DEBUG_SURFCLASS adds masks to it) or a
+ * caller asks for psurf_code_class / psurf_classify. */
+
+#define PS_MEM_SIZE	0x110000	/* host.h MEM_SIZE */
+#define PS_OBJ_SIZE	286
+#define PS_OBJ_SLOTS	115
+#define PS_OBJ_MODEL	90		/* word */
+#define PS_OBJ_SEED	118		/* long */
+#define PS_OBJ_TEMP	182		/* word: kelvin */
+#define PS_A6_SLOTS	14466		/* long: the object slots */
+#define PS_MAX_DEBUG_PATCHES	12	/* ground masks per surface */
+
+enum { B_UNKNOWN, B_AIRLESS, B_ROCKY, B_CORROSIVE, B_METHANE, B_TERRAN,
+       B_ICE, B_OCEAN, B_GAS, B_STAR };
+static const char *const body_name[] = { "unknown", "airless", "rocky",
+	"corrosive", "methane", "terran", "ice", "ocean", "gasgiant", "star" };
+static const char *const class_name[] = { "other", "water", "land", "ice", "crater" };
+
+struct PInfo {
+	unsigned int model, obj;	/* 68k addresses, 0: not found */
+	int model_word, body, temp;	/* temp -1: unknown */
+	int flags, sel, sel_src;	/* sel_src: 0 none, 1 fixed, 2 object, 3 global */
+	int col[16];			/* rgb444 of each code index, -1 unknown */
+	unsigned char cls[16];
+	int npoly[16], ncirc[16], npair[16];	/* npair: circles with an antipodal twin */
+	double area[16];
+	int faces;			/* bit per cube face accumulated */
+	int dumped, npatch;		/* npatch: ground masks written */
+	double last_c[3];		/* centre of the last ground mask */
+};
+
+static int w1_env = -1;		/* bit 0: dump, bit 1: debug tint */
+static const char *w1_dir;
+
+static int w1_enabled (void)
+{
+	if (w1_env < 0) {
+		const char *d = getenv ("FE2_DUMP_PLANET"), *t = getenv ("FE2_DEBUG_SURFCLASS");
+		w1_env = 0;
+		/* both write files into the FE2_DUMP_PLANET directory only */
+		if (d && *d) {
+			w1_dir = d;
+			w1_env = 1 | ((t && *t && *t != '0') ? 2 : 0);
+		}
+	}
+	return w1_env;
+}
+
+static int in_mem (unsigned int a, unsigned int len)
+{
+	return a >= 0x400 && a < PS_MEM_SIZE && len <= PS_MEM_SIZE - a;
+}
+static int rw16 (unsigned int a) { return STMemory_ReadWord (a) & 0xffff; }
+
+static int body_of_model (int m)
+{
+	switch (m) {
+	case 0x7a: case 0x7c: case 0x80: return B_AIRLESS;
+	case 0x7e: case 0x82: return B_ROCKY;
+	case 0x84: return B_CORROSIVE;
+	case 0x86: return B_METHANE;
+	case 0x88: case 0x8a: case 0x90: return B_TERRAN;
+	case 0x8c: return B_ICE;
+	case 0x8e: return B_OCEAN;
+	case 0x92: case 0x94: case 0x96: return B_GAS;
+	}
+	return m >= 0x98 && m <= 0xae ? B_STAR : B_UNKNOWN;
+}
+
+/* the feature list of the model at m, the way L3d3f0 skips to it */
+static unsigned int features_of_model (unsigned int m)
+{
+	unsigned int p = m + 8;
+	int flags, i;
+
+	if (!in_mem (m, 8)) return 0;
+	flags = STMemory_ReadByte (m) & 0xff;
+	if (flags & 0x10) p += 58;
+	else if (!(flags & 0x40)) p += 8;
+	for (i = 0; i < 64; i++) {
+		if (!in_mem (p, 2)) return 0;
+		if (rw16 (p) == 0) return p + 2;
+		p += i ? 4 : 6;
+	}
+	return 0;
+}
+
+/* The body, the model header and the code colours of a surface. */
+static struct PInfo *pinfo (struct PSurf *s)
+{
+	struct PInfo *in;
+	unsigned int m;
+	int i, k, set = 0, c[8];
+
+	if (s->info) return s->info;
+	in = s->info = calloc (1, sizeof (*in));
+	if (!in) return NULL;
+	in->temp = -1;
+	for (k = 0; k < 16; k++) in->col[k] = -1;
+
+#if defined (__DL5eb6_a6_base) && defined (__DL44b02)
+	/* the object drawn with this surface: the one with its seed */
+	{
+		unsigned int big = (unsigned int) STMemory_ReadLong (__DL5eb6_a6_base + PS_A6_SLOTS);
+		for (i = 0; in_mem (big, 4) && i < PS_OBJ_SLOTS; i++) {
+			unsigned int o = big + (short) rw16 (__DL44b02 + 2 * i);
+			int mw;
+			if (!in_mem (o, PS_OBJ_SIZE)) continue;
+			if ((unsigned int) STMemory_ReadLong (o + PS_OBJ_SEED) != s->seed) continue;
+			mw = rw16 (o + PS_OBJ_MODEL);
+			if (mw < 0x7a || mw > 0xae) continue;
+			in->obj = o;
+			in->model_word = mw;
+			in->body = body_of_model (mw);
+			in->temp = rw16 (o + PS_OBJ_TEMP);
+			break;
+		}
+	}
+#endif
+
+	/* the model header just before its feature list */
+	for (m = s->feat_addr - 8; s->feat_addr > 8 && m + 400 > s->feat_addr && m >= 0x406; m -= 2)
+		if (features_of_model (m) == s->feat_addr &&
+		    (rw16 (m - 6) & 0x1f) == 0x1f) { in->model = m; break; }
+
+	for (i = 0; i < s->npolys; i++) {
+		const struct PSPoly *p = &s->polys[i];
+		int j;
+		k = (p->code >> 2) & 15;
+		if (!p->circle) { in->npoly[k]++; continue; }
+		in->ncirc[k]++;
+		for (j = 0; j < s->npolys; j++)
+			if (j != i && s->polys[j].circle && s->polys[j].code == p->code &&
+			    dot3 (s->polys[j].cdir, p->cdir) < -0.999) { in->npair[k]++; break; }
+	}
+	if (!in->model) return in;
+
+	m = in->model;
+	in->flags = STMemory_ReadByte (m) & 0xff;
+	for (i = 0; i < 4; i++) c[i] = rw16 (m + 2*i) & 0xfff;
+	if (in->flags & 0x10) {
+		/* l3d0be: a selector picks one of 8 colour sets */
+		int d5 = (rw16 (m + 8) * 2) & 0x1fe;
+		in->sel = rw16 (m + 8);
+		if (d5 & 0x100) {
+			if (d5 & 0x80) in->sel_src = 3;	/* a global: not known here */
+			else {
+				in->sel_src = 2;
+				set = in->obj ? rw16 (in->obj + 114 + (d5 & 0x7f)) & 7 : -1;
+			}
+		} else {
+			in->sel_src = 1;
+			set = (d5 & 0x80) ? 0 : (d5 >> 1) & 7;
+		}
+		if (in->sel_src == 3 || set < 0) return in;
+		if (set)
+			for (i = 0; i < 4; i++) c[i] = rw16 (m + 2 + 8*set + 2*i) & 0xfff;
+		for (i = 0; i < 4; i++) c[4+i] = c[i];
+	} else if (!(in->flags & 0x40)) {
+		for (i = 0; i < 4; i++) c[4+i] = rw16 (m + 8 + 2*i) & 0xfff;
+	}
+	for (k = 0; k < 16; k++)
+		in->col[k] = c[(in->flags & 0x40) ? (k & 3) : (k & 7)];
+	return in;
+}
+
+/*
+ * THE RULE. One code in, one class out, from:
+ *	the colour the model draws the code in (4 bits a channel),
+ *	the kind of body and its temperature in kelvin,
+ *	how the code's features are drawn: polygons, circles, and circles
+ *	that come as an antipodal pair (the two polar caps).
+ * 'other' whenever it cannot be sure.
+ */
+static int class_rule (int rgb, int body, int temp, int npoly, int ncirc, int npair)
+{
+	int r = (rgb >> 8) & 15, g = (rgb >> 4) & 15, b = rgb & 15;
+	int mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
+	int mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
+	int weather = body == B_TERRAN || body == B_OCEAN || body == B_ICE;
+	int bare = body == B_AIRLESS || body == B_ROCKY;
+
+	if (rgb < 0) return PS_OTHER;
+	if (!weather && !bare && body != B_CORROSIVE && body != B_METHANE)
+		return PS_OTHER;	/* gas giants, stars, unknown bodies */
+	if (mx < 2) return PS_OTHER;	/* too dark to tell */
+
+	/* blue clearly above red and green: open water where water is
+	 * liquid, sea ice where it is not, unknown elsewhere */
+	if (b >= r + 2 && b >= g + 1) {
+		if (!weather) return PS_OTHER;
+		if (temp < 0 || temp > 380) return PS_OTHER;
+		return temp < 240 ? PS_ICE : PS_WATER;
+	}
+	/* grey or white: snow and ice on a world with weather; on a bare
+	 * world rock, except polar caps (ice) and round spots (craters) */
+	if (mx - mn <= 1) {
+		if (weather) return PS_ICE;
+		if (!bare) return PS_OTHER;
+		if (ncirc && npair == ncirc) return PS_ICE;
+		if (ncirc && ncirc >= npoly) return PS_CRATER;
+		return PS_LAND;
+	}
+	if (bare && ncirc > npair && ncirc - npair >= npoly) return PS_CRATER;
+	return PS_LAND;
+}
+
+int psurf_code_class (struct PSurf *s, int code)
+{
+	struct PInfo *in;
+	int k = (code >> 2) & 15;
+
+	if (!s || !(in = pinfo (s))) return PS_OTHER;
+	return class_rule (in->col[k], in->body, in->temp,
+			   in->npoly[k], in->ncirc[k], in->npair[k]);
+}
+
+/* Two pass 3-4 chamfer from the coast: 3 units a texel, negative in
+ * water, positive elsewhere, +-32767 when there is no coast. */
+static void coast_distance (const unsigned char *cls, int n, short *d)
+{
+	static const int dx[4] = { -1, 0, -1, 1 }, dy[4] = { 0, -1, -1, -1 };
+	static const int w[4] = { 3, 3, 4, 4 };
+	int i, j, k;
+
+	for (j = 0; j < n; j++)
+		for (i = 0; i < n; i++) {
+			int wet = cls[j*n+i] == PS_WATER, coast = 0;
+			if (i > 0 && (cls[j*n+i-1] == PS_WATER) != wet) coast = 1;
+			if (i < n-1 && (cls[j*n+i+1] == PS_WATER) != wet) coast = 1;
+			if (j > 0 && (cls[(j-1)*n+i] == PS_WATER) != wet) coast = 1;
+			if (j < n-1 && (cls[(j+1)*n+i] == PS_WATER) != wet) coast = 1;
+			d[j*n+i] = coast ? 1 : 32767;
+		}
+	for (j = 0; j < n; j++)
+		for (i = 0; i < n; i++)
+			for (k = 0; k < 4; k++) {
+				int x = i + dx[k], y = j + dy[k];
+				if (x < 0 || x >= n || y < 0) continue;
+				if (d[y*n+x] + w[k] < d[j*n+i]) d[j*n+i] = d[y*n+x] + w[k];
+			}
+	for (j = n-1; j >= 0; j--)
+		for (i = n-1; i >= 0; i--)
+			for (k = 0; k < 4; k++) {
+				int x = i - dx[k], y = j - dy[k];
+				if (x < 0 || x >= n || y >= n) continue;
+				if (d[y*n+x] + w[k] < d[j*n+i]) d[j*n+i] = d[y*n+x] + w[k];
+			}
+	for (i = 0; i < n*n; i++)
+		if (cls[i] == PS_WATER) d[i] = -d[i];
+}
+
+int psurf_classify (struct PSurf *s, const unsigned char *codes, int n,
+		    unsigned char *cls, short *dist)
+{
+	unsigned char lut[16];
+	int k, i;
+
+	if (!s || n <= 0) return -1;
+	for (k = 0; k < 16; k++) lut[k] = psurf_code_class (s, k << 2);
+	for (i = 0; i < n*n; i++) cls[i] = lut[(codes[i] >> 2) & 15];
+	if (dist) coast_distance (cls, n, dist);
+	return 0;
+}
+
+static void w1_dump (struct PSurf *s, struct PInfo *in)
+{
+	char path[1024];
+	double tot = 0.0;
+	FILE *f;
+	int k;
+
+	snprintf (path, sizeof (path), "%s/planet-%06x-%08x.txt", w1_dir, s->feat_addr, s->seed);
+	f = fopen (path, "r");
+	if (f) { fclose (f); return; }
+	f = fopen (path, "w");
+	if (!f) return;
+	for (k = 0; k < 16; k++) tot += in->area[k];
+	fprintf (f, "feat 0x%06x seed 0x%08x model 0x%06x obj 0x%06x\n",
+		 s->feat_addr, s->seed, in->model, in->obj);
+	fprintf (f, "model_word 0x%02x body %s temp %d flags 0x%02x selector 0x%04x src %d\n",
+		 in->model_word, body_name[in->body], in->temp, in->flags, in->sel, in->sel_src);
+	fprintf (f, "code colour polys circles paired share class\n");
+	for (k = 0; k < 16; k++) {
+		if (!in->npoly[k] && !in->ncirc[k] && !(in->area[k] > 0.0)) continue;
+		char col[8] = "?";
+		if (in->col[k] >= 0) snprintf (col, sizeof (col), "0x%03x", in->col[k]);
+		fprintf (f, "%2d %5s %3d %3d %3d %6.2f%% %s\n", k, col,
+			 in->npoly[k], in->ncirc[k], in->npair[k], tot > 0.0 ? 100.0 * in->area[k] / tot : 0.0,
+			 class_name[in->cls[k]]);
+	}
+	fclose (f);
+}
+
+/* the class tint over the model colour, half and half, every second texel */
+static void w1_tga (struct PSurf *s, struct PInfo *in, const unsigned char *cls,
+		    const unsigned char *codes, int n, const char *tag)
+{
+	static const unsigned char tint[5][3] = {
+		{ 255, 0, 255 }, { 0, 64, 255 }, { 0, 200, 0 }, { 255, 255, 255 }, { 128, 128, 128 } };
+	unsigned char hdr[18] = { 0 }, *row;
+	char path[1024];
+	int m = n / 2, i, j;
+	FILE *f;
+
+	snprintf (path, sizeof (path), "%s/surfclass-%06x-%08x-%s.tga", w1_dir, s->feat_addr, s->seed, tag);
+	if (!(row = malloc (m * 3))) return;
+	if (!(f = fopen (path, "wb"))) { free (row); return; }
+	hdr[2] = 2; hdr[12] = m & 255; hdr[13] = m >> 8; hdr[14] = m & 255; hdr[15] = m >> 8;
+	hdr[16] = 24; hdr[17] = 0x20;
+	fwrite (hdr, 1, 18, f);
+	for (j = 0; j < m; j++) {
+		for (i = 0; i < m; i++) {
+			int t = (2*j)*n + 2*i, c = in->col[(codes[t] >> 2) & 15], q;
+			int rgb[3] = { ((c >> 8) & 15) * 17, ((c >> 4) & 15) * 17, (c & 15) * 17 };
+			if (c < 0) rgb[0] = rgb[1] = rgb[2] = 0;
+			for (q = 0; q < 3; q++)	/* TGA is BGR */
+				row[3*i + 2 - q] = (rgb[q] + tint[cls[t]][q]) / 2;
+		}
+		fwrite (row, 1, m * 3, f);
+	}
+	fclose (f);
+	free (row);
+}
+
+/* After each raster: the shares, the dump, and the debug masks. */
+static void w1_after_raster (struct PSurf *s, const struct PPatch *pt, const unsigned char *codes)
+{
+	static unsigned char *cls;
+	static short *dist;
+	static int cap;
+	struct PInfo *in = pinfo (s);
+	int n = pt->n, face = -1, i, k;
+	struct timespec t0, t1;
+	char tag[16];
+	int wrote_face = 0;
+
+	if (!in) return;
+	/* a cube face: half 1, centre on an axis */
+	if (pt->half == 1.0)
+		for (k = 0; k < 3; k++)
+			if (fabs (pt->c[k]) == 1.0) face = 2*k + (pt->c[k] < 0.0);
+	if (cap < n*n) {
+		free (cls); free (dist);
+		cls = malloc ((size_t) n*n);
+		dist = malloc ((size_t) n*n * sizeof (*dist));
+		cap = (cls && dist) ? n*n : 0;
+		if (!cap) return;
+	}
+	clock_gettime (CLOCK_MONOTONIC, &t0);
+	psurf_classify (s, codes, n, cls, dist);
+	clock_gettime (CLOCK_MONOTONIC, &t1);
+	fprintf (stderr, "surfclass: %s %dx%d classes+coast %.2f ms\n", face >= 0 ? "face" : "patch",
+		 n, n, (t1.tv_sec - t0.tv_sec) * 1e3 + (t1.tv_nsec - t0.tv_nsec) / 1e6);
+	for (k = 0; k < 16; k++) in->cls[k] = psurf_code_class (s, k << 2);
+
+	if (face >= 0 && !(in->faces & (1 << face))) {
+		double h = 2.0 / n;
+		in->faces |= 1 << face;
+		wrote_face = 1;
+		for (i = 0; i < n*n; i++) {
+			double x = -1.0 + h * (i % n + 0.5), y = -1.0 + h * (i / n + 0.5);
+			in->area[(codes[i] >> 2) & 15] += pow (1.0 + x*x + y*y, -1.5);
+		}
+		if (in->faces == 63 && (w1_env & 1) && !in->dumped) {
+			in->dumped = 1;
+			w1_dump (s, in);
+		}
+	}
+	/* masks: each cube face once, then a few ground patches as they move */
+	if (!(w1_env & 2)) return;
+	if (face >= 0) {
+		if (wrote_face) { snprintf (tag, sizeof (tag), "f%d", face); w1_tga (s, in, cls, codes, n, tag); }
+	} else if (in->npatch < PS_MAX_DEBUG_PATCHES &&
+		   (!in->npatch || dot3 (pt->c, in->last_c) < 0.99999 * sqrt (dot3 (pt->c, pt->c) * dot3 (in->last_c, in->last_c)))) {
+		snprintf (tag, sizeof (tag), "p%02d", in->npatch++);
+		memcpy (in->last_c, pt->c, sizeof (in->last_c));
+		w1_tga (s, in, cls, codes, n, tag);
+	}
 }
