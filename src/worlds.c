@@ -9,9 +9,14 @@
  * never moves. Every shift is at most a quarter of the texel's own
  * brightness, so the night and twilight zones stay as dark as the game
  * draws them. Bands are set in radians of the surface, so the cube faces
- * and the ground patch agree. Off: --flat-biomes.
+ * and the ground patch agree.
+ *
+ * W2 slice 1: the land of a terran world takes a biome tone, lush, dry or
+ * tundra and rock, from latitude, the body's temperature and a seeded
+ * moisture noise. Off, both: --flat-biomes.
  * See docs/hd/planet-classes.md.
  */
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -324,26 +329,176 @@ static void shade (const unsigned char *in, int w, unsigned char *out)
 	}
 }
 
+/* ---- W2 slice 1: biomes on the land of terran worlds ----------------
+ * A biome byte per texel: 128 lush, down to 0 polar tundra and rock, up
+ * to 255 dry. It follows latitude (the polar caps sit on the model's y
+ * axis), shifted by the body's temperature, and a seeded moisture noise,
+ * all on the unit direction: the same at every resolution. */
+#define W_BSTEP	16	/* texels between biome samples, interpolated between */
+
+static struct BMap {
+	unsigned int seed;
+	int temp;
+	struct PPatch p;
+	unsigned char *b;	/* NULL: every texel is 'one' */
+	int one;
+	unsigned int lru;
+} bmaps[W_SLOTS];
+
+static double biome_at (const double d[3], int temp, unsigned int seed)
+{
+	double heat = fmax (-1.0, fmin (1.0, (temp - 288) / 40.0));
+	double m = 0.65 * vnoise (d, 2.5, seed ^ 0xb10e5u) + 0.35 * vnoise (d, 6.0, seed ^ 0x3c7au);
+	double y = fabs (d[1]) + 0.2 * (vnoise (d, 4.0, seed ^ 0x9e37u) - 0.5);
+	double polar = smooth (0.72 + 0.3 * heat, 0.9 + 0.3 * heat, y);
+	double band = 1.0 - smooth (0.2 + 0.35 * heat, 0.45 + 0.35 * heat, y);
+	double dry = fmax (0.0, fmin (1.0, band * (0.3 + 0.7 * fmax (heat, 0.0)) + 2.0 * (0.45 - m)));
+
+	return 128.0 + 127.0 * (dry * (1.0 - polar) - polar);
+}
+
+/* The biome bytes of a patch: NULL and *one when one byte serves it all
+ * (a landed patch). Kept by the patch's geometry, seed and temperature. */
+static const unsigned char *biome_map (const struct PPatch *pt, unsigned int seed, int temp, int *one)
+{
+	float g[(1024 / W_BSTEP + 1) * (1024 / W_BSTEP + 1)], lo = 1e9f, hi = -1e9f;
+	struct BMap *e = NULL;
+	int n = pt->n, gn = n / W_BSTEP + 1, i, k, x, y;
+	double sc = (n - 1.0) / (gn - 1.0);
+
+	for (i = 0; i < W_SLOTS; i++) {
+		struct BMap *m = &bmaps[i];
+		if (m->lru && m->seed == seed && m->temp == temp && m->p.n == n &&
+		    !memcmp (m->p.c, pt->c, offsetof (struct PPatch, n))) {
+			m->lru = ++clock_;
+			*one = m->one;
+			return m->b;
+		}
+		if (!e || m->lru < e->lru) e = m;
+	}
+	if (gn > 1024 / W_BSTEP + 1) return *one = -1, NULL;
+	for (y = 0; y < gn; y++)
+		for (x = 0; x < gn; x++) {
+			double a = (2.0 * x * sc + 1.0 - n) * pt->half / n, b = (2.0 * y * sc + 1.0 - n) * pt->half / n;
+			double d[3], r = sqrt (1.0 + a*a + b*b);
+			for (k = 0; k < 3; k++) d[k] = (pt->c[k] + a * pt->u[k] + b * pt->v[k]) / r;
+			g[y*gn + x] = biome_at (d, temp, seed);
+			lo = fminf (lo, g[y*gn + x]); hi = fmaxf (hi, g[y*gn + x]);
+		}
+	free (e->b);
+	e->seed = seed; e->temp = temp; e->p = *pt; e->lru = ++clock_;
+	e->one = (int) ((lo + hi) * 0.5f + 0.5f);
+	/* two steps of a byte are a fraction of a colour level: one byte */
+	if (hi - lo > 2.0f && (e->b = malloc ((size_t) n * n)))
+		for (y = 0; y < n; y++)
+			for (x = 0; x < n; x++) {
+				float fx = x / sc, fy = y / sc, v;
+				int x0 = fx >= gn - 1 ? gn - 2 : (int) fx, y0 = fy >= gn - 1 ? gn - 2 : (int) fy;
+				const float *q = g + y0 * gn + x0;
+				fx -= x0; fy -= y0;
+				v = (q[0] * (1 - fx) + q[1] * fx) * (1 - fy) + (q[gn] * (1 - fx) + q[gn+1] * fx) * fy;
+				e->b[y*n + x] = (unsigned char) (v + 0.5f);
+			}
+	*one = e->one;
+	return e->b;
+}
+
+/* c with its hue turned toward h by at most dh degrees, its saturation
+ * times ks and its value times kv, into d */
+static void hue_toward (const unsigned char *c, float h, float dh, float ks, float kv, float *d)
+{
+	float mx = fmaxf (c[0], fmaxf (c[1], c[2])), mn = fminf (c[0], fminf (c[1], c[2]));
+	float s = (mx - mn) / mx, hh, f, t;
+	int i;
+
+	if (mx - mn <= 0.0f) hh = h;
+	else if (mx == c[0]) hh = 60.0f * fmodf ((c[1] - c[2]) / (mx - mn) + 6.0f, 6.0f);
+	else if (mx == c[1]) hh = 60.0f * ((c[2] - c[0]) / (mx - mn) + 2.0f);
+	else hh = 60.0f * ((c[0] - c[1]) / (mx - mn) + 4.0f);
+	t = fmodf (h - hh + 540.0f, 360.0f) - 180.0f;
+	hh = fmodf (hh + fmaxf (-dh, fminf (dh, t)) + 360.0f, 360.0f) / 60.0f;
+	s = fminf (1.0f, s * ks);
+	mx *= kv;
+	i = (int) hh; f = hh - i;
+	{
+		float p = mx * (1 - s), q = mx * (1 - s * f), u = mx * (1 - s * (1 - f));
+		float r[6][3] = { {mx,u,p}, {q,mx,p}, {p,mx,u}, {p,q,mx}, {u,p,mx}, {mx,p,q} };
+		memcpy (d, r[i % 6], sizeof (r[0]));
+	}
+}
+
+/* The pull d of biome byte b on colour in: a hue shift of the texel's own
+ * colour, at most a quarter of its brightest channel. */
+static void tone_d (const unsigned char *in, int b, float *d)
+{
+	float x = (b - 128) / 127.0f, a[3], o[3];
+	int k, l = in[0] > in[1] ? in[0] : in[1];
+
+	memset (d, 0, 3 * sizeof (*d));
+	if (!(l = l > in[2] ? l : in[2])) return;
+	hue_toward (in, 110.0f, 25.0f, 1.1f, 0.92f, a);			/* lush */
+	if (x < 0.0f) x = -x, hue_toward (in, 0.0f, 0.0f, 0.35f, 1.1f, o);	/* tundra, rock */
+	else hue_toward (in, 40.0f, 60.0f, 0.7f, 1.1f, o);			/* dry */
+	for (k = 0; k < 3; k++) {
+		d[k] = a[k] + (o[k] - a[k]) * x - in[k];
+		d[k] = d[k] > 0.25f * l ? 0.25f * l : d[k] < -0.25f * l ? -0.25f * l : d[k];
+	}
+}
+
+/* sh, a colour shaded at byte w, pulled by d: the pull gives way to the
+ * beach sand across the rim, so the two together stay within a quarter */
+static void tone (const unsigned char *sh, int w, const float *d, unsigned char *out)
+{
+	float t = w > 128 ? (255 - w) / 127.0f : 1.0f, v;
+	int k;
+
+	for (k = 0; k < 3; k++) {
+		v = sh[k] + d[k] * t + 0.5f;
+		out[k] = v < 0.0f ? 0 : v > 255.0f ? 255 : (unsigned char) v;
+	}
+}
+
 void worlds_bake (unsigned char *rgb, const unsigned char *codes, const struct PPatch *pt,
 		  struct PSurf *s, const unsigned char pal[16][3])
 {
-	/* a texel's colour follows from its code and shade byte: each pair
-	 * is worked out once a bake */
-	static unsigned char tab[16][256][3], done[16][256];
+	/* a texel's colour follows from its code, shade byte and biome byte:
+	 * each triple is worked out once a bake (beach rims, being few, as
+	 * they come) */
+	static unsigned char tab[16][256][3], done[16][256], btab[16][256][3], bdone[16][256];
+	static float bd[16][256][3];
 	unsigned char p[16][3];
 	struct WMap *e = flat_biomes || !s ? NULL : find_map (codes, pt, s);
-	int i, k, n = pt->n;
+	const unsigned char *bm = NULL;
+	int i, k, n = pt->n, land[16] = { 0 }, any = 0, one = -1, temp = e ? psurf_terran_temp (s) : -1;
 
-	for (k = 0; k < 16; k++) shade (pal[k], e && e->by_code ? e->wn[k] : 0, p[k]);
-	if (!e || !e->w) {
+	for (k = 0; k < 16 && temp >= 0; k++) any |= land[k] = psurf_code_class (s, k << 2) == PS_LAND;
+	if (any) bm = biome_map (pt, psurf_seed (s), temp, &one);
+	if (!bm && one < 0) memset (land, 0, sizeof (land));
+	for (k = 0; k < 16; k++) {
+		int w = e && e->by_code ? e->wn[k] : 0;
+		shade (pal[k], w, p[k]);
+		if (land[k] && one >= 0) tone_d (pal[k], one, bd[k][0]), tone (p[k], w, bd[k][0], p[k]);
+	}
+	if ((!e || !e->w) && !bm) {
 		for (i = 0; i < n*n; i++, rgb += 3) memcpy (rgb, p[(codes[i] >> 2) & 15], 3);
 		return;
 	}
 	memset (done, 0, sizeof (done));
+	memset (bdone, 0, sizeof (bdone));
 	for (i = 0; i < n*n; i++, rgb += 3) {
-		int c = (codes[i] >> 2) & 15, w = e->w[i];
+		int c = (codes[i] >> 2) & 15, w = e->w ? e->w[i] : e->by_code ? e->wn[c] : 0, b;
+
 		if (!done[c][w]) { shade (pal[c], w, tab[c][w]); done[c][w] = 1; }
-		memcpy (rgb, tab[c][w], 3);
+		if (!land[c]) { memcpy (rgb, tab[c][w], 3); continue; }
+		b = bm ? bm[i] : one;
+		if (!bdone[c][b]) {
+			tone_d (pal[c], b, bd[c][b]);
+			if (!done[c][0]) { shade (pal[c], 0, tab[c][0]); done[c][0] = 1; }
+			tone (tab[c][0], 0, bd[c][b], btab[c][b]);
+			bdone[c][b] = 1;
+		}
+		if (w) tone (tab[c][w], w, bd[c][b], rgb);
+		else memcpy (rgb, btab[c][b], 3);
 	}
 }
 
@@ -359,5 +514,7 @@ void worlds_forget (const unsigned char *codes)
 	if (!codes) {
 		free (probe.w);
 		memset (&probe, 0, sizeof (probe));
+		for (i = 0; i < W_SLOTS; i++) free (bmaps[i].b);
+		memset (bmaps, 0, sizeof (bmaps));
 	}
 }
