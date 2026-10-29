@@ -156,7 +156,7 @@ The rules every term keeps:
   second rule is the one that holds low down: the patch centre the game
   gives is not quite a unit vector, so the inside test never passes, yet
   the game rasters the very same patch again on most frames. The probe is
-  built again only when the patch moves out of it or the planet changes.
+  built again when the patch changes or the planet changes.
   So the shallows seen from orbit are the shallows near the ground. The
   probe is sampled at its nearest texel, so close to the ground the band
   edge is blocky at the probe's scale.
