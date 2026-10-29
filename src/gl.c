@@ -4260,7 +4260,6 @@ static void planet_bake (GLuint tex, const unsigned char *codes, const struct PP
 	static unsigned char *rgb;
 	static int rgb_size;
 	unsigned char pal[16][3];
-	unsigned char *o;
 	int i;
 
 	for (i = 0; i < 16; i++) {
@@ -4276,14 +4275,7 @@ static void planet_bake (GLuint tex, const unsigned char *codes, const struct PP
 		rgb = nrgb;
 		rgb_size = n*n*3;
 	}
-	o = rgb;
-	for (i = 0; i < n*n; i++) {
-		const unsigned char *c = pal[(*codes++ >> 2) & 15];
-		*o++ = c[0];
-		*o++ = c[1];
-		*o++ = c[2];
-	}
-	worlds_tint (rgb, codes - n*n, pt, s);
+	worlds_bake (rgb, codes, pt, s, (const unsigned char (*)[3]) pal);
 
 	glBindTexture (GL_TEXTURE_2D, tex);
 	glPixelStorei (GL_UNPACK_ALIGNMENT, 1);

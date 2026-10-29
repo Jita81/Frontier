@@ -23,6 +23,7 @@
 #define W_BEACH		0.008	/* about 2 face texels at a face centre */
 #define W_SLOTS		48	/* 6 cached planets x 7 rasters, and spare */
 #define W_PROBE		512	/* the probe under a fine ground patch */
+#define W_BLOCK		32	/* ground patch texels per probe lookup, a side */
 
 /* the most a channel moves, as a share of the texel's brightest channel */
 static const float shallow_k[3] = { -0.08f, 0.25f, 0.12f };
@@ -33,7 +34,9 @@ static const float sand[3] = { 1.0f, 0.88f, 0.62f };
  * shallows (1) to open sea (128), 129..255 beach weight. */
 static struct WMap {
 	const unsigned char *codes;
-	unsigned char *w;	/* NULL: nothing to shade */
+	unsigned char *w;	/* NULL: nothing to shade per texel */
+	unsigned char wn[16];	/* if by_code: the shade byte of each code */
+	int by_code;
 	unsigned int lru;
 } maps[W_SLOTS];
 static unsigned int clock_;
@@ -160,16 +163,75 @@ static unsigned char *make_map (const unsigned char *codes, const struct PPatch 
 /* A ground patch too fine for a margin to reach the bands (low down and
  * landed) reads them from a probe: a 512² raster around it, at least as
  * fine as a cube face, reaching the bands beyond its edge. The probe is kept while
- * the patch stays inside it, so a patch rasterized again on every frame
- * (as when landed) does not pay for the coast distance again. */
+ * the patch stays inside it or is the same patch again, so a patch rasterized
+ * again on every frame (as when landed) does not pay for the coast distance
+ * again. */
 static struct { struct PSurf *s; unsigned int seed; struct PPatch p; unsigned char *w; } probe;
 
-static unsigned char *make_fine_map (const unsigned char *codes, const struct PPatch *pt, struct PSurf *s)
+/* Where texel (x, y) of pt falls in the probe, before rounding; returns
+ * the depth along the probe's centre (> 0 on the near side). */
+static double probe_at (const struct PPatch *pt, double h, int x, int y, double q[2])
+{
+	int n = pt->n, k;
+	double a = (2.0 * x + 1.0 - n) * pt->half / n, b = (2.0 * y + 1.0 - n) * pt->half / n;
+	double d[3], dc;
+
+	for (k = 0; k < 3; k++) d[k] = pt->c[k] + a * pt->u[k] + b * pt->v[k];
+	dc = wdot (d, probe.p.c);
+	q[0] = wdot (d, probe.p.u) / dc * h + 0.5 * W_PROBE;
+	q[1] = wdot (d, probe.p.v) / dc * h + 0.5 * W_PROBE;
+	return dc;
+}
+
+/* the probe texel index of q, as (int) and clamped to the probe */
+static int probe_clamp (double q)
+{
+	return q < 0.0 ? 0 : q >= W_PROBE - 1 ? W_PROBE - 1 : (int) q;
+}
+
+/* The probe byte under every texel of the size² block at (bx, by), or -1
+ * if they may differ. The map from texel to probe is a ratio of linear
+ * functions, so the block's corners bound it; a millionth of a probe
+ * texel covers the rounding. Away from a coast one lookup serves the whole
+ * block, and a landed patch lies inside one probe texel. */
+static int block_value (const struct PPatch *pt, double h, int bx, int by, int size)
+{
+	double q[2], lo[2] = { 1e9, 1e9 }, hi[2] = { -1e9, -1e9 };
+	int i, k, x0, x1, y0, y1, x, y, v;
+
+	for (i = 0; i < 4; i++) {
+		int cx = bx + (i & 1 ? size - 1 : 0), cy = by + (i & 2 ? size - 1 : 0);
+		if (probe_at (pt, h, cx < pt->n ? cx : pt->n - 1, cy < pt->n ? cy : pt->n - 1, q) <= 0.0)
+			return -1;
+		for (k = 0; k < 2; k++) { lo[k] = fmin (lo[k], q[k]); hi[k] = fmax (hi[k], q[k]); }
+	}
+	x0 = probe_clamp (lo[0] - 1e-6); x1 = probe_clamp (hi[0] + 1e-6);
+	y0 = probe_clamp (lo[1] - 1e-6); y1 = probe_clamp (hi[1] + 1e-6);
+	v = probe.w[y0 * W_PROBE + x0];
+	for (y = y0; y <= y1; y++)
+		for (x = x0; x <= x1; x++)
+			if (probe.w[y * W_PROBE + x] != v) return -1;
+	return v;
+}
+
+/* the shade byte of a water or beach texel over probe byte v: the probe
+ * is coarser, so where it disagrees this is the coast */
+static int fine_w (int c, int v)
+{
+	if (c == PS_WATER) return v >= 1 && v <= 128 ? v : 1;
+	return v > 128 ? v : v ? 255 : 0;
+}
+
+/* As make_map, from the probe. When the whole patch lies over one probe
+ * byte (landed, or low over open land or sea) the shade follows from the
+ * code alone: it goes in e->wn, and nothing is kept per texel. */
+static unsigned char *make_fine_map (const unsigned char *codes, const struct PPatch *pt,
+				     struct PSurf *s, struct WMap *e)
 {
 	static unsigned char pcodes[W_PROBE * W_PROBE];
 	double ext = atan (pt->half) + 1.5 * W_SHALLOW, h;
 	unsigned char lut[16], *w;
-	int n = pt->n, x, y, k, wet = 0, beach;
+	int n = pt->n, x, y, k, wet = 0, beach, bx, by, v;
 
 	for (k = 0; k < 16; k++) {
 		lut[k] = psurf_code_class (s, k << 2);
@@ -177,8 +239,13 @@ static unsigned char *make_fine_map (const unsigned char *codes, const struct PP
 	}
 	if (!wet) return NULL;
 	beach = psurf_temperate (s);
+	/* The patch is rasterized again in place on most frames low down
+	 * (its centre is not quite a unit vector, so the test against the
+	 * probe never passes): the same probe again is kept. */
 	if (!probe.w || probe.s != s || probe.seed != psurf_seed (s) ||
-	    acos (fmin (1.0, wdot (pt->c, probe.p.c))) + ext > atan (probe.p.half)) {
+	    (acos (fmin (1.0, wdot (pt->c, probe.p.c))) + ext > atan (probe.p.half) &&
+	     (memcmp (pt->c, probe.p.c, sizeof (pt->c)) || memcmp (pt->u, probe.p.u, sizeof (pt->u)) ||
+	      memcmp (pt->v, probe.p.v, sizeof (pt->v)) || probe.p.half != tan (ext + 0.01)))) {
 		free (probe.w);
 		probe.p = *pt;
 		probe.p.n = W_PROBE;
@@ -188,25 +255,30 @@ static unsigned char *make_fine_map (const unsigned char *codes, const struct PP
 		probe.w = psurf_raster (s, &probe.p, pcodes) ? NULL : make_map (pcodes, &probe.p, s);
 		if (!probe.w) return NULL;
 	}
-	if (!(w = calloc (1, (size_t) n * n))) return NULL;
 	h = 0.5 * W_PROBE / probe.p.half;
-	for (y = 0; y < n; y++)
-		for (x = 0; x < n; x++) {
-			int c = lut[(codes[y*n + x] >> 2) & 15], px, py, v;
-			double a = (2.0 * x + 1.0 - n) * pt->half / n, b = (2.0 * y + 1.0 - n) * pt->half / n;
-			double d[3], dc;
+	if ((v = block_value (pt, h, 0, 0, n)) >= 0) {
+		for (k = 0; k < 16; k++)
+			e->wn[k] = lut[k] == PS_WATER || (lut[k] == PS_LAND && beach) ? fine_w (lut[k], v) : 0;
+		e->by_code = 1;
+		return NULL;
+	}
+	if (!(w = calloc (1, (size_t) n * n))) return NULL;
+	for (by = 0; by < n; by += W_BLOCK)
+		for (bx = 0; bx < n; bx += W_BLOCK) {
+			int bv = block_value (pt, h, bx, by, W_BLOCK);
 
-			if (c != PS_WATER && !(c == PS_LAND && beach)) continue;
-			for (k = 0; k < 3; k++) d[k] = pt->c[k] + a * pt->u[k] + b * pt->v[k];
-			dc = wdot (d, probe.p.c);
-			px = (int) (wdot (d, probe.p.u) / dc * h + 0.5 * W_PROBE);
-			py = (int) (wdot (d, probe.p.v) / dc * h + 0.5 * W_PROBE);
-			px = px < 0 ? 0 : px >= W_PROBE ? W_PROBE - 1 : px;
-			py = py < 0 ? 0 : py >= W_PROBE ? W_PROBE - 1 : py;
-			v = probe.w[py * W_PROBE + px];
-			/* the probe is coarser: where it disagrees, this is the coast */
-			if (c == PS_WATER) w[y*n + x] = v >= 1 && v <= 128 ? v : 1;
-			else w[y*n + x] = v > 128 ? v : v ? 255 : 0;
+			for (y = by; y < by + W_BLOCK && y < n; y++)
+				for (x = bx; x < bx + W_BLOCK && x < n; x++) {
+					int c = lut[(codes[y*n + x] >> 2) & 15];
+					double q[2];
+
+					if (c != PS_WATER && !(c == PS_LAND && beach)) continue;
+					if ((v = bv) < 0) {
+						probe_at (pt, h, x, y, q);
+						v = probe.w[probe_clamp (q[1]) * W_PROBE + probe_clamp (q[0])];
+					}
+					w[y*n + x] = fine_w (c, v);
+				}
 		}
 	return w;
 }
@@ -222,36 +294,56 @@ static struct WMap *find_map (const unsigned char *codes, const struct PPatch *p
 	}
 	free (e->w);
 	e->codes = codes;
+	e->by_code = 0;
 	/* a ground patch within 0.3 radians: the probe is finer than a margin */
-	e->w = pt->n > W_PROBE && atan (pt->half) < 0.3 ? make_fine_map (codes, pt, s)
+	e->w = pt->n > W_PROBE && atan (pt->half) < 0.3 ? make_fine_map (codes, pt, s, e)
 		: make_map (codes, pt, s);
 	e->lru = ++clock_;
 	return e;
 }
 
-void worlds_tint (unsigned char *rgb, const unsigned char *codes,
-		  const struct PPatch *pt, struct PSurf *s)
+/* colour in, shaded by shade byte w (see WMap), into out */
+static void shade (const unsigned char *in, int w, unsigned char *out)
 {
-	const unsigned char *w;
+	int k, l = in[0] > in[1] ? in[0] : in[1];
+
+	memcpy (out, in, 3);
+	if (!w || !(l = l > in[2] ? l : in[2])) return;
+	for (k = 0; k < 3; k++) {
+		float sh, v;
+		if (w <= 128) {
+			float t = (w - 1) / 127.0f;
+			sh = shallow_k[k] + (deep_k[k] - shallow_k[k]) * t;
+		} else {
+			/* toward sand of the same brightness, a quarter at most */
+			sh = (sand[k] * l - in[k]) / (float) l;
+			sh = (sh > 0.25f ? 0.25f : sh < -0.25f ? -0.25f : sh) * (w - 128) / 127.0f;
+		}
+		v = in[k] + sh * l + 0.5f;
+		out[k] = v < 0.0f ? 0 : v > 255.0f ? 255 : (unsigned char) v;
+	}
+}
+
+void worlds_bake (unsigned char *rgb, const unsigned char *codes, const struct PPatch *pt,
+		  struct PSurf *s, const unsigned char pal[16][3])
+{
+	/* a texel's colour follows from its code and shade byte: each pair
+	 * is worked out once a bake */
+	static unsigned char tab[16][256][3], done[16][256];
+	unsigned char p[16][3];
+	struct WMap *e = flat_biomes || !s ? NULL : find_map (codes, pt, s);
 	int i, k, n = pt->n;
 
-	if (flat_biomes || !s || !(w = find_map (codes, pt, s)->w)) return;
+	for (k = 0; k < 16; k++) shade (pal[k], e && e->by_code ? e->wn[k] : 0, p[k]);
+	if (!e || !e->w) {
+		for (i = 0; i < n*n; i++, rgb += 3) memcpy (rgb, p[(codes[i] >> 2) & 15], 3);
+		return;
+	}
+	memset (done, 0, sizeof (done));
 	for (i = 0; i < n*n; i++, rgb += 3) {
-		int l = rgb[0] > rgb[1] ? rgb[0] : rgb[1];
-		if (!w[i] || !(l = l > rgb[2] ? l : rgb[2])) continue;
-		for (k = 0; k < 3; k++) {
-			float sh, v;
-			if (w[i] <= 128) {
-				float t = (w[i] - 1) / 127.0f;
-				sh = shallow_k[k] + (deep_k[k] - shallow_k[k]) * t;
-			} else {
-				/* toward sand of the same brightness, a quarter at most */
-				sh = (sand[k] * l - rgb[k]) / (float) l;
-				sh = (sh > 0.25f ? 0.25f : sh < -0.25f ? -0.25f : sh) * (w[i] - 128) / 127.0f;
-			}
-			v = rgb[k] + sh * l + 0.5f;
-			rgb[k] = v < 0.0f ? 0 : v > 255.0f ? 255 : (unsigned char) v;
-		}
+		int c = (codes[i] >> 2) & 15, w = e->w[i];
+		if (!done[c][w]) { shade (pal[c], w, tab[c][w]); done[c][w] = 1; }
+		memcpy (rgb, tab[c][w], 3);
 	}
 }
 

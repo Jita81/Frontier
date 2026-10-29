@@ -117,8 +117,8 @@ asks for `psurf_classify`. Measured on an M-series Mac:
 ## What is drawn: sea depth and beaches
 
 `src/worlds.c` (W3, slice 1) shades the planet textures from the classes
-and the coast distance. `planet_bake` in `src/gl.c` calls `worlds_tint`
-after it has turned the codes into colours for one light zone.
+and the coast distance. `planet_bake` in `src/gl.c` calls `worlds_bake`
+to turn the codes into colours for one light zone, shaded.
 
 - **Sea depth.** Water near a coast is lighter and a little turquoise
   (the shallows). It deepens to a slightly darker blue over 0.045 radians
@@ -151,14 +151,26 @@ The rules every term keeps:
   for its own padding to reach a coast 0.045 radians away. It reads its
   distances instead from a coarser probe raster (512², centred on the
   patch, wide enough to cover the patch plus the shallows band). The probe
-  is kept while the patch stays inside it and is built again only when the
-  patch leaves it or the planet changes. So the shallows seen from orbit
-  are the shallows near the ground. The probe is sampled at its nearest
-  texel, so close to the ground the band edge is blocky at the probe's
-  scale.
+  is kept while the patch stays inside it, and also whenever the patch is
+  the same patch again (the same centre, axes and size, bit for bit). The
+  second rule is the one that holds low down: the patch centre the game
+  gives is not quite a unit vector, so the inside test never passes, yet
+  the game rasters the very same patch again on most frames. The probe is
+  built again only when the patch moves out of it or the planet changes.
+  So the shallows seen from orbit are the shallows near the ground. The
+  probe is sampled at its nearest texel, so close to the ground the band
+  edge is blocky at the probe's scale.
+- The patch reads the probe in 32×32 blocks. A block whose four corners
+  (and so every texel: the map from patch to probe is projective) fall in
+  one probe texel takes that texel's value once. When the whole patch lies
+  in one probe texel, as it does landed, the shade follows from the code
+  alone: `worlds_bake` builds a 16-entry shaded palette and expands the
+  codes with it, at the cost of the plain expansion. Otherwise it keeps a
+  table of each (code, shade value) colour it has worked out. The texels
+  drawn are the same as shading each one in turn.
 
-`--flat-biomes` turns all of this off: `worlds_tint` returns before it
-reads or writes anything, so the textures are the ones the build before
+`--flat-biomes` turns all of this off: `worlds_bake` expands the codes
+with the plain palette and reads nothing else, so the textures are the ones the build before
 it uploads.
 
 ### Cost of the shading
@@ -177,23 +189,24 @@ world, with other game processes running on the same machine:
 The work runs once per raster: when a face is first drawn and each time
 the ground patch is rastered again.
 
-Landed on a world with water (the timing build, about 80 s of play):
+The tint on top of the plain palette expansion, per ground-patch bake (the
+timing build, about 80 s of play on a sea world with the `q1t` drive; the
+build before this change in brackets):
 
-| Step | Time |
+| Phase | Tint per patch bake, mean |
 | --- | --- |
-| Ground patch (1024²) shade map, probe built again | 6 to 9 ms |
-| the same, probe kept | 5 to 6.5 ms |
-| Tint call in all, per bake | 6 to 10 ms |
+| Landed | 0.001 ms (5.5 ms) |
+| Launch | 0.014 ms (5.2 ms) |
+| Low flight | 0.44 ms, p95 2.0 ms (3.2 ms) |
+| Cruise and landing | 0.008 ms (2.5 ms) |
+| Landed again | 0.002 ms (2.7 ms) |
 
-When landed the game rasters the ground patch again on nearly every frame
-(about 2,300 bakes in 80 s, of which about 900 built the probe again). The
-shading therefore adds about 6 ms to each of those frames. That is the
-largest cost of this slice; the fix is to keep the map when the new raster
-is the same patch as the last one (see the open item below).
+The game rasters the ground patch again on nearly every low frame (about
+50 bakes a second). Before, each of those built the shade map, and often
+the probe, again: about 5 ms a frame landed. Now the probe is kept for the
+same patch and the landed patch is one palette expansion. The output is
+byte for byte the same (checked on every bake of four full drives, about
+5,000 bakes each, and on 2,160 stress bakes).
 
 Memory: one byte a texel per raster kept (256 KB a face, 1 MB a ground
 patch), in up to 48 slots, plus the padded scratch buffers.
-
-Open item: the landed per-frame cost above. The base build itself rasters
-the ground patch again on nearly every landed frame; the shading follows
-it. Keeping the shade map for an unchanged patch would remove the cost.
