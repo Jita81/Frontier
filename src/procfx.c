@@ -56,7 +56,7 @@ static const char noise_glsl[] =
  * the game's own geometry and colours come through unchanged as gl_Color.
  * 0 when GLSL is missing or the source does not compile; the caller then
  * draws the old way. */
-static GLuint procfx_program (const char *name, const char *body)
+GLuint procfx_program (const char *name, const char *body)
 {
 	const char *src[2] = { noise_glsl, body };
 	GLuint fs, prog;

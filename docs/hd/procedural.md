@@ -79,7 +79,7 @@ and dropped: layer 2 already owns the planet's rim and halo.
 | 1 | **Planets (built, with 6)** | Every textured planet gets a soft terminator, a darker limb, a lit rim and a soft halo from its own atmosphere layers. | 85 + 210 in gl.c | noise, program | Low |
 | 2 | **Star corona by class (built, layer 3)** | The star becomes a glowing sun with soft streamers, not a flat disc. | ~95 + ~45 hooks | noise, program, glow square, object reader, star class | Low |
 | 3 | **Sky band (built)** | The flat blue cut-outs become soft star clouds with dust lanes, on every space screen. | 150 + 33 hooks | noise, program, object reader | Low |
-| 4 | Planet rings | Probably also a fix: rings look to be black discs today. They would become banded and see-through. | ~90 | noise, program, object reader | Medium |
+| 4 | **Planet rings (built)** | Not a fix: GL already drew them right. The flat bands become soft, see-through ringlets with gaps. | ~150 + 22 hooks | noise, program, object reader | Low |
 | 5 | Backdrop variation | Ports of the same class stop looking identical. | ~30 | identity tables | Low |
 | 6 | **Close planet detail (built, in 1)** | The ground keeps its grain when flying low. | in 1 | noise, program | Medium |
 
@@ -98,12 +98,9 @@ oracle is nil.  The risk column is about visuals and code.
   - Streamers: `pf_fbm` over the direction away from the star on the sky, seeded by the star.
   - Verify: red, yellow and white stars.
   - Switch: `--flat-stars`.
-- **Rings.**
-  - Path: L3d648_PutPlanetRings (fe2.s 17221) → L3b9aa_FilledOvalThingy (14525) → L37fb2_ProjectOvalXYZ (9464) → `Nu_PutOval`.
-  - `Nu_DrawOval` draws black, and its rotation code is commented out.
-  - Orient with the object reader, and band with `pf_fbm` seeded by the planet.
-  - First check the oval opcode's other users.
-  - Verify: needs a save in a ringed system.
+- **Rings.**  Built; see [rings.md](rings.md).
+  - Path: the gas-giant model's own complex shapes after `Nu_PutPlanet`, not the oval opcode, which only the intro logo uses.
+  - Hooks: `Nu_PutPlanet`, `Nu_ComplexStart`, `Nu_DrawComplexStart`, `flush_contour`, `Nu_DrawComplexEnd`.
   - Switch: `--flat-rings`.
 - **Backdrops.**
   - Hook: `pick` in hdback.c.
@@ -116,8 +113,7 @@ oracle is nil.  The risk column is about visuals and code.
   - Switch: `--flat-planets`, as for the limb.
 
 **Recommendation.**  The sky band, the planets (with their limb and
-close detail) and the corona are built.  Do rings once a ringed save
-exists.
+close detail), the corona and the rings are built.
 
 ## Left out, and why
 

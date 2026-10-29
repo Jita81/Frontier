@@ -51,6 +51,7 @@ typedef void (*_GLUfuncptr)();
 #include "fx.h"
 #include "hdinst.h"
 #include "procfx.h"
+#include "skies.h"
 #include "bindings.h"
 #include "hdtip.h"
 #include "hddamage.h"
@@ -1188,6 +1189,7 @@ enum NuPrimitive {
 	NU_SKYBAND,
 	NU_COMPLEX_OVAL,
 	NU_FX,		/* fx.c's tag for the primitive that follows */
+	NU_RINGS,	/* skies.c: the complex shape that follows is a ring */
 	NU_MAX
 };
 /* the next primitive belongs to a weapon, missile, explosion...: say which (fx.c) */
@@ -1580,6 +1582,9 @@ static void hull_complex_end (void);
  * object; sky_pending when the next polygon drawn is the Milky Way */
 static int complex_sky, sky_pending, sky_active;
 static float complex_sky_m[9], sky_m[9];
+/* skies.c's rings, the same way */
+static int complex_ring, ring_pending, ring_active;
+static struct skies_ring complex_ring_r, ring_r;
 
 static void put_complex_start_4real ()
 {
@@ -1588,6 +1593,7 @@ static void put_complex_start_4real ()
 		znode_wrlong (NU_SKYBAND);
 		znode_wrblock (complex_sky_m, sizeof complex_sky_m);
 	}
+	if (complex_ring) { znode_wrlong (NU_RINGS); znode_wrblock (&complex_ring_r, sizeof complex_ring_r); }
 	put_fx ();
 	znode_wrlong (NU_COMPLEX_START);
 	znode_wrcolor (complex_col_rgb444);
@@ -1711,6 +1717,7 @@ static void flush_contour ()
 		gluTessVertex (tobj, d, d);
 	}
 	if (sky_active) procfx_sky_feather (tess_vertices + first, tess_vpos - first);
+	if (ring_active) skies_ring_contour (tess_vertices + first, tess_vpos - first);
 }
 
 void Nu_ComplexSNext ()
@@ -1750,6 +1757,13 @@ void Nu_ComplexStart ()
 	complex_st_start = STMemory_ReadLong (__DL385c8_primitives_end);
 	complex_starts++;
 	complex_sky = procfx_sky_put (complex_sky_m);
+	complex_ring = !complex_sky && skies_ring_put (&complex_ring_r);
+}
+void Nu_DrawRings (void **data)
+{
+	memcpy (&ring_r, *data, sizeof ring_r);
+	*data += sizeof ring_r;
+	ring_pending = 1;
 }
 void Nu_DrawSkyBand (void **data)
 {
@@ -1783,6 +1797,7 @@ void Nu_DrawComplexStart (void **data)
 		gluTessBeginContour (tobj);
 		contour_n = 0;
 		if (sky_pending) sky_active = procfx_sky_begin (sky_m, tessProjMatrix, tessViewport);
+		else if (ring_pending) ring_active = skies_ring_begin (&ring_r, tessProjMatrix, tessViewport);
 	} else {
 		glBegin (GL_LINE_STRIP);
 	}
@@ -1828,7 +1843,8 @@ void Nu_DrawComplexEnd (void **data)
 		glEnd ();
 	}
 	if (sky_active) procfx_sky_end ();
-	sky_pending = sky_active = 0;
+	if (ring_active) skies_ring_end ();
+	sky_pending = sky_active = ring_pending = ring_active = 0;
 }
 
 void Nu_ComplexStartInner ()
@@ -5443,6 +5459,7 @@ void Nu_PutPlanet ()
 		p.light[i] = (double) STMemory_ReadWord (a1 + 2*i);
 	}
 	p.R = (double) (unsigned int) GetReg (REG_D0);
+	skies_planet_put (p.centre, p.R, p.light);
 
 	/* the object rotation matrix at -36(a6): the ST computes viewing
 	 * x as M0*x + M3*y + M6*z (L3d452_PlanetFeatureLoop) */
@@ -6265,7 +6282,8 @@ NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	&Nu_DrawAtmosphereFaded,
 	&Nu_DrawSkyBand,
 	&Nu_DrawComplexOval,
-	&fx_draw_tag
+	&fx_draw_tag,
+	&Nu_DrawRings
 };
 
 /*
