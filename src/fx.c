@@ -47,10 +47,9 @@ static int readable (unsigned int a, unsigned int n) { return a <= MEM_SIZE && n
  * (not a map or a 2D page); asked at put time, as this changes mid frame */
 static int in_flight (void) { return !(rb (A6 + A6_START_FLAGS) & 0x20) && (signed char) rb (A6 + A6_TOOLS_MODE) < 0; }
 /* the model of the object being put, 0 for none; its record in *rec.  Besides
- * the flight view, the death camera (state $58 at 704(a6)) shows the player's
- * own explosion, whose record the game keeps at 674(a6) (fe2.s L63b64). */
+ * the flight view, the death camera (state $58 at 704(a6)) is a 3D view too:
+ * there its explosions (every one, not only the player's) and smoke are fx's. */
 #define A6_STATE	704
-#define A6_DEATH_REC	674
 static int put_model (unsigned int *rec)
 {
 	unsigned int a6 = GetReg (REG_A6);
@@ -58,7 +57,7 @@ static int put_model (unsigned int *rec)
 	if (flat_fx || (signed char) rb (A6 + A6_TOOLS_MODE) >= 0 || !readable (a6 - FRAME_OBJ, 4)) return 0;
 	*rec = STMemory_ReadLong (a6 - FRAME_OBJ);
 	m = readable (*rec, 256) ? STMemory_ReadWord (*rec + OBJ_MODEL) & 0xffff : 0;
-	return in_flight () || (m == M_EXPL && rb (A6 + A6_STATE) == 0x58 && *rec == STMemory_ReadLong (A6 + A6_DEATH_REC)) ? m : 0;
+	return in_flight () || ((m == M_EXPL || m == M_SMOKE) && rb (A6 + A6_STATE) == 0x58) ? m : 0;
 }
 /* an integer hash, 0..1 (never the game's random numbers) */
 static float hashf (unsigned int a, unsigned int b)
@@ -106,11 +105,13 @@ static void col (float r, float g, float b, float a) { glColor4f (r, g, b, a > 1
 
 static float dist2 (const float *a, const float *b)
 	{ return (a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2]); }
+/* lighting off for a sprite drawn in the hull pass (on, GL ignores glColor);
+ * unlit () returns how it was, for relight () */
+static int unlit (void) { int l = glIsEnabled (GL_LIGHTING); glDisable (GL_LIGHTING); return l; }
+static void relight (int l) { if (l) glEnable (GL_LIGHTING); }
 /* additive light, or plain alpha for smoke; texture times colour */
-static int lit = -1;	/* GL_LIGHTING as the hull renderer left it: on, it ignores glColor */
 static void blend (int additive, int t)
 {
-	if (lit < 0) lit = glIsEnabled (GL_LIGHTING), glDisable (GL_LIGHTING);
 	glEnable (GL_BLEND);
 	glBlendFunc (GL_SRC_ALPHA, additive ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA);
 	if (!tex[0]) make_textures ();
@@ -118,12 +119,7 @@ static void blend (int additive, int t)
 	glBindTexture (GL_TEXTURE_2D, tex[t]);
 	glTexEnvi (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 }
-static void blend_end (void)
-{
-	glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); glDisable (GL_BLEND); glDisable (GL_TEXTURE_2D);
-	if (lit > 0) glEnable (GL_LIGHTING);
-	lit = -1;
-}
+static void blend_end (void) { glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); glDisable (GL_BLEND); glDisable (GL_TEXTURE_2D); }
 /* a square of the bound texture facing the eye, never over half the view */
 static void sprite (const float *p, float r, float rot)
 {
@@ -289,26 +285,30 @@ int fx_blob (const int *iv, int rad, int r, int g, int b)
 {
 	float v[3] = { iv[0], iv[1], iv[2] }, R = 0.002f * (rad < 2 ? 2 : rad) * fabsf (v[2]), a = (cur.aux & 0x7f) / 127.0f;
 	float grey = (c8 (r) + c8 (g) + c8 (b)) / 3 * 0.7f + 0.15f;
+	int l;
 	if (cur.kind != M_SMOKE) return 0;
 	if (n_smoke < 256) memcpy (smoke[n_smoke++], v, sizeof v);
+	l = unlit ();
 	blend (0, T_PUFF);
 	col (grey, grey * 0.97f, grey * 0.93f, 0.85f * a + 0.1f);
 	sprite (v, R * (1.6f - 0.6f * a), hashf (cur.rec, rad) * 6.283f + fx_ms * 0.0004f);
 	blend_end ();
+	relight (l);
 	return 1;
 }
 
 /* An explosion (model 188) is a copy of the ship that died (fe2.s:27095) or
- * of the missile that went off (L75852).  +88 is its size step: the ship's,
- * one up from 10t and one more from 400t (the renderer already scales its
- * circles by it).  Long +122 is its clock, run down from $ffffffff every frame
- * (L74d8e), so its age replays exactly; +93 and +126 seed it.  The game draws
+ * of the missile that went off (L75852).  +88 is a size step, -1 to +1 (seen
+ * -1 and 0; the renderer already scales its circles by it): fx maps it to k,
+ * 0 to 1.  Long +122 is its clock, run down from $ffffffff by a fixed step a
+ * frame (L74d8e), so its age replays exactly and every explosion lasts the
+ * same game time; k shapes how it burns, not how long.  The game draws
  * each blob as rings of circles, the outer first: fx draws a blob once, as a
  * layered fireball at its outer ring, and drops the inner rings. */
 #define OBJ_SIZE	88
 #define OBJ_CLOCK	122
 #define GLOW_CAP	0.4f	/* the most light a blob adds: a hull behind it still reads */
-/* one that starts where a missile was last frame is a missile's */
+/* a heuristic: one that starts where a missile was last frame is a missile's */
 static int missile_blast (unsigned int rec, float a, const float *v)
 {
 	static struct { unsigned int rec, missile; float a; } bl[16];
@@ -329,22 +329,27 @@ int fx_circle (const int *iv, unsigned int d2, int r, int g, int b)
 {
 	float v[3] = { iv[0], iv[1], iv[2] }, R = 0.002f * ((short) d2 + (d2 >> 16) / 65536.0f) * fabsf (v[2]);
 	float a, k, f, heat, ember, flash, spin, fire[3];
-	struct ball *o = n_balls ? &balls[n_balls - 1] : 0;
-	int mis;
+	struct ball *o;
+	int mis, i, n = 0, l;
 	if (cur.kind != M_EXPL) return 0;
-	if (o && o->rec == cur.rec && dist2 (o->v, v) < 0.25f * o->R * o->R && R <= o->R) return 1;	/* an inner ring */
+	for (i = 0; i < n_balls; i++)	/* an inner ring of a blob of this record drawn already */
+		if (balls[i].rec == cur.rec && (n++, R <= balls[i].R && dist2 (balls[i].v, v) < 0.25f * balls[i].R * balls[i].R))
+			return 1;
 	a = 1 - (unsigned int) STMemory_ReadLong (cur.rec + OBJ_CLOCK) / 4294967296.0f;	/* its age, 0 to 1 */
-	k = fminf (fmaxf ((short) STMemory_ReadWord (cur.rec + OBJ_SIZE), 0), 4) / 4;	/* a fighter 0, a heavy ship 1 */
+	k = fminf (fmaxf (((short) STMemory_ReadWord (cur.rec + OBJ_SIZE) + 1) / 2.0f, 0), 1);	/* +88 -1 to 0, +1 to 1 */
 	mis = missile_blast (cur.rec, a, v);
 	o = &balls[n_balls < 64 ? n_balls++ : 63];
 	*o = (struct ball) { cur.rec, mis, { v[0], v[1], v[2] }, R, a };
-	spin = hashf (rb (cur.rec + 93) + 7 * n_balls, STMemory_ReadWord (cur.rec + 126) & 0xffff) * 6.283f + a * (3 - 2 * k);
+	/* its turn, seeded by the record and the blob's place in it: steady frame to frame */
+	spin = hashf (rb (cur.rec + 93) + 7 * n, STMemory_ReadWord (cur.rec + 126) & 0xffff) * 6.283f + a * (3 - 2 * k);
+	l = unlit ();
 	if (c8 (b) > 2 * c8 (r)) {	/* a blue spark: kept small */
 		o->R = 0;
 		blend (1, T_GLOW);
 		col (0.55f, 0.7f, 1, GLOW_CAP * (1 - a));
 		sprite (v, R, 0);
 		blend_end ();
+		relight (l);
 		return 1;
 	}
 	/* how far its fire has burnt, by age and size: a fighter pops and is smoke
@@ -369,6 +374,7 @@ int fx_circle (const int *iv, unsigned int d2, int r, int g, int b)
 		sprite (v, (mis ? 1.4f : 1.8f + 0.6f * k) * R, 0);
 	}
 	blend_end ();
+	relight (l);
 	return 1;
 }
 
@@ -457,14 +463,18 @@ void fx_frame_end (void)
 	cur.kind = in_complex = drew_3d = 0;
 	if (flat_fx) return;
 	check_scene ();
-	if (!had_3d) return;
+	if (!had_3d || (!scene && !n_balls)) return;	/* no flight view or explosion this frame */
 	glGetIntegerv (GL_VIEWPORT, vp);
 	vp_h = vp[3] > 0 ? vp[3] : 480;
 	blend (1, T_GLOW);
-	glDisable (GL_TEXTURE_2D);
-	shock_rings ();	/* the death camera's too */
-	glEnable (GL_TEXTURE_2D);
-	if (!scene) { blend_end (); return; }	/* no flight view this frame */
+	if (n_balls) {	/* the death camera's too */
+		i = unlit ();
+		glDisable (GL_TEXTURE_2D);
+		shock_rings ();
+		glEnable (GL_TEXTURE_2D);
+		relight (i);
+	}
+	if (!scene) { blend_end (); return; }
 	for (i = 0; i < n_missiles; i++) draw_plume (&missiles[i]);
 	for (i = 0; i < NR; i++)
 		if (ring[i].fade && fx_ms - ring[i].t0 >= ring[i].fade) ring[i].fade = 0;

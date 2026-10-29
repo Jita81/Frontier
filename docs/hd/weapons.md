@@ -8,15 +8,16 @@ and `--old-renderer` never runs fx.
 
 ## When
 
-`fx_tag_for` and `fx_laser_quad` read (never write) the object being put: the
-record at A6-212 and its model word at +90. They act only in the flight view.
-That means a game is on (bit 5 of 598(a6) clear, so not the intro or the
-start menu) and a 3D view fills the screen (42(a6) negative, so not a map or
-a 2D page). One exception: in the death camera (state `$58` at 704(a6)) the
-player's own explosion, the record the game keeps at 674(a6), is tagged too;
-the game-over screen after it is not touched. A recognised model puts an `NU_FX` op before its primitive, and
-the draw side replaces that primitive. Tagged polygons are not hull-plated.
-The oracle is unchanged.
+`fx_tag_for` and `fx_laser_quad` read (never write) the object being put:
+the record at A6-212 and its model word at +90. They act only in the flight
+view. That means a game is on (bit 5 of 598(a6) clear, so not the intro or
+the start menu) and a 3D view fills the screen (42(a6) negative, so not a
+map or a 2D page). One exception: the death camera (state `$58` at 704(a6))
+is a 3D view too, so there every explosion (188) and smoke (194) record is
+tagged, not only the player's own (the one at 674(a6)); a death leaves
+several. The game-over screen after it is not touched. A recognised model
+puts an `NU_FX` op before its primitive, and the draw side replaces that
+primitive. Tagged polygons are not hull-plated. The oracle is unchanged.
 
 Effects that outlive their frame (a beam, its muzzle bloom, a hit flare) are
 aged on game time, which stops while the time rate, 10428(a6), is 0. Pause
@@ -44,9 +45,12 @@ fields:
 
 | Field | What the game keeps there | What fx does with it |
 |---|---|---|
-| word +88 | size step: the ship's, one up from 10t and one more from 400t; the renderer already scales the circles by it | pace, 0 (fighter) to 4+ (heavy): how long the fire burns before it turns to smoke, how long the white flash lasts, how big the flash is, how slowly it turns |
-| long +122 | the clock, set to `$ffffffff` and run down each frame (L74d8e) | age 0 to 1; everything is keyed off it, so a replay draws the same |
-| byte +93, word +126 | per-object bytes | the seed for each blob's rotation |
+| word +88 | a size step, -1 to +1 (only -1 and 0 seen); the renderer already scales the circles by it | k = (s+1)/2, clamped to 0..1: how long the fire burns before it turns to smoke, how long the white flash lasts, how big the flash is, how slowly it turns |
+| long +122 | the clock, set to `$ffffffff` and run down by a fixed step each frame (L74d8e) | age 0 to 1; everything is keyed off it, so a replay draws the same |
+| byte +93, word +126 | per-object bytes | with the blob's place in its record, the seed for that blob's rotation |
+
+The clock runs at the same rate for every explosion, so every explosion lasts
+the same game time, whatever its size. k changes how it burns, not how long.
 
 The game draws each blob as rings of circles, outer first. fx draws the
 outer ring as one fireball and drops the inner rings, so the light no longer
@@ -55,28 +59,34 @@ stacks into a white blow-out. Each fireball has three layers:
   thinning with age.
 - A capped additive light in the fire colour. It goes from yellow to orange
   to red, and is gone once the blob is smoke.
-- A white flash, only in the first 3% of life (6% for a heavy ship).
+- A white flash, only in the first 3% of life (k = 0), up to 6% at k = 1
+  (+88 = +1, not seen).
 
 `GLOW_CAP` (0.4) is the most light one layer adds, so a hull behind still
-reads. A fighter is smoke by about half its life; a heavy ship burns on. Blue
-spark circles stay small capped glows. Each explosion also gets one shock
-ring, a soft pale annulus round its blobs. It grows fast and is gone by a
-fifth of its life. It is drawn after the 3D view with no depth test, like
-the beams.
+reads. Measured on the death replay at 0.25, 0.4 and 0.6: none of them blows
+out (near-white pixels stay at about 0%), and the higher caps mostly make
+the shock rings stronger, so 0.4 stays. A fighter is smoke by about half its
+life; a heavy ship burns on. Blue spark circles stay small capped glows.
+Each explosion also gets one shock ring, a soft pale annulus round its
+blobs. It grows fast and is gone by a fifth of its life. It is drawn after
+the 3D view with no depth test, like the beams.
 
 An explosion that starts within a tenth of its depth of where a missile was
-drawn the frame before is taken as the missile's. It gets a tighter, hotter
-palette: smaller blobs, a yellow-white fire that burns out sooner, and a
-smaller ring.
+drawn the frame before is taken as the missile's. This is a heuristic, not a
+field the game keeps: a ship dying next to a missile can be misread. A
+missile's gets a tighter, hotter palette: smaller blobs, a yellow-white fire that burns out
+sooner, and a smaller ring.
 
-The player's own explosion in the death camera is drawn the same way. fx
-treats it as in flight only while the death state is set (`704(a6)` = `$58`)
-and the record being put is the one at `674(a6)`. The game-over screen is
-not touched.
+The death camera draws its explosions and smoke the same way as flight: fx
+tags every 188 and 194 record while the death state is set (`704(a6)` =
+`$58`). Lasers and missiles are not tagged there. The game-over screen is not
+touched.
 
-The fx sprites switch GL lighting off while they draw and put it back after.
-With lighting left on by the hull renderer, GL ignores the sprite colour,
-and an earlier build drew the death-camera fireball a flat blue.
+The explosion and smoke sprites and the shock rings switch GL lighting off
+while they draw and then restore whatever it was. With lighting left on by
+the hull renderer, GL ignores the sprite colour (an earlier build drew the
+death-camera fireball a flat blue). Beams and plumes leave GL state as base
+did. A frame with no flight view and no explosion is not touched at all.
 
 `--flat-explosions` stops the tagging of model 188, so the base circles are
 drawn and the lasers, plumes and smoke stay HD. `--flat-fx` still turns
@@ -96,27 +106,26 @@ Checked on this branch at 1600x1200 with the GL renderer, against a base
 build of the parent commit:
 - Oracle replay of the route tape: exact, plain and with `--flat-explosions`
   and with `--flat-fx`. Neither flag changes the game.
+- Two replay tapes that end in the player's death, one with a single
+  explosion record and one with four (+88 of -1 and 0). Every replay, base
+  or branch and with either flag, gives the same end line, so the frames
+  compare.
+- Death camera: base draws flat concentric discs; this branch draws the
+  layered fireballs, smoke puffs and shock rings at the same places.
+- `--flat-fx`: byte-identical to base at every death-camera and game-over
+  frame checked (31 frames on the two tapes).
+- `--flat-explosions`: identical to base in the death camera except for the
+  smoke, which stays HD.
+- Flight frames before the death: the branch differs from base only where
+  beams are, and base differs from itself there too (beams age on wall-clock
+  milliseconds), so the lighting change has no effect in flight.
 - Police beam lasers (`$a1`, class 4) firing at the player: green beams
   with a pale core.
-- The player firing in external view: no beam from the player's ship on
-  base or on this branch, so there was nothing to restore. That the laser
-  actually fired was not checked on its own.
-- Death camera: one frame was caught before the lighting fix. It showed
-  the textured fireball path drawing, but in a flat blue. That led to the
-  lighting fix.
 
 Not yet seen on screen:
-- The fireball's colours after the lighting fix.
-- A close kill, and a small death next to a large one.
-- The missile palette and the shock ring.
-- The `GLOW_CAP` value, which is still the design value rather than a
-  measured one.
+- An explosion in flight close to the camera; the tapes have none before the
+  death.
+- A heavy ship's explosion (+88 = +1) and the missile palette.
 
-The death camera cannot be paused by the driver, and police fire at the
-player is random, so most driven runs did not catch a death. A replay tape
-that ends in a death would make these checks repeatable.
-
-Earlier notes still stand. The red pulse beam (`$88`) and the smart, naval
-and nuclear missiles were not fired. `--flat-fx` and `--flat-explosions` are
-shown to keep the game the same (oracle), but not matched frame for frame on
-screen.
+The red pulse beam (`$88`) and the smart, naval and nuclear missiles were not
+fired.
