@@ -11,6 +11,13 @@ noise library.  Three are built:
 | 2, planets (#38) | procfx planet + gl.c | soft terminator, limb darkening, close detail, the lit limb rim (`uRim`) and the atmosphere halo (`draw_planet_halo`) | `--flat-planets` |
 | 3, star corona | procfx corona | soft light and streamers round a star's disc, by class, flight view only | `--flat-stars` |
 
+Down in the atmosphere, layer 2 keys its lit rim and its sun fall-off off
+altitude: their weight (`planet_aloft` in gl.c) ramps from 0 on the ground
+to 1 at 2% of the radius out, and stays 1 beyond.  Seen from space nothing
+changes.  Near the surface every distant patch of ground is seen edge on,
+like the limb, so the rim would wash it pale; there the game's own light
+zones shade the ground and the sky gradient is the halo's job.
+
 The game-over backdrop (#34) uses the same noise but is not a layer on a
 game primitive.  A separate limb glow was prototyped on gl/procgen-glow
 and dropped: layer 2 already owns the planet's rim and halo.
