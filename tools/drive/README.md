@@ -162,6 +162,80 @@ lands while 10000x is still running can move the clock by minutes, so judge
 each speed by whether the clock changes and roughly by how much, not by
 exact numbers.
 
+## The Phase 2 capture tour: `tools/p2shots`
+
+Every Phase 2 item is accepted against the same frames: the `p2-*.drv`
+routes, played on the base build, the branch build and, when a flag keeps
+the old look, the branch with that flag.
+
+    make -C tools/drive
+    tools/p2shots --base /path/to/base/frontier --branch ./frontier \
+        --flags=--flat-hulls --out /path/outside/the/repo/tour
+    tools/p2shots --repeat --branch ./frontier          # two runs of one build
+    tools/p2shots --routes dock,orbit --base B --branch ./frontier
+
+Each run gets its own stage directory, which holds links to the binary and its
+data, with no `frontier.ini` and no saves, so every route starts a new game
+from the defaults. The output directory, which defaults to the ignored
+`tools/drive/out/p2shots/<time>/`, holds:
+
+- `<route>/<shot>-<column>.jpg`, one per shot and column;
+- `<route>-sheet.jpg`, one row per shot and one column per run;
+- `report.json`, with the binaries' hashes, each run's status and each
+  shot's difference.
+
+For each shot, the table compares every column with the first column.
+`SAME` means the decoded pixels below the title bar are identical. `mean` is
+the mean grey difference (0-255). `chg` is the share of pixels that differ by
+more than 16, and `view` is that share between the title bar and the console. `--repeat` turns that table into
+the noise floor. Read a base-against-branch difference against that floor
+before you call it a change. The landed shots repeat bit for bit, and the
+docked page differs only in the clock. Flight shots do not repeat exactly:
+the driver's waits are wall-clock time, so each input lands a few game frames
+earlier or later, and a ship or the view sits slightly elsewhere. In the
+traffic route this is under 1% of pixels; in the dock route, with the
+autopilot turning the ship, it is up to about 9%. One run plays at a time (`--jobs 2` runs two).
+A run that fails or loses a shot is played once more. `screencapture` now and
+then cannot grab the window on a busy host, so p2shots puts a retrying
+wrapper first on `PATH`. A base-against-branch tour of the four routes takes
+about 8 minutes with `--jobs 2` and about 17 minutes one run at a time.
+
+| Route | Start | Covers | Shots |
+|---|---|---|---|
+| `p2-landed.drv` | 2 | landed at an atmospheric port: the cockpit, then the next two views | 3 |
+| `p2-orbit.drv` | 3 | buys an autopilot, flies to the start station's world (a world with sea), then three views from where the autopilot stops | 5 |
+| `p2-dock.drv` | 3 | buys an autopilot, launches, targets the station, then the approach and the docked page | 5 |
+| `p2-traffic.drv` | 3 | launches with no purchase, then the station and nearby ships in the rear and external views | 4 |
+
+Not covered yet: no route with fixed keystrokes reaches these.
+
+- A gas giant, an airless moon, an icy world and the star close up need the
+  start-2 system. Start 2 can fit an autopilot (sell the laser, then fit it),
+  but the flight out ended in the ship's loss at both 10000x and 1000x.
+- A descent to a surface port and an airless port: the start-3 world has no
+  surface port on its map.
+- A close kill: the police come, but hitting one needs aiming, which a fixed
+  route cannot do.
+
+**Adding a route.** Write `tools/drive/scripts/p2-<name>.drv` with the usual
+`Verifies:`, `Run:` and `Expect:` header. Start with `key space` and a start
+position (`key 1`-`key 3`), and use in-game navigation only: no saves and no
+`frontier.ini`. Hold every shot frame with the game's pause key, parking the
+pointer off the controls first so no tip is drawn, then resuming at 1x:
+
+    mouse 2 120
+    wait 300
+    sdlkey esc
+    wait 500
+    shot 03-orbit
+    sdlkey f1 shift
+
+Name shots `NN-what`. A later Phase 2 item adds a route and touches nothing
+else. Routes and docs use keystrokes and generic descriptions only, such as
+"the start station" or "a world with sea", never a place, ship or person
+name. Shots are never committed. Keep `--out` outside the repository, or
+under the ignored `tools/drive/out/`.
+
 ## Keeping the driver in step with the game
 
 The driver needs these symbols from the binary: `Input_PressSTKey`, `input`,

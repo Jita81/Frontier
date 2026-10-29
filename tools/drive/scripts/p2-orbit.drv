@@ -1,0 +1,135 @@
+# p2-orbit.drv - Phase 2 tour: orbit of a world with sea.
+#
+# Verifies: X1 (a) a world with sea seen from orbit (the start station's world).
+# Run:  tools/p2shots --routes orbit --base BASE --branch BRANCH
+# Expect: 01 the system map with the world targeted, 02 the approach under
+#         autopilot, 03 the world from where the autopilot stops, 04 the
+#         next view (rear: space, maybe the star), 05 the external view.
+# Start 3 (docked), new game only: buy an autopilot, launch, target the world
+# on the system map and let the autopilot fly there at 1000x.
+wait 6000
+key space
+wait 2000
+key 3
+wait 11000
+# Comms, shipyard, new ships: part-exchange for the third ship in the list
+# (it leaves cash), then shipyard, upgrades: fit the automatic pilot.
+mouse 57 193
+wait 300
+click 200
+wait 2500
+mouse 271 57
+wait 300
+click 200
+wait 2500
+mouse 171 146
+wait 300
+click 200
+wait 3000
+mouse 129 54
+wait 300
+click 200
+wait 3000
+mouse 57 193
+wait 300
+click 200
+wait 2500
+mouse 271 57
+wait 300
+click 200
+wait 2500
+mouse 171 57
+wait 300
+click 200
+wait 3000
+mouse 129 94
+wait 300
+click 200
+wait 3000
+# Comms, launch request; the station launches the ship.
+mouse 57 193
+wait 300
+click 200
+wait 2500
+mouse 171 57
+wait 300
+click 200
+wait 3000
+wait 30000
+# F2, F2: the system map; the target icon, then the world.
+sdlkey f2
+wait 1500
+sdlkey f2
+wait 2500
+mouse 311 193
+wait 300
+click 200
+wait 1500
+mouse 160 84
+wait 300
+click 200
+wait 1500
+mouse 2 120
+wait 300
+sdlkey esc
+wait 500
+shot 01-map
+sdlkey f1 shift
+wait 300
+sdlkey f1
+wait 1500
+mouse 264 193
+wait 300
+click 200
+wait 1500
+mouse 264 193
+wait 300
+click 200
+wait 1500
+wait 1000
+mouse 48 182
+wait 300
+click 200
+wait 15000
+mouse 2 120
+wait 300
+sdlkey esc
+wait 500
+shot 02-approach
+sdlkey f1 shift
+wait 300
+mouse 48 182
+wait 300
+click 200
+wait 300
+wait 15000
+mouse 2 120
+wait 300
+sdlkey esc
+wait 500
+shot 03-orbit
+sdlkey f1 shift
+wait 300
+mouse 8 193
+wait 300
+click 200
+wait 2500
+mouse 2 120
+wait 300
+sdlkey esc
+wait 500
+shot 04-view2
+sdlkey f1 shift
+wait 300
+mouse 8 193
+wait 300
+click 200
+wait 2500
+mouse 2 120
+wait 300
+sdlkey esc
+wait 500
+shot 05-view3
+sdlkey f1 shift
+wait 300
+quit
