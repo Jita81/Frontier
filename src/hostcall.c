@@ -36,6 +36,7 @@
 #ifdef WITH_GL
 #include "hdstill.h"
 #include "hdface.h"
+#include "hdinst.h"
 #endif
 
 /*
@@ -318,6 +319,9 @@ void Call_BackHLine ()
 		scr *= 2;
 		scr += 0xf0000;
 	}
+#ifdef WITH_GL
+	if (bitfield) hdinst_run (scr, 16, bitfield, col);
+#endif
 	pix = STRam + scr;
 	for (i=15; i>=0; i--) {
 		if ((bitfield & (1<<i)) && (*pix == 0)) *pix = col;
@@ -354,6 +358,9 @@ void Call_OldHLine ()
 		scr += 0xf0000;
 	}
 	len = len/2;
+#ifdef WITH_GL
+	hdinst_run (scr + org_x, len, 0, col);
+#endif
 	/* horizontal line */
 	pix = STRam + scr + org_x;
 	while (len--) {
@@ -420,6 +427,7 @@ void Call_BlitBmp ()
 	/* the HD layers note what is drawn where (they never change it) */
 	hdstill_blit ((const unsigned char *) bmp_pix, width, height, org_x, org_y, bmp, scr);
 	hdface_blit ((const unsigned char *) bmp_pix, width, height, org_x, org_y, bmp, scr);
+	hdinst_blit (org_x, org_y, width * 16, height, scr);
 #endif
 	
 	ypoo = height;
