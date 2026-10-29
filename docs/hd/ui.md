@@ -290,6 +290,34 @@ The other HD streams have their own switches: `--pixel-art` (stills) and
 | ship view, external views | 3D only; nothing to restyle. The speed and target readouts over the view are HD text |
 | any page not listed | left alone (P_NONE): original layout, HD text |
 
+## Damage feedback (hddamage)
+
+`src/hddamage.c`, one call from `draw_control_panel` (and a texture drop in
+`change_vidmode`). It reads ST memory and writes none of it.
+
+- **What it reads.** The player's ship object, by the long at offset 674
+  from `L5eb6_a6_base` (fe2.s:302); in it the word at 180 (shields now),
+  182 (shields full, 0 with no generator) and 184 (hull left). Hull is shown
+  in tenths of a percent with the arithmetic of the F3 condition figure
+  (`L7e142`, fe2.s:57334): hull x 250 / the type's hull mass. The killing
+  hit leaves the hull word wrapped round (`L44c96`, fe2.s:26968); that reads
+  as 0.
+- **Hit flash.** A drop in shields or hull since the last frame of the
+  same flight is a hit: a red glow at the edges of the view, never across
+  its middle, fading out within 0.4 s. The game keeps no attacker for the
+  player's hits, so the glow has no direction. Nothing moves the 3D view.
+- **Readout.** A small frosted card (`hdui_glass_px`, the hdui tokens) at
+  the top right of the 4:3 picture, clear of the console and its gauges:
+  shields (when fitted) and hull as figures and bars, the figure just hit
+  in red for 1.5 s. It shows while the shields are below full, for 6 s
+  after a hit, and while the hull is under 25%, when a HULL CRITICAL line
+  is added and the hull bar pulses red. Undamaged, it is not drawn at all.
+- **Where.** Only over a flight view: not docked, not on the F3, map or
+  file pages, not in the intro, not under the F12 Controls page.
+- **Switches.** Off with `--classic-ui`, `--pixel-art` and
+  `--old-renderer`. `FE2_DMG_LOG=1` writes each change of the figures to
+  stderr, to check them against the F3 page.
+
 ## Art and provenance
 
 No image ships with this layer. Every panel, card, icon, button and frame
