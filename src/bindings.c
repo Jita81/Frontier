@@ -300,7 +300,7 @@ static void load (const char *path)
 {
 	FILE *f = fopen (path, "r");
 	char line[256];
-	int in_section = 0, lno = 0, left_laser = -1;
+	int in_section = 0, lno = 0, left_laser = -1, first, later;
 
 	if (!f) return;
 	while (fgets (line, sizeof line, f)) {
@@ -310,6 +310,8 @@ static void load (const char *path)
 		if (!*s || *s == ';' || *s == '#') continue;
 		if (*s == '[') {
 			in_section = !strncasecmp (s, "[Controls]", 10);
+			if (!strchr (s, ']'))
+				fprintf (stderr, "%s:%d: malformed section header %s, its lines are skipped\n", path, lno, s);
 			continue;
 		}
 		if (!in_section || !(eq = strchr (s, '='))) continue;
@@ -318,6 +320,9 @@ static void load (const char *path)
 		s = trim (s);
 		if (!strcasecmp (s, "LEFT_FIRES_LASER")) {
 			left_laser = atoi (val) != 0;
+			if (strcmp (val, "0") && strcmp (val, "1"))
+				fprintf (stderr, "%s:%d: LEFT_FIRES_LASER=%s is not 0 or 1, read as %d\n",
+					 path, lno, val, left_laser);
 			continue;
 		}
 		if ((i = binding_action_index (s)) < 0) {
@@ -349,6 +354,24 @@ static void load (const char *path)
 	bindings_changed ();
 	if (left_laser >= 0) bindings_set_left_fires_laser (left_laser);
 	fprintf (stderr, "controls: read %s%s\n", path, is_default ? " (all defaults)" : "");
+	if (bindings_clash (&first, &later))
+		fprintf (stderr, "%s: %s and %s share a key or button; %s has it until one is rebound (F12)\n",
+			 path, binding_actions[first].name, binding_actions[later].name, binding_actions[later].name);
+}
+
+int bindings_clash (int *a, int *b)
+{
+	int i, j;
+	for (i = 0; i < NA; i++)
+		for (j = i + 1; j < NA; j++)
+			if ((binding_key[i] && binding_key[i] == binding_key[j]) ||
+			    (binding_mouse[i] && binding_mouse[i] == binding_mouse[j] &&
+			     binding_actions[i].kind != K_CLICK && binding_actions[j].kind != K_CLICK)) {
+				*a = i;
+				*b = j;
+				return 1;
+			}
+	return 0;
 }
 
 int bindings_save (void)
@@ -478,9 +501,19 @@ static void time_action (int faster, int down)
 	}
 }
 
+/* a key that types (digits, letters, punctuation, Backspace, Return,
+ * Space): in the game menu (its file names) and out of a game it is
+ * itself, so typing works whatever is bound to it */
+static int types (int c)
+{
+	return (c >= 0x02 && c <= 0x0e) || (c >= 0x10 && c <= 0x1c) || (c >= 0x1e && c <= 0x29) ||
+	       (c >= 0x2b && c <= 0x35) || c == ST_SPACE;
+}
+
 int bindings_key_code (int phys)
 {
 	if (phys < 0 || phys >= 128 || is_default) return phys;
+	if (types (phys) && ((rb (598) & 0x20) || (rb (10469) && !rl (10428)))) return phys;
 	return remap[phys];	/* -1 nothing; -2 - i action i, done by bindings_time_key */
 }
 

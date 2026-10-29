@@ -254,7 +254,7 @@ repository.
 
 | Switch | Effect |
 |---|---|
-| `--classic-ui` | the game's own flat pages, exactly the old picture (hdtext keeps its old per-glyph typesetting); no docked backdrop either |
+| `--classic-ui` | the game's own flat pages, exactly the old picture (hdtext keeps its old per-glyph typesetting); no docked backdrop and no HD gauges either; the F12 Controls page still opens (drawn by the host, over either look) |
 | `FE2_HD_BACKDROP=0` | the restyled pages over the dark base, without the docked picture or the frost |
 | `--pixel-text` | the original bitmap font and pages; no hdtext, no hdui |
 | `FE2_HDUI_LOG=1` | each new page's boxes (B), runs (R, hashes and places only), clear areas (C) and hot regions (H, with targets) on stderr |

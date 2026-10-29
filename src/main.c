@@ -27,6 +27,7 @@
 #include "joystick.h"
 #include "keymap.h"
 #include "screen.h"
+#include "fx.h"
 #include "shortcut.h"
 #include "oracle.h"
 #include "bindings.h"
@@ -48,6 +49,7 @@ char szCurrentDir[MAX_FILENAME_LENGTH] = { "" };
 extern enum RENDERERS use_renderer;
 
 int delta_x, delta_y, abs_delta_x, abs_delta_y;
+int flat_fx = 0;	/* --flat-fx: no HD weapon effects (fx.c); both renderers link this */
 
 /*-----------------------------------------------------------------------*/
 /*
@@ -190,6 +192,7 @@ void Main_EventHandler()
 	  input.abs_y = new_abs_y;
 
   Input_Update ();
+  Screen_Stalled ();
 }
 
 
@@ -218,11 +221,13 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --flat-hulls          Flat ship faces, no hull plating.\n"
                "  --flat-sky            The game's flat Milky Way band (no star clouds).\n"
                "  --flat-planets        Hard light zones and flat atmosphere rings.\n"
+               "  --flat-stars          No corona round the stars.\n"
                "  --pixel-text          Keep the original bitmap font (no HD text;\n"
                "                        FE2_HD_FONT=<PostScript name> picks the font).\n"
                "  --pixel-art           Keep the game's own bitmaps (no HD stills).\n"
                "  --pixel-faces         Keep the game's own faces (no HD portraits).\n"
                "  --classic-ui          Keep the game's own flat 2D screens.\n"
+               "  --flat-fx             Flat lasers, missiles and explosions (no HD effects).\n"
                "  --hull-style N        Hull look, 0 plating, 1 big texture, 2 panels,\n"
                "                        3 bump and weathering, 4 per model, 5 a material\n"
                "                        per class of ship (default).\n"
@@ -246,6 +251,8 @@ void Main_ReadParameters(int argc, char *argv[])
 		flat_sky = 1;
 	  else if (!strcmp(argv[i], "--flat-planets"))
 		flat_planets = 1;
+	  else if (!strcmp(argv[i], "--flat-stars"))
+		flat_stars = 1;
 	  else if (!strcmp(argv[i], "--pixel-text"))
 		pixel_text = 1;
 	  else if (!strcmp(argv[i], "--pixel-art"))
@@ -254,6 +261,8 @@ void Main_ReadParameters(int argc, char *argv[])
 		pixel_faces = 1;
 	  else if (!strcmp(argv[i], "--classic-ui"))
 		classic_ui = 1;
+	  else if (!strcmp(argv[i], "--flat-fx"))
+		flat_fx = 1;
 	  else if (!strcmp(argv[i], "--hull-style") && i + 1 < argc) {
 		hull_style = atoi (argv[++i]);
 		if (hull_style < 0 || hull_style > 5) hull_style = 5;

@@ -48,6 +48,14 @@ void hdui_backdrop (const unsigned int *pal, int bgcol);
  * dim the picture and hdback adds no scrim of its own. */
 int hdui_owns_page (void);
 
+/* Nonzero while the last hdui_frame's page is one the game waits on
+ * without drawing frames (load and save: a name typed, a file chosen) */
+int hdui_still_page (void);
+
+/* The HD layer lays this frame's pages out (not --classic-ui, --old-renderer
+ * or --pixel-text) */
+int hdui_layer_on (void);
+
 /* The game cleared the ST area (x1, y1)-(x2, y2) for a 3D viewer this
  * frame: the next hdui_frame leaves it alone and gives it a card.
  * Nonzero when the backdrop under this frame already has that card
@@ -63,6 +71,10 @@ int hdui_clear_area (int x1, int y1, int x2, int y2);
  * release on that service's control (the returned buttons).
  * Never called by an oracle replay (it writes the tape's values itself). */
 int hdui_mouse (short *ax, short *ay, int buttons);
+
+/* For hdback's concourse, this frame: 0 something is over the 3D view, 1
+ * nothing, 2 nothing and docked or landed; date: the console's, or "". */
+int hdui_concourse (const char **date);
 
 /* The GL context is going away: drop this layer's textures. */
 void hdui_forget (void);
