@@ -55,6 +55,7 @@ typedef void (*_GLUfuncptr)();
 #include "bindings.h"
 #include "hdtip.h"
 #include "hddamage.h"
+#include "shadows.h"
 /* MEM_SIZE, and the engine's variables by label address (__D<label>) */
 #include "../host.h"
 #include "../fixups.h"
@@ -1190,6 +1191,7 @@ enum NuPrimitive {
 	NU_COMPLEX_OVAL,
 	NU_FX,		/* fx.c's tag for the primitive that follows */
 	NU_RINGS,	/* skies.c: the complex shape that follows is a ring */
+	NU_SHADOW,	/* shadows.c: a landed ship's contact shadow */
 	NU_MAX
 };
 /* the next primitive belongs to a weapon, missile, explosion...: say which (fx.c) */
@@ -1275,6 +1277,7 @@ static void *add_detached_node (struct ZNode **root, unsigned int zval, int size
 
 static bool no_znodes_kthx;
 
+static struct ZNode **shadow_tree; static unsigned int shadow_z;	/* shadows.c: the landed ship's farthest face */
 /*
  * Nested z-trees.
  *
@@ -1382,6 +1385,7 @@ void Nu_3DViewInit ()
 	ztree_heads[0] = STMemory_ReadLong (__DL385d0_3dview_thing2);
 	scene_overflow = 0;
 	hull_latch ();
+	shadow_tree = NULL, shadows_begin (use_renderer == R_GL && !classic_ui && !pixel_art);
 }
 
 static void lighting_on (float light_vec[4], int rgb444_light_col, int rgb444_extra_col, int rgb444_obj_col)
@@ -3932,6 +3936,7 @@ static void hull_complex_end (void)
 	hull_cdoor = NULL;
 }
 
+#define shadow_put(f, n, r) do if (shadows_put (f, n, r) && znode_cur && (!shadow_tree || znode_cur->z >= shadow_z)) shadow_z = znode_cur->z, shadow_tree = cur_ztree; while (0)
 void Nu_PutTriangle ()
 {
 	if (use_renderer == R_OLD) return;
@@ -3942,6 +3947,7 @@ void Nu_PutTriangle ()
 	znode_wrvertex (GetReg (REG_A2)+4);
 	znode_wrcolor (GetReg (REG_D6));
 	if (hull_ctx) hull_put_ctx (3);
+	shadow_put (REG_A0, 3, 0);
 }
 void Nu_DrawTriangle (void **data)
 {
@@ -3993,6 +3999,7 @@ void Nu_PutQuad ()
 	znode_wrvertex (GetReg (REG_A3)+4);
 	znode_wrcolor (GetReg (REG_D6));
 	if (hull_ctx) hull_put_ctx (4);
+	shadow_put (REG_A0, 4, 0);
 }
 void Nu_DrawQuad (void **data)
 {
@@ -5775,6 +5782,7 @@ void Nu_PutCylinder ()
 	znode_wrlong (GetReg (REG_D1));
 	znode_wrlong (GetReg (REG_D5));
 	znode_wrlong (GetReg (REG_D4));
+	shadow_put (REG_A2, 2, MAX (GetReg (REG_D0) & 0xffff, GetReg (REG_D1) & 0xffff));
 }
 void Nu_DrawCylinder (void **data)
 {
@@ -6073,6 +6081,7 @@ void Nu_PutLine ()
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrvertex (GetReg (REG_A1)+4);
 	znode_wrcolor (GetReg (REG_D6));
+	shadow_put (REG_A0, 2, 0);
 }
 /* The 'you are here' label (the game's own stroke text) set like the HD
  * map names: scaled about its end by the marker to their cap height,
@@ -6283,7 +6292,8 @@ NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	&Nu_DrawSkyBand,
 	&Nu_DrawComplexOval,
 	&fx_draw_tag,
-	&Nu_DrawRings
+	&Nu_DrawRings,
+	&shadows_draw
 };
 
 /*
@@ -6524,6 +6534,9 @@ void Nu_DrawScreen ()
 	//printf ("Frame: %d znodes.\n", znode_buf_pos);
 	planet_ground_seen = 0;
 	galmap_update ();
+	if (shadow_tree && shadow_z + 1) { unsigned char *d = add_detached_node (shadow_tree, shadow_z + 1, 4 + SHADOW_BYTES);
+		if (d) *(int *) d = shadows_write (d + 4) ? NU_SHADOW : NU_END; }	/* NU_END: an empty node */
+	shadow_tree = NULL;
 	if (scene_overflow) {
 		/* S-6: the display lists are cut short somewhere: drop this
 		 * frame's 3D view rather than walk them */

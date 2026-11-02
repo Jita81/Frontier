@@ -56,6 +56,7 @@ int flat_lasers = 0;	/* --flat-lasers: every laser one plain ribbon, as before b
 int flat_missiles = 0;	/* --flat-missiles: a missile's plume only near its smoke, as before */
 int flat_hud_hits = 0;	/* --flat-hud-hits: one red hit flash, no critical tint (hddamage.c) */
 int flat_exhaust = 0;	/* --flat-exhaust: the game's flat engine plumes (gl.c) */
+int flat_shadows = 0;	/* --flat-shadows: no contact shadow under a landed ship (shadows.c) */
 
 /*-----------------------------------------------------------------------*/
 /*
@@ -241,6 +242,7 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --flat-missiles       A missile's flame only near its smoke trail (as before).\n"
                "  --flat-hud-hits       One red flash for every hit, no critical hull tint.\n"
                "  --flat-exhaust        The game's flat engine plumes (no HD exhaust).\n"
+               "  --flat-shadows        No soft shadow under a landed ship.\n"
                "  --hull-style N        Hull look, 0 plating, 1 big texture, 2 panels,\n"
                "                        3 bump and weathering, 4 per model, 5 a material\n"
                "                        per class of ship (default).\n"
@@ -290,6 +292,8 @@ void Main_ReadParameters(int argc, char *argv[])
 		flat_hud_hits = 1;
 	  else if (!strcmp(argv[i], "--flat-exhaust"))
 		flat_exhaust = 1;
+	  else if (!strcmp(argv[i], "--flat-shadows"))
+		flat_shadows = 1;
 	  else if (!strcmp(argv[i], "--hull-style") && i + 1 < argc) {
 		hull_style = atoi (argv[++i]);
 		if (hull_style < 0 || hull_style > 5) hull_style = 5;

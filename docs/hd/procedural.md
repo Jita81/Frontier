@@ -332,3 +332,42 @@ shader, no new file.
   intro's flares were checked); missiles.  The plume code does not test
   `--flat-fx`, `--classic-ui` or `--pixel-art`; whether they should also
   turn it off is open.
+
+## Contact shadows
+
+`src/shadows.c` (with a few hook lines in `src/gl.c`): the player's ship,
+landed, sits on a soft dark blob on the ground.
+
+- **What it keys off.**  The flight state byte (A6+704) at the 3D view's
+  init: `$60` (on a pad) or `$68` (down off the pads) only.  Launch moves
+  it to `$48` on the first frame of the lift, so the blob is gone before
+  the ship leaves the pad and never stays behind; in flight, docked, in
+  space, in the intro and on the maps it is never drawn.  No fade: none
+  comes from the same key.  Only the faces, struts and wheels put in a
+  frame whose record is the player's ship (A6+674) are measured.
+- **Shape.**  Every vertex of those parts (a wheel widened by its radius)
+  is taken along the ship's own axes, the turn at -36 and the origin at
+  -16 of its top frame.  The lowest point along the ship's up axis (model
+  y) is the ground.  An ellipse there, across the ship's beam (model x)
+  and length (model z), 1.2x the ship's extent each way, centred under
+  its middle.  The light vector at -198 moves it away from the sun by the
+  shadow of the ship's middle, at most a quarter of the longer extent;
+  with the sun at or below the horizon it is not moved.
+- **Look.**  Black, alpha 0.55 at the centre falling as `1 - q^2` to 0 at
+  the rim (six rings of 40 steps), blended `GL_ZERO, GL_ONE_MINUS_SRC_ALPHA`
+  (`dst * (1 - a)`): it only darkens what is under it, so the pad's
+  markings show through and nothing glows at night.  Lighting, texture,
+  cull and blend state are pushed and popped.
+- **Where it sorts.**  One detached znode (`NU_SHADOW`), added after the
+  frame's faces into the sub-tree of the ship's farthest measured face,
+  at that face's z + 1.  It paints after everything farther (the ground,
+  the pad and its decals) and before every face of the ship.
+- **Bounds.**  Reads ST memory, never writes it.  Every read is checked
+  against `MEM_SIZE`; a frame whose ship frame cannot be found puts no
+  node.  No game RNG, no wall clock.
+- **Switches.**  `--flat-shadows` turns it off: no node is added and the
+  frames are byte-identical to the base build.  `--old-renderer`,
+  `--classic-ui` and `--pixel-art` also turn it off.  `--flat-hulls` does
+  not.
+- **Not done.**  Other landed ships, buildings, ships in flight or docked,
+  self-shadowing, terrain or cloud shadows.
