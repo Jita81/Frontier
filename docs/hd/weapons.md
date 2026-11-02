@@ -14,12 +14,17 @@ only near its smoke (below), and `--old-renderer` never runs fx.
 the record at A6-212 and its model word at +90. They act only in the flight
 view. That means a game is on (bit 5 of 598(a6) clear, so not the intro or
 the start menu) and a 3D view fills the screen (42(a6) negative, so not a
-map or a 2D page). One exception: the death camera (state `$58` at 704(a6))
-is a 3D view too, so there every explosion (188) and smoke (194) record is
-tagged, not only the player's own (the one at 674(a6)); a death leaves
-several. The game-over screen after it is not touched. A recognised model
-puts an `NU_FX` op before its primitive, and the draw side replaces that
-primitive. Tagged polygons are not hull-plated. The oracle is unchanged.
+map or a 2D page). There are two exceptions, tested in this order. In the
+intro's scenes (bit 5 set and a part of the intro's own table, 114 or 116)
+the fireball circles take the explosion look (see hulls.md, the intro's
+scenes); the tag carries an intro mark, and since the record there is the
+scene's (no clock at +122, no size at +88) the fireball draws young and hot,
+with no shock ring. In the death camera (state `$58` at 704(a6)), a 3D view too, every
+explosion (188) and smoke (194) record is tagged, not only the player's own
+(the one at 674(a6)); a death leaves several. The game-over screen after it
+is not touched. A recognised model puts an `NU_FX` op before its primitive,
+and the draw side replaces that primitive. Tagged polygons are not
+hull-plated. The oracle is unchanged.
 
 Effects that outlive their frame (a beam, its muzzle bloom, a hit flare) are
 aged on game time, which stops while the time rate, 10428(a6), is 0. Pause
