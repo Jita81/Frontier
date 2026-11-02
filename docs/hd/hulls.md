@@ -3,8 +3,9 @@
 The GL renderer paints the flat faces of the ships and stations the game
 draws (and the station's docking hangar) with a plating material. Every
 other model (the intro's titles, banners and scenes, text, planets,
-buildings on the ground, missiles, debris) is drawn flat, exactly as with
-`--flat-hulls`. The
+landing pads, missiles, debris) is drawn flat, exactly as with
+`--flat-hulls`. A surface port's buildings get storeys and windows
+(below); its ground, roads, roofs and sign boards stay flat. The
 68k game is unchanged: it still decides every face, its colour and its
 light. The host only multiplies that colour by a texture and lights the
 texture's relief from the game's own light direction. A face never gets
@@ -205,6 +206,7 @@ and the reading of the model's frame). The art is in `art/hull/`.
 | station | `station.png` | large rectangular steel plates, straight seams, two hatches and two vents a tile (drawn in code) | 131072 |
 | hangar | `hangar.png` | industrial bulkheads, beams, conduits | 49152 |
 | deck | `deck.png` | tread and plain deck plates, grating (hangar floor and ceiling) | 32768 |
+| building | none: always the seeded `building` profile | concrete and metal slabs, four storeys a tile, window strips (a surface port's walls) | 65536 |
 
 Each class also sets:
 - contrast: how much of the tile's light and dark becomes paint
@@ -239,11 +241,18 @@ Models (`hull_models[]`, by the whole type word and its table;
 | 58 | Eagle | armour, panels x1.5 (not measured) |
 | 66 | Python | freighter, panels x6 |
 | 70 | Transporter | freighter, panels x6 (not measured) |
+| 22 | small twin-pod utility hauler | civilian, panels x1.5 |
+| 48 | small flat wedge trader | civilian, panels x3 |
+| 54 | faceted armed wedge, toothed nose | armour, panels x8 |
+| 60 | swept-wing passenger transport | civilian, panels x6 |
+| 62 | long faceted hexagonal hauler | freighter, panels x6 |
+| 72 | oval disc freighter, four drives | freighter, panels x8 |
 | intro's 72 | the orbital station behind the menu | station |
 | 80 | orbital station outside, close up | station |
 | 82 | launch structure | station |
 | 84 | docking bay seen through the slot | hangar; its faces out of the bay's box (the station's outside) station |
 | 288, 290, 294 | hangar interior and its parts | hangar |
+| 96 | a surface port: its buildings, apron, roads and signs | building (walls only, see below) |
 
 A ship's panel scale puts one to one and a half tiles across its biggest
 face, measured in the shipyard's view (the Viper's biggest face is some
@@ -252,6 +261,30 @@ times across a face and read as crazy paving. The fighters use the armour
 tile: the fighter tile's fine diagonal weave, once big enough to see,
 read as wood grain on an orange Krait.
 
+### Census (B2, slice 1)
+
+`FE2_HULL_LOG=1` names each model once a session, so the count is the
+number of census sessions (of ten: three traffic routes,
+the docked start, and six shipyard visits at two surface
+ports) that met the word, not frames. Each ship was then opened in the
+shipyard's view and its scale set by eye, base against branch, to one to
+one and a half tiles across its biggest face.
+
+| word | shape and role | unit | sessions | where | class | panels |
+|---|---|---|---|---|---|---|
+| 22 | small twin-pod utility hauler (cargo boxes slung between twin cones) | 2^7 | 1 | shipyard | civilian | x1.5 |
+| 48 | small flat tan wedge trader | 2^9 | 1 | shipyard | civilian | x3 |
+| 54 | tan faceted armed wedge, toothed nose | 2^11 | 1 | shipyard | armour | x8 |
+| 60 | white swept-wing passenger transport | 2^10 | 1 | shipyard | civilian | x6 |
+| 62 | long faceted hexagonal hauler | 2^10 | 1 | shipyard | freighter | x6 |
+| 72 | grey oval disc freighter, four drive glows | 2^11 | 1 | shipyard | freighter | x8 |
+| 76 | giant blocky grey bulk freighter | 2^10 | 1 | shipyard | not listed (flat faces stayed flat) | - |
+| 10, 12 | tiny stubs met at a surface launch | 2^7 | 2, 1 | launch | not listed | - |
+
+Traffic met in the three routes was the listed ships only; none of the
+new words was met in flight, so the proof is shipyard close-ups. The
+other orbital station types (86, 88) were not met.
+
 - **Adding a model:** add one line.
 - **Adding a class:**
   1. Make a tile (below).
@@ -259,11 +292,19 @@ read as wood grain on an orange Krait.
   3. List the PNG in `.githooks/allowed-images`.
 
 Not listed, so drawn flat:
-- game table 32 (landing pad), 96 (starport building) and 198 (city):
-  ground structures, not hulls;
-- game table 72: its unit (2^11) is a ship's, not a station's; it was not
-  seen in a capture and is not guessed at;
-- game table 176 (unit 2^0), seen beside the bay; not identified;
+- game table 32 (the landing pad and the landed ship's markings) and 198
+  (the port's clouds, not a city as this page used to say);
+- game table 76 (unit 2^10), a giant blocky bulk freighter: plated, its
+  biggest faces stayed flat at x6 and x12 (only its pods took the tile);
+  its record is a 34-byte stub that draws other models, so the census
+  left it out;
+- game table 12 and 10 (unit 2^7, 34-byte stubs), met only during a
+  lift-off; not identified;
+- game table 86 and 88 (units 2^13 and 2^16): by the backdrop code's
+  orbital range (`hdback.c`, port models 84 to 88) the other orbital
+  station types, but no census route reached one, so they are not listed;
+- game table 176 (unit 2^0), seen beside the bay, and 98 and 148 (ground,
+  around a surface port); not identified;
 - the intro's 4 (the title), 12, 34 (the banner), 36, 38, 40 to 54 (its
   scenes, the city among them) and every other intro word but 72 and the
   scene rows below.
@@ -316,13 +357,68 @@ after the table for a part of record N.
   is added to fx's list of live effects, so nothing reaches the menu or a
   game started from it.
 
+## A surface port's buildings
+
+Census (`FE2_HULL_LOG=1` with `FE2_HULL_DBG=1`, landed at the
+atmospheric port of the second start position, then a lift-off to some
+600 m; every word the port draws, by what it looks like):
+
+| word | unit | what it draws | here |
+|---|---|---|---|
+| 96 | 2^18 | the whole port: one large trapezoid block (grey, a blue-violet sloped front of some 136000 units, a dark blue band), long low grey and white blocks (64000 to 490000), small white and grey boxes (5000 to 12000), sign boards (a pink frame round yellow, blue-violet or white panels of some 32500, each with lettering), the apron and taxi strips, roads, lakes and the hills (complex shapes); some faces move | listed: building |
+| 198 | 2^2 | the white clouds | flat |
+| 32 | 2^8 | the pad and the landed ship's yellow markings and cyan windows | flat (a pad) |
+| 58 | 2^10 | the player's ship | as before |
+| 176 | 2^0 | nothing visible changes when it is plated | flat |
+| 12, 10 | 2^7 | met during the lift-off only | flat |
+
+Word 96 is one model for all of it, so the class rules pick the walls:
+
+- A face that looks along the model's y axis (`HULL_DECK_AXIS`: the
+  apron, the roofs, the strips painted on the ground) stays flat.
+- A complex shape (more than four sides: the ground, roads, lakes, hills
+  and the boards' frames) stays flat.
+- A face whose longest side is under 0.6 of a tile (some 39000 units: the
+  sign boards' lettered panels, kiosks, the small boxes) stays flat. Under
+  a storey or two the windows do not read, and the boards keep their
+  lettering clean.
+- Yellow markings and bright pure colours stay flat, as for every
+  building class.
+
+Everything else is a wall and is plated. The class has no tile: it always
+bakes the `building` profile in `hull.c` (`paint_storeys`), from the
+profile's own seed, never from the game:
+
+- four storeys a tile (16384 units each), a row of slabs per storey of
+  one to three quarter tiles, a third of them metal (plain and glossier),
+  the rest concrete with a fine grain; faint seams between slabs
+  and light weathering (wear 0.15);
+- a window strip across each storey, a little over a third of the
+  storey high, panes
+  some 24 texels wide at the 512 bake, behind thin frames and mullions;
+- which panes are lit comes from `hull_mix` of the seed, the storey and
+  the pane, never from the game's RNG or the clock, so it is the same
+  every frame and every run. About three in four panes on a lit storey
+  are lit, and about half the storeys are.
+- Glass sits below the slabs and is glossy. A lit pane is a little
+  lighter than the wall (albedo 1.4 against about 1 for a slab and 0.8
+  for a dark pane),
+  and its grime carries the class's warm tint (0.5), so lit windows read
+  a touch warm in daylight and never white. No shader term is added; the
+  shader's own highlight roll-off keeps a 240 grey wall from clipping.
+
+The class's graze (2.30, the station's) fades a wall seen edge on to its
+own colour, and the footprint fade does the same far away, so the
+windows do not shimmer from the air.
+
 ## Switches
 
 | switch | effect |
 |---|---|
 | `--hull-style 5` | the per-class material (default) |
 | `--hull-style 0..4` | the earlier looks, unchanged pixel for pixel: 0 fixed-function plating (`art/hull/plating.lum`), 1 big seeded texture, 2 panels, 3 bump and weathering, 4 a seeded profile per model (its own table, by the low byte of the word, as it always was) |
-| `--flat-hulls` | no plating at all: the game's flat faces exactly |
+| `--flat-hulls` | no plating at all: the game's flat faces exactly (buildings too) |
+| `--flat-buildings` | a surface port's buildings flat, everything else as it is: the frames before the building class, exactly |
 | Ctrl+Shift+H | steps 5, off, 0, 1, 2, 3, 4, 5 |
 | `FE2_HULL_TILE=path` | every class takes this raw square grey tile (64 to 2048 a side, a power of two, 128 = x1.0), to try a tile without a rebuild; set but empty, every class bakes its seeded plating |
 | `FE2_HULL_FIXED=1` | style 5 without its shader (the fixed-function path below) |
@@ -474,6 +570,14 @@ a kd-tree panel layout on a torus, from a seed.
 - **Intro and menu:** the title, the logo, the city and the credits are
   flat; the station behind the menu and the scenes' ships and stations
   (above) are plated.
+- **Surface port:** landed (the three views of the landed tour) and a
+  lift-off at some 130 m and 250 m. Only the walls of word 96 change; the
+  pad, the ship, the sign boards and their lettering, the ground and the
+  hills are the same pixels as before (a difference mask). With
+  `--flat-buildings` the landed frames are byte for byte the earlier
+  build's. The docked tour (stations and ships) was run in verification:
+  the docked frame is byte for byte the same, and the others differ only
+  through flight timing; word 96 is never met there.
 
 Known limits:
 - Bright, saturated liveries (an orange or red Krait) show little plating,
@@ -501,6 +605,12 @@ Known limits:
   slide and through the closed door's origin jump), not yet by eye.
 - Some of the intro's parts (76, 206 and others above) are not identified
   and are flat.
+- A surface port's buildings are told from its ground and signs only by
+  facing, shape and size (the port is one model): a roof that is not
+  level, a wall under 0.6 of a tile, or a large sign board of its own
+  would be treated wrongly. Only the second start position's port (with
+  an atmosphere) was captured; an airless port and other worlds' ports
+  were not.
 - The hyperspace and fade-in flashes were not captured with plating.
 - The Viper, Python, Moray, Eagle and Transporter were not met in the test
   captures. They use their classes untested in-game.
