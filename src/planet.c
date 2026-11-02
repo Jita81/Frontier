@@ -1064,6 +1064,17 @@ int psurf_code_class (struct PSurf *s, int code)
 			   in->npoly[k], in->ncirc[k], in->npair[k]);
 }
 
+unsigned int psurf_seed (struct PSurf *s)
+{
+	return s ? s->seed : 0;
+}
+
+int psurf_temperate (struct PSurf *s)
+{
+	struct PInfo *in = s ? pinfo (s) : NULL;
+	return in && (in->body == B_TERRAN || in->body == B_OCEAN);
+}
+
 /* Two pass 3-4 chamfer from the coast: 3 units a texel, negative in
  * water, positive elsewhere, +-32767 when there is no coast. */
 static void coast_distance (const unsigned char *cls, int n, short *d)

@@ -9,6 +9,7 @@
 #include "../host.h"	/* MEM_SIZE */
 #include "../fixups.h"	/* __DL5eb6_a6_base */
 #include "fx.h"
+#include "hull.h"	/* hull_intro_part */
 #define A6		__DL5eb6_a6_base
 #define A6_TOOLS_MODE	42	/* byte: negative while a 3D view fills the screen */
 #define A6_START_FLAGS	598	/* byte: bit 5 set in the intro and the start menu */
@@ -25,6 +26,7 @@
 #define M_EXPL		188	/* an explosion */
 #define M_LASER		190	/* a laser beam, put each frame of a shot */
 #define M_SMOKE		194	/* smoke and sparks, also a missile's trail */
+#define I_FIRE(w)	((w) == 114 || (w) == 116)	/* the intro's fireballs (parts in its table) */
 /* The look of each type.  A laser's class is bits 3-6 of its type byte (the
  * game's own damage table is indexed so): 1-3 are pulse lasers ($88 the start
  * ship's, $9a mining), 4-9 beam lasers ($a1 the police's) and accelerators.
@@ -54,12 +56,18 @@ static int in_flight (void) { return !(rb (A6 + A6_START_FLAGS) & 0x20) && (sign
  * the flight view, the death camera (state $58 at 704(a6)) is a 3D view too:
  * there its explosions (every one, not only the player's) and smoke are fx's. */
 #define A6_STATE	704
+static int intro_fire;	/* put_model's last tag was the intro's fireball */
 static int put_model (unsigned int *rec)
 {
 	unsigned int a6 = GetReg (REG_A6);
 	int m;
-	if (flat_fx || (signed char) rb (A6 + A6_TOOLS_MODE) >= 0 || !readable (a6 - FRAME_OBJ, 4)) return 0;
+	if (flat_fx || !readable (a6 - FRAME_OBJ, 4)) return 0;
 	*rec = STMemory_ReadLong (a6 - FRAME_OBJ);
+	/* the intro's scenes (bit 5 of 598(a6), and its own table): by the part's model */
+	intro_fire = 0;
+	if ((rb (A6 + A6_START_FLAGS) & 0x20) && I_FIRE (hull_intro_part ()))
+		return (intro_fire = readable (*rec, 256)) ? M_EXPL : 0;
+	if ((signed char) rb (A6 + A6_TOOLS_MODE) >= 0) return 0;
 	m = readable (*rec, 256) ? STMemory_ReadWord (*rec + OBJ_MODEL) & 0xffff : 0;
 	return in_flight () || ((m == M_EXPL || m == M_SMOKE) && rb (A6 + A6_STATE) == 0x58) ? m : 0;
 }
@@ -236,7 +244,7 @@ int fx_tag_for (unsigned int tag[3])
 	int m = put_model (&rec);
 	if (!MISSILE (m) && m != M_SMOKE && (m != M_EXPL || flat_explosions)) return 0;
 	if (MISSILE (m)) missile_rot (rec);
-	tag[0] = m, tag[1] = m == M_SMOKE ? rb (rec + OBJ_AGE) : 0, tag[2] = rec;
+	tag[0] = m, tag[1] = m == M_SMOKE ? rb (rec + OBJ_AGE) : intro_fire, tag[2] = rec;
 	return 1;
 }
 
@@ -390,9 +398,13 @@ int fx_circle (const int *iv, unsigned int d2, int r, int g, int b)
 	for (i = 0; i < n_balls; i++)	/* an inner ring of a blob of this record drawn already */
 		if (balls[i].rec == cur.rec && (n++, R <= balls[i].R && dist2 (balls[i].v, v) < 0.25f * balls[i].R * balls[i].R))
 			return 1;
-	a = 1 - (unsigned int) STMemory_ReadLong (cur.rec + OBJ_CLOCK) / 4294967296.0f;	/* its age, 0 to 1 */
-	k = fminf (fmaxf (((short) STMemory_ReadWord (cur.rec + OBJ_SIZE) + 1) / 2.0f, 0), 1);	/* +88 -1 to 0, +1 to 1 */
-	fl = blast (cur.rec, a, v, R), mis = fl & 1;
+	if (cur.aux)	/* the intro's fireball: its record is the scene's, with no clock */
+		a = 0.1f, k = 0.5f, fl = mis = 0;	/* hot, before smoke; no shock ring */
+	else {
+		a = 1 - (unsigned int) STMemory_ReadLong (cur.rec + OBJ_CLOCK) / 4294967296.0f;	/* its age, 0 to 1 */
+		k = fminf (fmaxf (((short) STMemory_ReadWord (cur.rec + OBJ_SIZE) + 1) / 2.0f, 0), 1);	/* +88 -1 to 0, +1 to 1 */
+		fl = blast (cur.rec, a, v, R), mis = fl & 1;
+	}
 	o = &balls[n_balls < 64 ? n_balls++ : 63];
 	*o = (struct ball) { cur.rec, mis, { v[0], v[1], v[2] }, R, a };
 	/* its turn, seeded by the record and the blob's place in it: steady frame to frame */

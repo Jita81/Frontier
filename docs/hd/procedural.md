@@ -256,38 +256,71 @@ close detail), the corona and the rings are built.
 
 The game marks stations, docking bays and landing pads with blinking
 lights: a small flat disc and a thin cross (`Nu_PutTwinklyCircle` /
-`Nu_DrawTwinklyCircle`, the same primitive the stars use).  The HD layer
-adds a soft additive halo round each one.
+`Nu_DrawTwinklyCircle`, the same primitive the stars use), and with
+steady lamps drawn as plain circles (`Nu_PutCircle` / `Nu_DrawCircle`).
+The HD layer adds a soft halo round each one.
 
-- **What gets one.**  Every twinkly whose object is not a star.  The put
-  stores one more long after the corona's: 1 when `hull_model_key()`
+- **Which twinklies.**  Every twinkly whose object is not a star.  The
+  put stores one more long after the corona's: 1 when `hull_model_key()`
   names a model and `is_star()` is false for its word, else 0.  Seen
   with a census over the dock, landed, orbit and traffic tours: models
-  `$20` (a pad's lights), `$2c` (the bay), `$48` (intro table), `$50` and
-  `$54` (a station in flight) get a halo; `$9e` (a star) does not, and
-  keeps its corona.
+  `$20` (a pad's lights), `$2c` (the player's own ship, seen from
+  outside; earlier notes called it the bay), `$48` (intro table), `$50`
+  and `$54` (a station in flight) get a halo; `$9e` (a star) does not,
+  and keeps its corona.
+- **Which circles (the circle key).**  `Nu_DrawCircle` draws far more
+  than lamps (bodies as small discs, the galaxy map's stars, fireballs,
+  the hypercloud), so the key is narrow and is checked on both sides.
+  At the put, the circle's tag word gets `CIRCLE_LIGHT` only when the
+  model being drawn is, in the game's own table (not the intro's or the
+  other table), a station (`$50`, `$52`) or the docking bay (`$54`), or a
+  surface port (`$5a` to `$74`).  At the draw, a tagged circle gets a
+  halo only if it is a lamp: its brightest channel is `$a0` or more, and
+  it is small (the game's radius `d2` up to 3 gets the full halo, fading
+  to none at 7, so a lamp housing seen close is the game's disc alone).
+  The galaxy map, fireball and hypercloud circles return before the halo
+  code and are untouched.  The tag word also carries the model's key
+  (its low 18 bits) for the log; the draw tests only `BLOB_HYPER` and
+  `CIRCLE_LIGHT`.
 - **Size.**  Disc radius `r` is the game's (`0.002 * d2 * z`, a fixed
   size on screen).  The halo reaches `r + 2r` (3x the disc), held between
   a floor of `1.5 * px_scale()` pixels (about 4 px at 1600x1200, so a
   light whose disc the game has shrunk to nothing still glints) and a
   ceiling of 2% of the viewport height.  Pixels per eye unit come from
-  the projection matrix and the viewport, so the wide frustum is right.
-- **Intensity.**  Full to 2 km, then `sqrt(2 km / d)`: 0.6 at 5.5 km,
-  0.2 at 58 km.  A far station reads as a sparkle of points, not a fog
-  over the hull; a near one is bright enough to see against it.  Two
-  rings in `disc_strips`: the colour out to the edge (alpha 0.6), and a
-  paler core, half white, to 0.45 of it (alpha 0.8); additive blend.
+  the projection matrix and the viewport, read from GL once a frame
+  (`view_scale`, keyed on `hull_frame_no` and the wide-frustum flag), not
+  once a light.
+- **Colour and intensity.**  The halo is the light's own hue at full
+  saturation (a coloured light's channels are stretched to HSV
+  saturation 1; a grey or white light keeps its colour).  Three rings in
+  `disc_strips`: the outer glow, added (alpha 0.6, out to the edge); the
+  core, laid over with the alpha blend (alpha 0.8, solid to 0.3 of the
+  edge, gone at 0.7), so a red light over a pale wall reads red, not
+  pink; and a small white centre, laid over at alpha 0.25, gone by a
+  third of the radius.  Over black, added and laid over look the same.
+  Full to 2 km, then `sqrt(2 km / d)`: 0.6 at 5.5 km, 0.2 at 58 km, so a
+  far station reads as a sparkle of points, not a fog over the hull.  A
+  circle's halo is further scaled by the size fade above.
 - **Occlusion.**  No depth test, as everything in the 3D view: the view
   is painted far to near, the halo is drawn in the disc's own place in
   that order, so a hull painted later hides the halo as it hides the
   disc.  A light in its off phase is not drawn by the game, so it has no
   halo.
 - **The cross.**  Unchanged (same lines, same width, no smoothing).
-- **Switch.**  `--flat-lights` writes 0 for every light, so the draw
-  makes exactly the base's GL calls.  `--old-renderer` never puts a
-  twinkly through this path and is unaffected.
-- **Not checked by capture.**  A pad's lights at night (the landed tour
-  is by day and shows none), and a star in view (left to the put flag).
+- **Log.**  `FE2_LIGHT_LOG=1` prints one stderr line per 3D-view circle:
+  table, model word, `d2`, radius in pixels, colour, distance and the
+  halo factor (0 when none).  Seen on a station approach and launch:
+  only `$54` circles are halo'd (red lamps at `d2` 2 to 6, green arm-tip
+  lamps at 1 to 2); its dark green circles fall under the `$a0` floor;
+  `$2c` (the player's ship) and the intro's `$48` discs are outside the
+  key.
+- **Switch.**  `--flat-lights` writes 0 for every twinkly and never sets
+  `CIRCLE_LIGHT`, so the draw makes exactly the base's GL calls.
+  `--old-renderer` never puts a twinkly or circle through this path and
+  is unaffected.
+- **Not checked by capture.**  A pad's lights at night, and a surface
+  port's circles (`$5a` to `$74` are in the key but no log line from one
+  has been seen yet); a star in view (left to the put flag).
 
 ## Prototype notes: the limb glow (dropped)
 
