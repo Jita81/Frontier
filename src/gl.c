@@ -4128,33 +4128,58 @@ static void draw_corona (void **data, const int v[3], float size)
 
 extern int flat_lights;	/* --flat-lights (main.c) */
 
-/* A light's halo (B4): an additive glow in its colour, white toward the
- * core, round the game's disc (radius r, eye units, at distance d).  It
+/* A light's halo (B4): a soft glow round the game's disc (radius r, eye
+ * units, at distance d), in the light's own hue at full saturation.  It
  * reaches past the disc by twice the disc, kept between a glint of 1.5
  * px_scale pixels and 2% of the view's height, and fades as the root of
  * 2 km / d beyond 2 km (eye units are millimetres), so a far station is
- * a sparkle of points, not a fog.  No depth test, as everywhere in the 3D
- * view: it is painted back to front, so whatever the game paints over the
- * disc hides the halo as it hides the disc. */
-static void light_halo (float r, float d, int R, int G, int B)
+ * a sparkle of points, not a fog.  The glow is added; the core is laid
+ * over (alpha blend), so a red light over a pale wall reads red, not
+ * pink, with a small white centre (25% at the middle, none past a third
+ * of the radius).  Over black the two blends are the same.  No depth
+ * test, as everywhere in the 3D view: it is painted back to front, so
+ * whatever the game paints over the disc hides the halo as it hides the
+ * disc.  f (0 to 1) scales its alpha. */
+static float halo_k, halo_vh;	/* eye units per pixel per unit of distance; the view's height */
+
+/* halo_k and halo_vh, read from GL once a frame (the 3D view's projection
+ * and viewport hold for the whole of draw_3dview) */
+static void view_scale (void)
 {
+	static unsigned int frame = ~0u;
+	static int wide = -1;
 	GLfloat pm[16];
 	GLint vp[4];
-	float px, w, a = d > 2e6f ? sqrtf (2e6f / d) : 1, cr = (unsigned char) R / 255.0f,
-	      cg = (unsigned char) G / 255.0f, cb = (unsigned char) B / 255.0f;
 
+	if (frame == hull_frame_no && wide == wide_3d) return;
 	glGetFloatv (GL_PROJECTION_MATRIX, pm);
 	glGetIntegerv (GL_VIEWPORT, vp);
-	px = 2 * d / (pm[5] * vp[3]);		/* eye units per pixel at d */
+	halo_k = 2 / (pm[5] * vp[3]), halo_vh = vp[3];
+	frame = hull_frame_no, wide = wide_3d;
+}
+
+static void light_halo (float r, float d, int R, int G, int B, float f)
+{
+	float c[3] = { (unsigned char) R / 255.0f, (unsigned char) G / 255.0f, (unsigned char) B / 255.0f },
+	      hi = fmaxf (c[0], fmaxf (c[1], c[2])), lo = fminf (c[0], fminf (c[1], c[2])),
+	      px, w, a = f * (d > 2e6f ? sqrtf (2e6f / d) : 1);
+	int i;
+
+	view_scale ();
+	if (hi - lo > 0.2f * hi)	/* a coloured light: its hue, HSV saturation 1 */
+		for (i = 0; i < 3; i++) c[i] = (c[i] - lo) / (hi - lo);
+	px = halo_k * d;
 	w = 2 * r / px;
-	w = w < 1.5f * px_scale () ? 1.5f * px_scale () : w > 0.02f * vp[3] ? 0.02f * vp[3] : w;
+	w = w < 1.5f * px_scale () ? 1.5f * px_scale () : w > 0.02f * halo_vh ? 0.02f * halo_vh : w;
 	w = r + w * px;
 	glPushAttrib (GL_COLOR_BUFFER_BIT | GL_CURRENT_BIT | GL_LIGHTING_BIT);
 	glEnable (GL_BLEND);
-	glBlendFunc (GL_SRC_ALPHA, GL_ONE);
 	glShadeModel (GL_SMOOTH);
-	disc_strips (0, 0, 0.15f * w, w, cr, cg, cb, 0.6f * a);
-	disc_strips (0, 0, 0.1f * w, 0.45f * w, (cr + 1) / 2, (cg + 1) / 2, (cb + 1) / 2, 0.8f * a);
+	glBlendFunc (GL_SRC_ALPHA, GL_ONE);
+	disc_strips (0, 0, 0.15f * w, w, c[0], c[1], c[2], 0.6f * a);
+	glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	disc_strips (0, 0, 0.3f * w, 0.7f * w, c[0], c[1], c[2], 0.8f * a);
+	disc_strips (0, 0, 0, w / 3, 1, 1, 1, 0.25f * a);
 	glPopAttrib ();
 }
 
@@ -4208,7 +4233,7 @@ void Nu_DrawTwinklyCircle (void **data)
 			glVertex3f (0.0f, -size, 0.0f);
 			glVertex3f (0.0f, +size, 0.0f);
 		glEnd ();
-		if (halo) light_halo (disc > 0 ? disc : 0, -v1[2], r, g, b);
+		if (halo) light_halo (disc > 0 ? disc : 0, -v1[2], r, g, b, 1);
 	}
 	billboard_end ();
 }
@@ -5620,15 +5645,31 @@ static unsigned int hyper_tag (void)
 			       hull_intro_part () == HYPERCLOUD_INTRO) ? BLOB_HYPER : 0;
 }
 
+/* A circle's tag word: BLOB_HYPER; CIRCLE_LIGHT when it is put while a
+ * station's model ($50, $52, $54) or a surface port's ($5a to $74) of the
+ * game's own table is drawn; and the model's key (its low 18 bits) for
+ * FE2_LIGHT_LOG.  The draw halos only the small ones (circle_light). */
+#define CIRCLE_LIGHT	0x40000000u
+
+static int light_key (unsigned int key)
+{
+	unsigned int w = key & 0xffff;
+	return HULL_KEY_OK (key) && !(key & (HULL_TAB_INTRO | HULL_TAB_OTHER))
+	       && (w == 0x50 || w == 0x52 || w == 0x54 || (w >= 0x5a && w <= 0x74));
+}
+
 void Nu_PutCircle ()
 {
+	unsigned int key;
+
 	if (use_renderer == R_OLD) return;
+	key = hull_model_key ();
 	put_fx ();
 	znode_wrlong (NU_CIRCLE);
 	znode_wrlong (GetReg (REG_D2));	/* untouched: its high word is the radius's fraction */
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrcolor (GetReg (REG_D6));
-	znode_wrlong (hyper_tag ());
+	znode_wrlong (hyper_tag () | (key & 0x3ffff) | (!flat_lights && light_key (key) ? CIRCLE_LIGHT : 0));
 	put_star ();
 }
 /* The galaxy map's stars and markers: a camera-facing disc whose alpha
@@ -5767,10 +5808,21 @@ static int project (const int *v, double *xy)
 static double here_seg[64][4], here_mark[2];
 static int here_n;
 
+/* how much halo a station's or port's circle gets: a lamp is bright (a
+ * channel at $a0 or more) and small (the game's radius, d2, up to 3; it
+ * fades out by 7, so a lamp housing seen close is the game's disc alone) */
+static float circle_light (int d2, int r, int g, int b)
+{
+	if (MAX ((unsigned char) r, MAX ((unsigned char) g, (unsigned char) b)) < 0xa0) return 0;
+	return d2 <= 3 ? 1 : d2 >= 7 ? 0 : (7 - d2) / 4.0f;
+}
+
 void Nu_DrawCircle (void **data)
 {
+	static int light_log = -1;
 	int v1[3];
 	unsigned int dreg2, isize, hyper;
+	float halo;
 	float size;
 	int r, g, b;
 
@@ -5809,7 +5861,7 @@ void Nu_DrawCircle (void **data)
 		}
 		return;
 	}
-	if (hyper) {
+	if (hyper & BLOB_HYPER) {
 		hyper_glow (v1, size, (unsigned char) r / 255.0f, (unsigned char) g / 255.0f, (unsigned char) b / 255.0f);
 		return;
 	}
@@ -5818,7 +5870,14 @@ void Nu_DrawCircle (void **data)
 	 * flat shaded dot, which must always face the camera. */
 	billboard_begin (v1[0], v1[1], v1[2]);
 	gluDisk (qobj, 0.0, size, circle_slices (size, v1[2]), 1);
+	halo = (hyper & CIRCLE_LIGHT) && size > 0 ? circle_light ((short) dreg2, r, g, b) : 0;
+	if (halo > 0) light_halo (size, -v1[2], r, g, b, halo);
 	billboard_end ();
+	if (light_log < 0) light_log = getenv ("FE2_LIGHT_LOG") != NULL;
+	if (light_log && (view_scale (), 1))
+		fprintf (stderr, "light: circle model %s$%x d2 %d r %.1f px rgb %02x%02x%02x z %d halo %.2f\n",
+			 hyper & HULL_TAB_INTRO ? "intro " : hyper & HULL_TAB_OTHER ? "other " : "",
+			 hyper & 0xffff, (short) dreg2, size / (halo_k * -v1[2]), r & 255, g & 255, b & 255, -v1[2], halo);
 }
 
 /* life is so strange */
