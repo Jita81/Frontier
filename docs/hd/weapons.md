@@ -4,7 +4,9 @@ With the GL renderer, some weapon effects are drawn as soft light and smoke
 made from two procedural 64x64 textures: a glow and a noise puff. There are
 no image files, shaders or FBOs. `--flat-fx` gives the base HD look,
 `--flat-explosions` gives the base explosions with the other effects kept,
-and `--old-renderer` never runs fx.
+`--flat-lasers` gives every laser the one steady ribbon it had before bolts
+and hot cores (below), `--flat-missiles` gives a missile its old plume, drawn
+only near its smoke (below), and `--old-renderer` never runs fx.
 
 ## When
 
@@ -12,12 +14,17 @@ and `--old-renderer` never runs fx.
 the record at A6-212 and its model word at +90. They act only in the flight
 view. That means a game is on (bit 5 of 598(a6) clear, so not the intro or
 the start menu) and a 3D view fills the screen (42(a6) negative, so not a
-map or a 2D page). One exception: the death camera (state `$58` at 704(a6))
-is a 3D view too, so there every explosion (188) and smoke (194) record is
-tagged, not only the player's own (the one at 674(a6)); a death leaves
-several. The game-over screen after it is not touched. A recognised model
-puts an `NU_FX` op before its primitive, and the draw side replaces that
-primitive. Tagged polygons are not hull-plated. The oracle is unchanged.
+map or a 2D page). There are two exceptions, tested in this order. In the
+intro's scenes (bit 5 set and a part of the intro's own table, 114 or 116)
+the fireball circles take the explosion look (see hulls.md, the intro's
+scenes); the tag carries an intro mark, and since the record there is the
+scene's (no clock at +122, no size at +88) the fireball draws young and hot,
+with no shock ring. In the death camera (state `$58` at 704(a6)), a 3D view too, every
+explosion (188) and smoke (194) record is tagged, not only the player's own
+(the one at 674(a6)); a death leaves several. The game-over screen after it
+is not touched. A recognised model puts an `NU_FX` op before its primitive,
+and the draw side replaces that primitive. Tagged polygons are not
+hull-plated. The oracle is unchanged.
 
 Effects that outlive their frame (a beam, its muzzle bloom, a hit flare) are
 aged on game time, which stops while the time rate, 10428(a6), is 0. Pause
@@ -28,14 +35,80 @@ it.
 | Model | What | HD look |
 |---|---|---|
 | 190 | laser beams, every type | per class (bits 3-6 of the type byte, see `looks[]`): a halo in the class's hue round a near-white core, muzzle bloom, a flare where it hits; pulse red/orange, mining amber, beams green to violet, plasma magenta |
-| 10, 12, 14, 16 | homing, smart, naval and nuclear missiles | flame plume per type (hue, width, flicker) off the end of the body where its smoke starts; no smoke, no plume |
+| 10, 12, 14, 16 | homing, smart, naval and nuclear missiles | a flame off the tail every frame the body is drawn: near-white nozzle, a flame in the type's hue, flicker; longer, wider and hotter from homing to nuclear (see Missiles) |
 | 188 | explosion circles | one layered fireball per blob, by age and size (see Explosions) |
 | 194 | smoke blobs | noise puffs that spread and thin with age |
+
+## Lasers
+
+For class 1 the game draws one quad for each shot, for one frame (measured:
+one every 640 ms; other classes not yet measured). fx keeps the beam for
+90 ms of game time, always on the segment the game gave, from the muzzle to
+the far end, so a hit flare is still where the game put the hit. Its class
+(bits 3-6 of the type byte) picks its look and shape from `looks[]`:
+
+| Class | Laser | Hue | Shape |
+|---|---|---|---|
+| 0 (not seen), 1 (`$88`, the start ship's), 2 | pulse | red, orange | bolt |
+| 3 (`$9a`, mining) | pulse | amber, throbs at 8 Hz | bolt |
+| 4 (`$a1`, the police's) to 7 | beam | green, cyan, blue, violet | beam |
+| 8, 9 (and 10-15) | plasma | magenta, pink, crackles at 12 Hz | plasma |
+
+- Bolt: a short bright bolt flies from the muzzle and reaches the far end
+  at 70% of the shot's 90 ms, then its trail sinks into the hit. The trail is
+  30% of the beam's on-screen length, widest at the rounded head and tapering
+  to nothing behind it. "Along the beam" is measured on screen (1/z runs
+  evenly), so a beam that runs 2000:1 in depth does not reach its far end in
+  the first frame. Its pieces are shaded as the trapezoids they are on screen,
+  so a strip that tapers to a point stays even about its line.
+- Beam: the steady ribbon, plus two hot spots running out along it at one
+  beam length in 400 ms, half a length apart: each a swell of the beam's hue
+  round a near-white core, tapering to nothing at both ends.
+- Plasma: a beam, with its crackle.
+
+Every timing is game time from fx's clock and the beam's start: never the
+game's random numbers. Muzzle blooms and hit flares are as before.
+`--flat-lasers` draws the plain ribbon for every class.
 
 Laser classes 0 and 10-15 were never seen; they take the nearest entry (1
 and 9). Which shop laser is which class past 1 (`$88`), 3 (`$9a`, mining) and
 4 (`$a1`, police) is inferred from the order of the game's damage table, not
 seen in flight.
+
+## Missiles
+
+`fx_tri` keeps the body triangles of a missile (models 10, 12, 14, 16), and
+`fx_frame_end` draws its flame after the 3D view, every frame the body is
+drawn. The flame keys off:
+- the type, `looks[16..19]`: hue (homing blue, smart green, naval orange,
+  nuclear magenta), core and halo widths as a share of the body's length,
+  and flicker rate. Heat is `(halo - 0.2) * 5`, 0.1 for homing up to 1 for
+  nuclear; it lengthens the white core and grows the nozzle glow;
+- the body's long axis (the two vertices farthest apart): the flame runs
+  back from the tail about `10 * halo` body lengths (2.2 for homing, 4 for
+  nuclear), as three ribbons (hue, a paler middle, the near-white nozzle)
+  tapering to a point, and a glow at the nozzle;
+- flicker: value noise on game time (`fx_ms`) seeded by the missile's
+  record, so each missile flickers on its own and a pause freezes it;
+- width: the halo share of the body's length on screen, at least 3 pixels
+  and capped at `160 * halo`.
+
+Which end is the tail, in order:
+1. The missile's own rotation. When the object is put, `fx_tag_for` reads
+   the nine 1.15 words at A6-36 (as `procfx_sky_put` does; read only). The
+   model's nose is on its +z axis (measured: the body's long axis is the
+   model z axis within about 7 degrees, and +z leads the flight). The tail is the
+   end on -z. This holds through camera turns and view changes while the
+   rotation is read. On a fallback frame (2 or 3 below) the tail can flip
+   for that one frame.
+2. With no rotation for it (more than four missiles put in a frame, or the
+   frame unreadable), the end nearer its smoke.
+3. With no smoke near it either, the end farther from the eye.
+A missile is never skipped. Motion against the previous frame is not used:
+it flips when the camera turns.
+
+`--flat-missiles` restores the base plume: drawn only where the missile's
+smoke starts, off the end nearer the smoke, nothing when it coasts.
 
 ## Explosions
 
@@ -140,4 +213,10 @@ Not yet seen on screen:
 - A heavy ship's explosion (+88 = +1) and the missile palette.
 
 The red pulse beam (`$88`) and the smart, naval and nuclear missiles were not
-fired.
+fired. Their flames were checked by drawing a fired homing missile with each
+type's look (a scratch build only), not in play.
+
+Missile flames, checked on a fired homing missile in the external view: the
+long axis stayed on the model z axis over 35 frames while the camera turned,
+and the tail held; paused, the flame stays and holds still; with
+`--flat-missiles` the same paused frame has no plume (no smoke near it).

@@ -9,6 +9,7 @@
 #include "../host.h"	/* MEM_SIZE */
 #include "../fixups.h"	/* __DL5eb6_a6_base */
 #include "fx.h"
+#include "hull.h"	/* hull_intro_part */
 #define A6		__DL5eb6_a6_base
 #define A6_TOOLS_MODE	42	/* byte: negative while a 3D view fills the screen */
 #define A6_START_FLAGS	598	/* byte: bit 5 set in the intro and the start menu */
@@ -21,21 +22,26 @@
 #define OBJ_HIT		186	/* word: $ffff when a beam hit nothing */
 /* the models with effects (docs/hd/weapons.md) */
 #define MISSILE(m)	((m) >= 10 && (m) <= 16 && !((m) & 1))	/* homing, smart, naval, nuclear */
+#define MISSILE_NOSE_PZ	1	/* a missile model's nose is on its +z axis */
 #define M_EXPL		188	/* an explosion */
 #define M_LASER		190	/* a laser beam, put each frame of a shot */
 #define M_SMOKE		194	/* smoke and sparks, also a missile's trail */
+#define I_FIRE(w)	((w) == 114 || (w) == 116)	/* the intro's fireballs (parts in its table) */
 /* The look of each type.  A laser's class is bits 3-6 of its type byte (the
  * game's own damage table is indexed so): 1-3 are pulse lasers ($88 the start
  * ship's, $9a mining), 4-9 beam lasers ($a1 the police's) and accelerators.
- * A laser: hue, core and halo widths in pixels, shimmer in Hz (0 steady).
+ * A laser: hue, core and halo widths in pixels, shimmer in Hz (0 steady), and
+ * its shape: a pulse laser's BOLT flies out along the beam, a BEAM laser holds
+ * a beam with hot spots running along its core, PLASMA is a beam that crackles.
  * A missile (16 + (model - 10) / 2): flame hue, core and flame widths as a
  * share of its body's length, flicker in Hz.  Procedural: no art. */
-static const struct look { float rgb[3], core, halo, hz; } looks[20] = {
-	{ { 1, .2f, .1f }, 4, 32, 0 }, { { 1, .2f, .1f }, 5, 40, 0 },	/* 0 (none seen), 1: pulse, red */
-	{ { 1, .45f, .1f }, 6, 48, 0 }, { { 1, .8f, .25f }, 4, 30, 8 },	/* 2: orange; 3: mining, amber, throbs */
-	{ { .3f, 1, .4f }, 4, 34, 0 }, { { .2f, .85f, 1 }, 5, 42, 0 },	/* 4: beam, green; 5: cyan */
-	{ { .35f, .5f, 1 }, 6, 50, 0 }, { { .7f, .4f, 1 }, 7, 58, 0 },	/* 6: blue; 7: violet */
-	{ { 1, .45f, .9f }, 8, 66, 12 }, { { 1, .6f, 1 }, 10, 80, 12 },	/* 8, 9 (and 10-15): plasma, crackles */
+enum { BOLT = 1, BEAM, PLASMA };
+static const struct look { float rgb[3], core, halo, hz; int shape; } looks[20] = {
+	{ { 1, .2f, .1f }, 4, 32, 0, BOLT }, { { 1, .2f, .1f }, 5, 40, 0, BOLT },	/* 0 (none seen), 1: pulse, red */
+	{ { 1, .45f, .1f }, 6, 48, 0, BOLT }, { { 1, .8f, .25f }, 4, 30, 8, BOLT },	/* 2: orange; 3: mining, amber, throbs */
+	{ { .3f, 1, .4f }, 4, 34, 0, BEAM }, { { .2f, .85f, 1 }, 5, 42, 0, BEAM },	/* 4: beam, green; 5: cyan */
+	{ { .35f, .5f, 1 }, 6, 50, 0, BEAM }, { { .7f, .4f, 1 }, 7, 58, 0, BEAM },	/* 6: blue; 7: violet */
+	{ { 1, .45f, .9f }, 8, 66, 12, PLASMA }, { { 1, .6f, 1 }, 10, 80, 12, PLASMA },	/* 8, 9 (and 10-15): plasma, crackles */
 	[16] = { { .3f, .85f, 1 }, .08f, .22f, 30 }, { { .4f, 1, .55f }, .08f, .24f, 40 },	/* homing blue, smart green */
 	{ { 1, .6f, .25f }, .1f, .3f, 25 }, { { 1, .35f, .75f }, .12f, .4f, 20 },	/* naval orange, nuclear magenta */
 };
@@ -50,12 +56,18 @@ static int in_flight (void) { return !(rb (A6 + A6_START_FLAGS) & 0x20) && (sign
  * the flight view, the death camera (state $58 at 704(a6)) is a 3D view too:
  * there its explosions (every one, not only the player's) and smoke are fx's. */
 #define A6_STATE	704
+static int intro_fire;	/* put_model's last tag was the intro's fireball */
 static int put_model (unsigned int *rec)
 {
 	unsigned int a6 = GetReg (REG_A6);
 	int m;
-	if (flat_fx || (signed char) rb (A6 + A6_TOOLS_MODE) >= 0 || !readable (a6 - FRAME_OBJ, 4)) return 0;
+	if (flat_fx || !readable (a6 - FRAME_OBJ, 4)) return 0;
 	*rec = STMemory_ReadLong (a6 - FRAME_OBJ);
+	/* the intro's scenes (bit 5 of 598(a6), and its own table): by the part's model */
+	intro_fire = 0;
+	if ((rb (A6 + A6_START_FLAGS) & 0x20) && I_FIRE (hull_intro_part ()))
+		return (intro_fire = readable (*rec, 256)) ? M_EXPL : 0;
+	if ((signed char) rb (A6 + A6_TOOLS_MODE) >= 0) return 0;
 	m = readable (*rec, 256) ? STMemory_ReadWord (*rec + OBJ_MODEL) & 0xffff : 0;
 	return in_flight () || ((m == M_EXPL || m == M_SMOKE) && rb (A6 + A6_STATE) == 0x58) ? m : 0;
 }
@@ -138,7 +150,9 @@ static void sprite (const float *p, float r, float rot)
 
 /* a strip of glow from a to b, wa and wb pixels wide at its ends; texture q is
  * the depth, so a beam spanning 2000:1 in depth keeps its core */
-static void ribbon (const float *a, const float *b, float wa, float wb)
+/* trap: shade it as the trapezoid it is on screen (texture q scaled by each
+ * end's width), so a strip tapering to a point stays even about its line */
+static void ribbon (const float *a, const float *b, float wa, float wb, int trap)
 {
 	float s[3], l; int k;
 	if (a[2] > -1 || b[2] > -1) return;
@@ -151,8 +165,8 @@ static void ribbon (const float *a, const float *b, float wa, float wb)
 	glBegin (GL_TRIANGLE_STRIP);
 	for (k = 0; k < 4; k++) {
 		const float *e = k < 2 ? a : b;
-		float h = (k & 1 ? 1.25f : -1.25f) * (k < 2 ? wa : wb) * px_world (e[2]) / l;
-		glTexCoord4f ((k & 1) * -e[2], 0.5f * -e[2], 0, -e[2]);
+		float h = (k & 1 ? 1.25f : -1.25f) * (k < 2 ? wa : wb) * px_world (e[2]) / l, q = -e[2] * (trap ? (k < 2 ? wa : wb) : 1);
+		glTexCoord4f ((k & 1) * q, 0.5f * q, 0, q);
 		glVertex3f (e[0] + s[0] * h, e[1] + s[1] * h, e[2] + s[2] * h);
 	}
 	glEnd ();
@@ -198,13 +212,28 @@ static int n_missiles, n_smoke;
 static struct ball { unsigned int rec, missile; float v[3], R, a; } balls[64];
 static float mprev[4][3];
 static int n_balls, n_mprev;
+/* this frame's missiles' rotations, put side: rot[3 j + k] is the view's
+ * k part of the model's axis j (nine 1.15 words at A6-36 while the object is
+ * put, as procfx_sky_put reads them); the view's z is GL's -z */
+#define FRAME_ROT	36
+static struct { unsigned int rec; float rot[9]; } mrot[4];
+static int n_mrot;
+static void missile_rot (unsigned int rec)
+{
+	unsigned int a6 = GetReg (REG_A6), i;
+	if (flat_missiles || n_mrot == 4 || !readable (a6 - FRAME_ROT, 18)) return;
+	for (i = 0; i < (unsigned int) n_mrot; i++) if (mrot[i].rec == rec) return;
+	mrot[n_mrot].rec = rec;
+	for (i = 0; i < 9; i++) mrot[n_mrot].rot[i] = (short) STMemory_ReadWord (a6 - FRAME_ROT + 2 * i) / 32768.0f;
+	n_mrot++;
+}
 void fx_frame_begin (void)
 {
 	unsigned int now = SDL_GetTicks (), d = now - last_tick;
 	last_tick = now, n_frames++;
 	drew_3d = 1;
 	for (n_mprev = 0; n_mprev < n_missiles; n_mprev++) memcpy (mprev[n_mprev], missiles[n_mprev].v[0], sizeof mprev[0]);
-	n_missiles = n_smoke = n_balls = 0;
+	n_missiles = n_smoke = n_balls = n_mrot = 0;
 	check_scene ();
 	if (STMemory_ReadLong (A6 + A6_TIME_RATE) != 0) fx_ms += d > 50 ? 50 : d;
 }
@@ -214,7 +243,8 @@ int fx_tag_for (unsigned int tag[3])
 	unsigned int rec;
 	int m = put_model (&rec);
 	if (!MISSILE (m) && m != M_SMOKE && (m != M_EXPL || flat_explosions)) return 0;
-	tag[0] = m, tag[1] = m == M_SMOKE ? rb (rec + OBJ_AGE) : 0, tag[2] = rec;
+	if (MISSILE (m)) missile_rot (rec);
+	tag[0] = m, tag[1] = m == M_SMOKE ? rb (rec + OBJ_AGE) : intro_fire, tag[2] = rec;
 	return 1;
 }
 
@@ -368,9 +398,13 @@ int fx_circle (const int *iv, unsigned int d2, int r, int g, int b)
 	for (i = 0; i < n_balls; i++)	/* an inner ring of a blob of this record drawn already */
 		if (balls[i].rec == cur.rec && (n++, R <= balls[i].R && dist2 (balls[i].v, v) < 0.25f * balls[i].R * balls[i].R))
 			return 1;
-	a = 1 - (unsigned int) STMemory_ReadLong (cur.rec + OBJ_CLOCK) / 4294967296.0f;	/* its age, 0 to 1 */
-	k = fminf (fmaxf (((short) STMemory_ReadWord (cur.rec + OBJ_SIZE) + 1) / 2.0f, 0), 1);	/* +88 -1 to 0, +1 to 1 */
-	fl = blast (cur.rec, a, v, R), mis = fl & 1;
+	if (cur.aux)	/* the intro's fireball: its record is the scene's, with no clock */
+		a = 0.1f, k = 0.5f, fl = mis = 0;	/* hot, before smoke; no shock ring */
+	else {
+		a = 1 - (unsigned int) STMemory_ReadLong (cur.rec + OBJ_CLOCK) / 4294967296.0f;	/* its age, 0 to 1 */
+		k = fminf (fmaxf (((short) STMemory_ReadWord (cur.rec + OBJ_SIZE) + 1) / 2.0f, 0), 1);	/* +88 -1 to 0, +1 to 1 */
+		fl = blast (cur.rec, a, v, R), mis = fl & 1;
+	}
 	o = &balls[n_balls < 64 ? n_balls++ : 63];
 	*o = (struct ball) { cur.rec, mis, { v[0], v[1], v[2] }, R, a };
 	/* its turn, seeded by the record and the blob's place in it: steady frame to frame */
@@ -412,8 +446,39 @@ int fx_circle (const int *iv, unsigned int d2, int r, int g, int b)
 	return 1;
 }
 
+/* A missile's flame, every frame its body is drawn, off its tail: the end its
+ * rotation puts aft, else the end nearer its smoke (near_a), else the end
+ * farther from the eye.  From its look: hue, width, flicker and, from the
+ * width, heat (homing 0.1 to nuclear 1): length, core and glow grow with it. */
+static void draw_flame (const struct missile *m, const struct look *lk, const float *a, const float *b, int near_a)
+{
+	const float *tail = near_a >= 0 ? (near_a ? a : b) : a[2] < b[2] ? a : b, *nose, *h = lk->rgb;
+	float L = sqrtf (dist2 (a, b)), heat = (lk->halo - 0.2f) * 5, dot = 0, w, pt[3][3];
+	float flick = 0.75f + 0.5f * vnoise (fx_ms * lk->hz / 1000, 1 + (m->rec >> 2 & 63));
+	int i, k;
+	for (i = 0; i < n_mrot && mrot[i].rec != m->rec; i++) ;
+	for (k = 0; i < n_mrot && k < 3; k++)	/* (b - a) on the model's z axis */
+		dot += (b[k] - a[k]) * (k == 2 ? -1 : 1) * mrot[i].rot[6 + k];
+	if (fabsf (dot) > 0.5f * L) tail = (dot > 0) == MISSILE_NOSE_PZ ? a : b;
+	nose = tail == a ? b : a;
+	for (k = 0; k < 3; k++) {	/* the flame's end, its hot middle, the white core */
+		float u = (tail[k] - nose[k]) * flick;
+		pt[0][k] = tail[k] + u * 10 * lk->halo, pt[1][k] = tail[k] + u * 4 * lk->halo, pt[2][k] = tail[k] + u * (0.4f + 0.5f * heat);
+	}
+	w = fmaxf (3, fminf (lk->halo * L / px_world (tail[2]), 160 * lk->halo)) * (0.85f + 0.15f * flick);
+	col (h[0], h[1], h[2], 0.8f);
+	ribbon (tail, pt[0], w, 0, 1);
+	col (0.5f + 0.5f * h[0], 0.5f + 0.5f * h[1], 0.5f + 0.5f * h[2], 0.9f);
+	ribbon (tail, pt[1], 0.6f * w, 0, 1);
+	col (0.85f + 0.15f * h[0], 0.85f + 0.15f * h[1], 0.85f + 0.15f * h[2], 1);	/* the nozzle, near white */
+	ribbon (tail, pt[2], w * lk->core / lk->halo * (1.5f + heat), 0, 1);
+	col (0.6f + 0.4f * h[0], 0.6f + 0.4f * h[1], 0.6f + 0.4f * h[2], 0.55f + 0.35f * heat);
+	sprite (tail, (0.9f + 0.9f * heat) * w * px_world (tail[2]), 0);
+}
+
 /* A missile burns where its smoke starts: a plume off the end of its body
- * nearer the smoke.  One with no smoke near it is coasting: no plume. */
+ * nearer the smoke.  One with no smoke near it is coasting: no plume.
+ * (--flat-missiles; else draw_flame.) */
 static void draw_plume (const struct missile *m)
 {
 	const struct look *lk = &looks[16 + (m->kind - 10) / 2];
@@ -428,6 +493,7 @@ static void draw_plume (const struct missile *m)
 		float da = dist2 (smoke[k], a), db = dist2 (smoke[k], b);
 		if (fminf (da, db) < best) best = fminf (da, db), near_a = da < db;
 	}
+	if (!flat_missiles && dist2 (a, b) > 0) { draw_flame (m, lk, a, b, best <= 36 * dist2 (a, b) ? near_a : -1); return; }
 	if (!(dist2 (a, b) > 0) || best > 36 * dist2 (a, b)) return;
 	tail = near_a ? a : b, nose = near_a ? b : a;
 	for (k = 0; k < 3; k++) {
@@ -436,28 +502,61 @@ static void draw_plume (const struct missile *m)
 	}
 	w = fmaxf (2, fminf (lk->halo * sqrtf (dist2 (a, b)) / px_world (tail[2]), 160 * lk->halo)) * flick;
 	col (h[0], h[1], h[2], 0.85f);	/* the flame */
-	ribbon (tail, end, w, 0);
+	ribbon (tail, end, w, 0, 0);
 	col (0.7f + 0.3f * h[0], 0.7f + 0.3f * h[1], 0.7f + 0.3f * h[2], 1);	/* its white core, the nozzle */
-	ribbon (tail, core, w * lk->core / lk->halo, 0);
+	ribbon (tail, core, w * lk->core / lk->halo, 0, 0);
 	sprite (tail, 0.8f * w * px_world (tail[2]), 0);
+}
+
+/* the stretch of beam e from u0 to u1 of the way along it on screen, wa and wb
+ * pixels wide there, cut to the beam (1/z runs evenly along it on screen) */
+static void piece (const struct effect *e, float u0, float u1, float wa, float wb)
+{
+	float p[2][3], u[2] = { fmaxf (u0, 0), fminf (u1, 1) };
+	int i, k;
+	if (!(u[1] > u[0])) return;
+	for (i = 0; i < 2; i++) {
+		float t = u[i] * e->a[2] / ((1 - u[i]) * e->b[2] + u[i] * e->a[2]);
+		for (k = 0; k < 3; k++) p[i][k] = e->a[k] + (e->b[k] - e->a[k]) * t;
+	}
+	ribbon (p[0], p[1], wa + (wb - wa) * (u[0] - u0) / (u1 - u0), wa + (wb - wa) * (u[1] - u0) / (u1 - u0), 1);
 }
 
 static void draw_effect (const struct effect *e)
 {
-	float age = (float) (fx_ms - e->t0) / e->fade;
+	float age = (float) (fx_ms - e->t0) / e->fade, shim;
 	const float *c = e->rgb;
+	int i;
 	if (e->t != T_BEAM) {
 		col (c[0], c[1], c[2], 1 - age);
 		sprite (e->a, e->size * (1 + e->grow * age) * px_world (e->a[2]), 0);
 		return;
 	}
-	/* a beam is held bright, then gone: a halo round a near-white core */
 	c = e->lk->rgb;
-	age = (1 - age * age) * (e->lk->hz ? 0.75f + 0.25f * sinf (fx_ms * e->lk->hz * 0.00628f) : 1);
+	shim = e->lk->hz ? 0.75f + 0.25f * sinf (fx_ms * e->lk->hz * 0.00628f) : 1;
+	if (e->lk->shape == BOLT && !flat_lasers) {	/* a bolt: its head reaches the far end at 70% of its life, */
+		float u = 0.1f + 1.3f * age, h = 1 - 0.6f * fminf (u, 1);	/* its tapered trail sinks in after */
+		for (i = 0; i < 2; i++) {	/* halo, then near-white core */
+			float k = i ? 0.4f : 1, m = i ? 0.6f : 0, w = (i ? 1.4f * e->lk->core : e->lk->halo) * h;
+			col (k * c[0] + m, k * c[1] + m, k * c[2] + m, (1 - age * age * age * age) * shim);
+			piece (e, u - 0.3f, u, 0, w);
+			piece (e, u, u + 0.03f, w, 0);	/* a rounded nose */
+		}
+		return;
+	}
+	/* a beam is held bright, then gone: a halo round a near-white core */
+	age = (1 - age * age) * shim;
 	col (c[0], c[1], c[2], age);
-	ribbon (e->a, e->b, e->lk->halo, e->lk->halo * 0.35f);
+	ribbon (e->a, e->b, e->lk->halo, e->lk->halo * 0.35f, 0);
 	col (0.4f * c[0] + 0.6f, 0.4f * c[1] + 0.6f, 0.4f * c[2] + 0.6f, age);
-	ribbon (e->a, e->b, e->lk->core, e->lk->core * 0.48f);
+	ribbon (e->a, e->b, e->lk->core, e->lk->core * 0.48f, 0);
+	for (i = 0; i < 4 && !flat_lasers; i++) {	/* a beam's two hot spots, glow then core, run out along it, a length in 400 ms */
+		float u = fmodf (fx_ms * 0.0025f + 0.5f * (i >> 1), 1), k = i & 1 ? 0.2f : 1, m = 1 - k;
+		float w = (i & 1 ? 2.5f * e->lk->core : 0.7f * e->lk->halo) * (1 - 0.65f * u);
+		col (k * c[0] + m, k * c[1] + m, k * c[2] + m, 0.8f * age);
+		piece (e, u - 0.15f, u, 0, w);
+		piece (e, u, u + 0.15f, w, 0);
+	}
 }
 
 void fx_frame_end (void)
