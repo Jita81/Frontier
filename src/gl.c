@@ -41,6 +41,7 @@ typedef void (*_GLUfuncptr)();
 #include "../m68000.h"
 #include "screen.h"
 #include "planet.h"
+#include "worlds.h"
 #include "hdtext.h"
 #include "hdstill.h"
 #include "hdface.h"
@@ -2491,7 +2492,7 @@ static void hull_make_class (int cls, int shader)
 {
 	const struct HullClass *c = &hull_classes[cls];
 	int n = 512, i;
-	unsigned char *lum = hull_class_tile (cls, &n), *buf;
+	unsigned char *lum = c->tile ? hull_class_tile (cls, &n) : NULL, *buf;
 	int tiled = lum != NULL;
 	Uint32 t = SDL_GetTicks ();
 
@@ -2663,8 +2664,26 @@ static inline int st_readable (unsigned int addr, unsigned int len);
  * where the game's are ships. So the key is the word, the table (hull.h,
  * HULL_TAB_*) and the top bit; 0 when the state is not what that expects
  * (every read is checked: the 68k's memory has no guard).
+ *
+ * In the intro's scenes (its records 34 to 70: not its title 4, its logo
+ * 12, nor 72, the credits and the start menu) a part is keyed by its own
+ * model instead, marked HULL_TAB_SCENE: a scene draws its ships as parts
+ * (sub-objects, hull_part_word), which carry the scene's record, so the
+ * ship and the ground under it would share a key. Not with --classic-ui,
+ * --flat-hulls, --flat-fx or --pixel-*: the key is then the record's, as
+ * in the base, and no HULL_TAB_SCENE row of hull_models[] is reached. The
+ * game's own parts, and those of the menu's station, keep their object's
+ * key (a hangar's doors). hull_record_key is the record's key, always.
  */
-static unsigned int hull_model_key (void)
+static int hull_part_word (unsigned int key);
+/* the flags that keep the base look keep the intro's as it was */
+static int hull_intro_base (void)
+{
+	return classic_ui || flat_hulls || flat_fx || pixel_art || pixel_text || pixel_faces;
+}
+#define HULL_INTRO_SCENE(r)	((r) >= 34 && (r) <= 70)
+
+static unsigned int hull_record_key (void)
 {
 	unsigned int a6 = GetReg (REG_A6), rec, gd, tab;
 
@@ -2677,9 +2696,29 @@ static unsigned int hull_model_key (void)
 	return 0x80000000u | tab | STMemory_ReadWord (rec + 90);
 }
 
+static unsigned int hull_model_key (void)
+{
+	unsigned int key = hull_record_key ();
+	int w;
+
+	if ((key & HULL_TAB_INTRO) && HULL_INTRO_SCENE (key & 0xffff) && !hull_intro_base ()) {
+		key |= HULL_TAB_SCENE;
+		if ((w = hull_part_word (key)) >= 0) key = (key & ~0xffffu) | w;
+	}
+	return key;
+}
+
+/* hull.h: the model word of what an intro scene is drawing */
+unsigned int hull_intro_part (void)
+{
+	unsigned int key = hull_model_key ();
+
+	return key & HULL_TAB_SCENE ? key & 0xffff : 0;	/* 0 for the base intro */
+}
+
 static int hull_model_unit (unsigned int key);
 
-#define HULL_SEEN	64
+#define HULL_SEEN	256	/* the intro's scenes key some 70 parts, the game more */
 static void hull_log_model (unsigned int key)
 {
 	static unsigned int seen[HULL_SEEN];
@@ -2688,8 +2727,14 @@ static void hull_log_model (unsigned int key)
 
 	for (i = 0; i < nseen; i++)
 		if (seen[i] == key) return;
-	if (nseen < HULL_SEEN) seen[nseen++] = key;
-	const char *tab = key & HULL_TAB_INTRO ? " (intro's table)" : key & HULL_TAB_OTHER ? " (other table)" : "";
+	if (nseen == HULL_SEEN) return;	/* full: once a model, never a line a frame */
+	seen[nseen++] = key;
+	unsigned int a6 = GetReg (REG_A6), rec = st_readable (a6 - 212, 4) ? STMemory_ReadLong (a6 - 212) : 0;
+	unsigned int rw = st_readable (rec + 90, 2) ? STMemory_ReadWord (rec + 90) : key & 0xffff;
+	char tab[48];
+	snprintf (tab, sizeof tab, "%s%s", key & HULL_TAB_INTRO ? " (intro's table)" : key & HULL_TAB_OTHER ? " (other table)" : "",
+		  rw != (key & 0xffff) ? " a part of" : "");
+	if (rw != (key & 0xffff)) snprintf (tab + strlen (tab), sizeof tab - strlen (tab), " %u", rw);
 	if (hull_key_listed (key)) {
 		float sc, off[2];
 		fprintf (stderr, "hull: model %u%s -> class %s (style 4 profile %s), unit 2^%d\n",
@@ -2775,7 +2820,7 @@ static int hull_frame_words (unsigned int f, int V[9], int o[3], int *s)
 static int hull_model_frame (unsigned int key, double M[9], int o[3], double Mo[9], int oo[3])
 {
 	unsigned int a6 = GetReg (REG_A6), gd, mh, rec, top;
-	int V[9], Vt[9], ot[3], s, h10, j, depth;
+	int V[9], Vt[9], ot[3], s, h10, j, depth, own;
 
 	if (!HULL_KEY_OK (key) || a6 > MEM_SIZE || !st_readable (a6 - 212, 4) ||
 	    !st_readable (__DL973c_game_data, 4))
@@ -2786,10 +2831,13 @@ static int hull_model_frame (unsigned int key, double M[9], int o[3], double Mo[
 	if (!st_readable (mh + 10, 2)) return 0;
 	h10 = (short) STMemory_ReadWord (mh + 10);
 	if (!hull_frame_words (a6, V, o, &s)) return 0;
-	/* the object's own frame: up the links while they carry its record */
+	/* the object's own frame: up the links while they carry its record;
+	 * a part keyed by its own model (the intro's, hull_model_key) is one */
 	rec = STMemory_ReadLong (a6 - 212);
 	top = a6;
-	for (depth = 0; depth < 8; depth++) {
+	if (!st_readable (rec + 90, 2)) return 0;
+	own = STMemory_ReadWord (rec + 90) != (key & 0xffff);
+	for (depth = 0; depth < 8 && !own; depth++) {
 		unsigned int up;
 		if (!st_readable (top, 4)) return 0;
 		up = STMemory_ReadLong (top);
@@ -2826,7 +2874,7 @@ static int hull_model_frame (unsigned int key, double M[9], int o[3], double Mo[
  */
 static int hull_part_word (unsigned int key)
 {
-	static unsigned int kh[32];
+	static unsigned int kh[32], kg[32];
 	static int kw[32], kn;
 	unsigned int a6 = GetReg (REG_A6), gd, hdr, mh;
 	int i, w = -2;
@@ -2840,13 +2888,14 @@ static int hull_part_word (unsigned int key)
 	mh = gd + STMemory_ReadWord (gd + (key & 0xffff));
 	if (hdr == mh) return -1;
 	for (i = 0; i < kn && i < 32; i++)
-		if (kh[i] == hdr) return kw[i];
+		if (kh[i] == hdr && kg[i] == gd) return kw[i];
 	for (i = 0; i < 1024 && st_readable (gd + i, 2); i += 2)
 		if (gd + STMemory_ReadWord (gd + i) == hdr) {
 			w = i;
 			break;
 		}
 	kh[kn & 31] = hdr;
+	kg[kn & 31] = gd;
 	kw[kn & 31] = w;
 	kn++;
 	return w;
@@ -3696,6 +3745,13 @@ static int hull_paint5 (double p[][3], int n, const struct HullCtx *cx, int host
 	}
 	/* the hangar's floor and ceiling are its deck plating */
 	if (cls == HC_HANGAR && cx->wok && hull_obj_axis (cx->w, n) == HULL_DECK_AXIS) cls = HC_DECK;
+	/* a port's apron and roofs, a face too small for a storey or two (a
+	 * sign board, a kiosk) and a face with no model frame stay flat */
+	if (cls == HC_BUILDING && (!cx->wok || hull_obj_axis (cx->w, n) == HULL_DECK_AXIS ||
+				   hull_obj_span (cx->w, n) < 0.6 * hull_classes[cls].panel * sc)) {
+		hull_end ();
+		return 0;
+	}
 	if (hull_log_on () && (mark || pure || lamp || (host && !calm && cls != HC_STATION)))
 		hull_log_face (cx->key, cx->seed, rgb, mark ? "sign/marking (yellow paint), drawn flat" :
 			       pure ? "lamp, window or lit sign (pure colour), drawn flat" :
@@ -3821,6 +3877,7 @@ static int hull_complex_begin (GLdouble c[][3], int n, void **data)
 	hull_chain = calm;
 	if (!hull_cc_on || hull_style < 5 || flat_hulls || fx_tagged () || n < 3) return 0;
 	cls = hull_class_of_key (hull_cc.key, &sc, off);
+	if (cls == HC_BUILDING) return 0;	/* a port's ground, roads and hills */
 	mx = mn = c8[0];
 	for (k = 1; k < 3; k++) {
 		if (c8[k] > mx) mx = c8[k];
@@ -4112,7 +4169,7 @@ void Nu_PutTwinklyCircle ()
 	znode_wrcolor (GetReg (REG_D6));
 	put_star ();
 	/* a halo for a light (a station's, a port's), never for a star */
-	key = flat_lights ? 0 : hull_model_key ();
+	key = flat_lights ? 0 : hull_record_key ();	/* the record's: an intro part's word is no star */
 	znode_wrlong (key && !is_star (key & 0xffff));
 }
 void Nu_DrawTwinklyCircle (void **data)
@@ -4383,13 +4440,13 @@ static void planet_sun (const struct PlanetPrim *p, double sun[3])
 }
 
 /* Turn a patch of feature codes into an RGB texture, for one light zone. */
-static void planet_bake (GLuint tex, const unsigned char *codes, int n, int light_code,
-			 const unsigned short table[16])
+static void planet_bake (GLuint tex, const unsigned char *codes, const struct PPatch *pt,
+			 int light_code, const unsigned short table[16], struct PSurf *s)
 {
+	int n = pt->n;
 	static unsigned char *rgb;
 	static int rgb_size;
 	unsigned char pal[16][3];
-	unsigned char *o;
 	int i;
 
 	for (i = 0; i < 16; i++) {
@@ -4405,13 +4462,7 @@ static void planet_bake (GLuint tex, const unsigned char *codes, int n, int ligh
 		rgb = nrgb;
 		rgb_size = n*n*3;
 	}
-	o = rgb;
-	for (i = 0; i < n*n; i++) {
-		const unsigned char *c = pal[(*codes++ >> 2) & 15];
-		*o++ = c[0];
-		*o++ = c[1];
-		*o++ = c[2];
-	}
+	worlds_bake (rgb, codes, pt, s, (const unsigned char (*)[3]) pal);
 
 	glBindTexture (GL_TEXTURE_2D, tex);
 	glPixelStorei (GL_UNPACK_ALIGNMENT, 1);
@@ -4440,6 +4491,7 @@ static void planet_forget_textures (void)
 {
 	int i, f;
 
+	worlds_forget (NULL);
 	for (i = 0; i < PLANET_TEX_CACHE; i++) {
 		struct PlanetTex *t = &planet_tex[i];
 		if (!t->used) continue;
@@ -4527,6 +4579,7 @@ static struct PlanetTex *planet_get_tex (const struct PlanetPrim *p)
 			struct PPatch pt;
 			planet_face_patch (i, &pt);
 			psurf_raster (s, &pt, t->face_codes[i]);
+			worlds_forget (t->face_codes[i]);
 		}
 	}
 	t->patch_valid = 0;
@@ -4540,13 +4593,17 @@ static GLuint planet_zone_texture (struct PlanetTex *t, int f, int z, int light_
 {
 	if (f < 0) {
 		if (t->patch_code[z] != light_code) {
-			planet_bake (t->patch_tex[z], t->patch_codes, t->patch.n, light_code, t->table);
+			planet_bake (t->patch_tex[z], t->patch_codes, &t->patch, light_code, t->table,
+				     psurf_get (t->feat_addr, t->seed, t->radius_word, t->detail));
 			t->patch_code[z] = light_code;
 		}
 		return t->patch_tex[z];
 	}
 	if (t->face_code[f][z] != light_code) {
-		planet_bake (t->face_tex[f][z], t->face_codes[f], PLANET_FACE_RES, light_code, t->table);
+		struct PPatch pt;
+		planet_face_patch (f, &pt);
+		planet_bake (t->face_tex[f][z], t->face_codes[f], &pt, light_code, t->table,
+			     psurf_get (t->feat_addr, t->seed, t->radius_word, t->detail));
 		t->face_code[f][z] = light_code;
 	}
 	return t->face_tex[f][z];
@@ -4586,6 +4643,7 @@ static void planet_update_patch (struct PlanetTex *t, const double down[3], doub
 	t->patch.n = PLANET_PATCH_RES;
 	psurf_raster (psurf_get (t->feat_addr, t->seed, t->radius_word, t->detail),
 		      &t->patch, t->patch_codes);
+	worlds_forget (t->patch_codes);
 	t->patch_valid = 1;
 	for (z = 0; z < PLANET_MAX_ZONES; z++) t->patch_code[z] = -1;
 }
@@ -5547,6 +5605,7 @@ static int circle_slices (double size, double z)
 #define A6_HYPER_LEFT	722	/* long: transit time left */
 #define A6_HYPER_TOTAL	13882	/* long: the transit's time */
 #define HYPERCLOUD	0xba	/* the cloud's model word (hull_model_key) */
+#define HYPERCLOUD_INTRO	0xd6	/* the intro's, in its scenes (hull_intro_part) */
 #define BLOB_HYPER	0x80000000u	/* on a blob's colour, a circle's tag word: one of the cloud's */
 
 static int hyper_hd (void)
@@ -5557,7 +5616,8 @@ static int hyper_hd (void)
 /* at a disc's Put: BLOB_HYPER when it is one of a hypercloud's */
 static unsigned int hyper_tag (void)
 {
-	return hyper_hd () && hull_model_key () == (0x80000000u | HYPERCLOUD) ? BLOB_HYPER : 0;
+	return hyper_hd () && (hull_model_key () == (0x80000000u | HYPERCLOUD) ||
+			       hull_intro_part () == HYPERCLOUD_INTRO) ? BLOB_HYPER : 0;
 }
 
 void Nu_PutCircle ()
