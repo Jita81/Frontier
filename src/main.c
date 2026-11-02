@@ -52,6 +52,7 @@ int delta_x, delta_y, abs_delta_x, abs_delta_y;
 int flat_fx = 0;	/* --flat-fx: no HD weapon effects (fx.c); both renderers link this */
 int flat_biomes = 0;	/* --flat-biomes: flat seas, no coasts (worlds.c) */
 int flat_explosions = 0;	/* --flat-explosions: the base explosions, other HD weapon effects kept */
+int flat_buildings = 0;	/* --flat-buildings: a surface port's buildings unplated (hull.c) */
 int flat_lights = 0;	/* --flat-lights: no halo round the game's lights (gl.c) */
 int flat_lasers = 0;	/* --flat-lasers: every laser one plain ribbon, as before bolts and hot cores */
 int flat_missiles = 0;	/* --flat-missiles: a missile's plume only near its smoke, as before */
@@ -230,6 +231,8 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --flat-planets        Hard light zones and flat atmosphere rings.\n"
                "  --flat-biomes         Flat seas: no sea depth or beaches.\n"
                "  --flat-stars          No corona round the stars.\n"
+               "  --flat-buildings      A surface port's buildings without plating\n"
+               "                        and windows.\n"
                "  --flat-rings          The game's flat planetary rings.\n"
                "  --flat-lights         The game's lights without their soft halo.\n"
                "  --pixel-text          Keep the original bitmap font (no HD text;\n"
@@ -270,6 +273,8 @@ void Main_ReadParameters(int argc, char *argv[])
 		flat_biomes = 1;
 	  else if (!strcmp(argv[i], "--flat-stars"))
 		flat_stars = 1;
+	  else if (!strcmp(argv[i], "--flat-buildings"))
+		flat_buildings = 1;
 	  else if (!strcmp(argv[i], "--flat-rings"))
 		flat_rings = 1;
 	  else if (!strcmp(argv[i], "--flat-lights"))

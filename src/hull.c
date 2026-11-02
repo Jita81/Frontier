@@ -15,6 +15,8 @@
 #include <string.h>
 #include "hull.h"
 
+extern int flat_buildings, hull_style;	/* main.c, gl.c */
+
 /*
  * Profiles. Style 1 to 3 use HP_GENERIC for every ship; style 4 picks one
  * of the other four per model (hull_models, below). The averages are kept
@@ -28,6 +30,7 @@ const struct HullProfile hull_profiles[HP_N] = {
 	{ "trader",	0x3003,	0.08, 0.32, 0.60, 0.18, 0.14, 0.24, 0.10, 0.60, 0.85, 0.08, 1.00, 0.30, 18,  0.35, 0.35 },
 	{ "military",	0x4004,	0.07, 0.28, 0.80, 0.16, 0.20, 0.08, 0.02, 0.15, 0.12, 0.03, 1.25, 0.60, 60,  0.50, 0.00 },
 	{ "station",	0x5005,	0.08, 0.32, 1.00, 0.16, 0.16, 0.26, 0.12, 0.45, 0.60, 0.07, 1.10, 0.25, 14,  0.45, 0.30 },
+	{ "building",	0x6006,	0.25, 0.75, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.15, 0.08, 0.60, 0.25, 16,  0.35, 0.50 },
 };
 
 /*
@@ -48,6 +51,9 @@ const struct HullClass hull_classes[HC_N] = {
 	{ "station",	"hull/station.png",	HP_STATION,	131072,	0.10, 0.18, 0.25, 0.15, 1.00, 0.25, 14, 0.40, 0.10, 2.30 },
 	{ "hangar",	"hull/hangar.png",	HP_STATION,	49152,	0.12, 0.16, 0.30, 0.05, 0.80, 0.20, 12, 0.40, 0.35, 0 },
 	{ "deck",	"hull/deck.png",	HP_STATION,	32768,	0.12, 0.16, 0.40, 0.10, 0.80, 0.30, 16, 0.40, 0.35, 0 },
+	/* no tile: always the seeded storeys of HP_BUILDING; tint warms the
+	 * lit windows (their grime) */
+	{ "building",	NULL,			HP_BUILDING,	65536,	0, 0, 0, 0,	0.60, 0.25, 16, 0.35, 0.50, 2.30 },
 };
 
 /*
@@ -122,6 +128,7 @@ static const struct {
 	{ 288, HC_HANGAR,	1.0f },	/* hangar interior */
 	{ 290, HC_HANGAR,	1.0f },	/* hangar interior part */
 	{ 294, HC_HANGAR,	1.0f },	/* hangar interior part */
+	{ 96,  HC_BUILDING,	1.0f },	/* surface port: its buildings, apron and sign boards */
 };
 #define HULL_NMODELS	(int) (sizeof hull_models / sizeof hull_models[0])
 
@@ -130,7 +137,9 @@ static int hull_model_row (unsigned int key)
 	int i;
 	if (!HULL_KEY_OK (key)) return -1;
 	for (i = 0; i < HULL_NMODELS; i++)
-		if (hull_models[i].type == HULL_KEY_MODEL (key)) return i;
+		if (hull_models[i].type == HULL_KEY_MODEL (key))
+			/* buildings: style 5 only, and not with --flat-buildings */
+			return hull_models[i].cls == HC_BUILDING && (flat_buildings || hull_style < 5) ? -1 : i;
 	return -1;
 }
 
@@ -503,6 +512,52 @@ static void paint_panel (const struct Panel *pl, const struct HullProfile *pr, i
 		rivets (pl);
 }
 
+/* The building profile: four storeys to the tile, each a row of concrete
+ * or metal slabs (faint seams between them) with a strip of windows. Which
+ * windows are lit is a hash of the seed, never the game's; HZ marks them
+ * (hull_bake turns the mark into a little warm grime). */
+static void paint_storeys (unsigned int seed)
+{
+	int sh = N / 4, r, x, y;
+
+	for (r = 0; r < 4; r++) {
+		int pos = 0, k = 0, off = hull_mix (seed + r) % N, y0 = r * sh + (int) (0.40f * sh);
+		int wh = (int) (0.36f * sh), pane = S (48);
+		while (pos < N) {
+			unsigned int h = hull_mix (seed + r * 64 + k++);
+			int w = N / 4 * (1 + h % 3), metal = (h >> 8) % 3 == 0;
+			float tone = 1 + 0.08f * (((h >> 12) & 255) / 127.5f - 1);
+			if (N - pos < w + N / 8) w = N - pos;
+			for (y = 0; y < sh; y++)
+				for (x = 0; x < w; x++) {
+					float s = sstep (0.5f, 2.0f, imin4 (x, w - 1 - x, y, sh - 1 - y) / SC);
+					int i = IX (off + pos + x, r * sh + y);
+					float g = metal ? 1 : 0.92f + 0.16f * vnoise ((float) (off + pos + x) / N,
+										 (float) (r * sh + y) / N, 64, 64, h);
+					Hh[i] = -1.2f + 1.2f * s;
+					AL[i] = tone * g * (0.88f + 0.12f * s);
+					GS[i] = metal ? 0.5f : 0.15f;
+				}
+			pos += w;
+		}
+		for (y = 0; y < wh; y++)
+			for (x = 0; x < N; x++) {
+				int px = x % pane, i = IX (x, y0 + y);
+				int lit = (hull_mix (seed * 31 + r * 977 + x / pane) & 3) != 0 &&
+					  (hull_mix (seed + r * 7) & 1);
+				if (px < S (4) || y < S (3) || y >= wh - S (3)) {	/* frame, mullion */
+					Hh[i] -= 0.3f;
+					AL[i] *= 0.8f;
+					continue;
+				}
+				Hh[i] = -2.0f;
+				AL[i] = lit ? 1.4f : 0.8f;
+				GS[i] = 0.9f;
+				HZ[i] = lit;
+			}
+	}
+}
+
 /* ---- maps ---- */
 
 /* a box blur of radius r on the torus */
@@ -556,7 +611,8 @@ void hull_bake (int prof, int level, int n, unsigned char *t0, unsigned char *t1
 
 	npanels = 0;
 	lay = hull_mix (seed);
-	if (level < 2) layout_rows ();
+	if (prof == HP_BUILDING) paint_storeys (seed);
+	else if (level < 2) layout_rows ();
 	else layout_kd (0, 0, N, N, pr, 0);
 	for (p = 0; p < npanels; p++) {
 		rs = hull_mix (seed + 31 * p);
@@ -598,6 +654,8 @@ void hull_bake (int prof, int level, int n, unsigned char *t0, unsigned char *t1
 				    (h & 255) / 255.0f < 0.25f + 0.6f * pr->wear)
 					CH[i] = 1;
 			}
+		for (i = 0; prof == HP_BUILDING && i < cnt; i++)	/* lit windows: a touch warm */
+			GR[i] += 0.3f * HZ[i], HZ[i] = 0;
 		scratches = (int) (160 * pr->wear * SC * SC);
 		rs = hull_mix (seed + 99);
 		for (p = 0; p < scratches; p++) {
