@@ -25,7 +25,7 @@ awk '/^static inline void split_rgb444b/{f=1} f{print} f&&/^}/{exit}' \
 $CC $CFLAGS -o "$out/norm" "$here/test_norm_radius.c" "$top/src/planet.c" -lm
 $CC $CFLAGS -o "$out/fuzz" "$here/fuzz_features.c" "$top/src/planet.c" -lm
 $CC $CFLAGS -Wno-pointer-arith -Wno-deprecated-declarations -I"$out" -I"$here" \
-	-o "$out/render" "$here/test_render.c" "$top/src/planet.c" -lm
+	-o "$out/render" "$here/test_render.c" "$top/src/planet.c" "$top/src/worlds.c" -lm
 
 "$out/norm"
 "$out/fuzz" ${FUZZ_ITERS:-10000}

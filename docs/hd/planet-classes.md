@@ -92,8 +92,8 @@ is any texel whose 4-neighbour differs in being water.
 - The distance is negative in water and positive elsewhere.
 - It is ±32767 when the raster has no coast.
 
-It is computed in the same pass as the classes and kept for the next slice.
-Nothing draws it yet.
+It is computed in the same pass as the classes. `src/worlds.c` draws from it:
+see [What is drawn](#what-is-drawn-sea-depth-and-beaches).
 
 ## Switches
 
@@ -113,3 +113,100 @@ asks for `psurf_classify`. Measured on an M-series Mac:
 
 - a 512² cube face: about 1.4 ms;
 - a 1024² ground patch: about 5 ms.
+
+## What is drawn: sea depth and beaches
+
+`src/worlds.c` (W3, slice 1) shades the planet textures from the classes
+and the coast distance. `planet_bake` in `src/gl.c` calls `worlds_bake`
+to turn the codes into colours for one light zone, shaded.
+
+- **Sea depth.** Water near a coast is lighter and a little turquoise
+  (the shallows). It deepens to a slightly darker blue over 0.045 radians
+  of arc from the coast. Water with no coast in reach is open sea. A small
+  value noise, fixed to the body and seeded by the planet's own seed, moves
+  the band edge, so it is not a perfect contour line.
+- **Beaches.** On a terran or ocean world whose codes include both water
+  and land, the land along the shore takes a thin sand rim, about 0.008
+  radians wide (two face texels at a face centre). Ice worlds, bare worlds
+  and the rest get none.
+- **Untouched.** Ice, crater and 'other' codes are drawn as before, and so
+  is every world with no water.
+
+The rules every term keeps:
+
+- The coastline never moves. Only colours change, and only from the game's
+  own planet data.
+- Each channel moves by at most a quarter of the texel's brightest channel.
+  The night and twilight zones therefore stay as dark as the game draws
+  them.
+- The bands are set in radians of the surface, not in texels, and a texel
+  distance is scaled by the gnomonic scale where it lies. So the 512-pixel
+  cube faces and the 1024-pixel ground patch draw the same band widths.
+- The distances come from a raster padded beyond each edge, by up to a
+  sixteenth of its size. So a coast just over a cube face edge still makes
+  shallows, and there is no seam at the edge.
+- Classes and distances are worked out once per raster, at its first
+  bake. The other light zones reuse them.
+- A fine ground patch (1024², under about 0.3 radians across) is too small
+  for its own padding to reach a coast 0.045 radians away. It reads its
+  distances instead from a coarser probe raster (512², centred on the
+  patch, wide enough to cover the patch plus the shallows band). The probe
+  is kept while the patch stays inside it, and also whenever the patch is
+  the same patch again (the same centre, axes and size, bit for bit). The
+  second rule is the one that holds low down: the patch centre the game
+  gives is not quite a unit vector, so the inside test never passes, yet
+  the game rasters the very same patch again on most frames. The probe is
+  built again when the patch changes or the planet changes.
+  So the shallows seen from orbit are the shallows near the ground. The
+  probe is sampled at its nearest texel, so close to the ground the band
+  edge is blocky at the probe's scale.
+- The patch reads the probe in 32×32 blocks. A block whose four corners
+  (and so every texel: the map from patch to probe is projective) fall in
+  one probe texel takes that texel's value once. When the whole patch lies
+  in one probe texel, as it does landed, the shade follows from the code
+  alone: `worlds_bake` builds a 16-entry shaded palette and expands the
+  codes with it, at the cost of the plain expansion. Otherwise it keeps a
+  table of each (code, shade value) colour it has worked out. The texels
+  drawn are the same as shading each one in turn.
+
+`--flat-biomes` turns all of this off: `worlds_bake` expands the codes
+with the plain palette and reads nothing else, so the textures are the ones the build before
+it uploads.
+
+### Cost of the shading
+
+Measured on an M-series Mac with a timing build, at orbit around a sea
+world, with other game processes running on the same machine:
+
+| Step | Time |
+| --- | --- |
+| First bake of a 512² cube face: padded raster (576²) | 0.1 to 0.35 ms |
+| the same: classes and coast distance of the padded raster | 1.8 to 3.1 ms |
+| the same: shade map in all, with the noise | 4.4 to 6.3 ms |
+| Each later light zone of the same face (map reused) | 0.4 to 0.9 ms |
+| A world with no water | one class lookup per code, then nothing |
+
+The work runs once per raster: when a face is first drawn and each time
+the ground patch is rastered again.
+
+The tint on top of the plain palette expansion, per ground-patch bake (the
+timing build, about 80 s of play on a sea world with the `q1t` drive; the
+build before this change in brackets):
+
+| Phase | Tint per patch bake, mean |
+| --- | --- |
+| Landed | 0.001 ms (5.5 ms) |
+| Launch | 0.014 ms (5.2 ms) |
+| Low flight | 0.44 ms, p95 2.0 ms (3.2 ms) |
+| Cruise and landing | 0.008 ms (2.5 ms) |
+| Landed again | 0.002 ms (2.7 ms) |
+
+The game rasters the ground patch again on nearly every low frame (about
+50 bakes a second). Before, each of those built the shade map, and often
+the probe, again: about 5 ms a frame landed. Now the probe is kept for the
+same patch and the landed patch is one palette expansion. The output is
+byte for byte the same (checked on every bake of four full drives, about
+5,000 bakes each, and on 2,160 stress bakes).
+
+Memory: one byte a texel per raster kept (256 KB a face, 1 MB a ground
+patch), in up to 48 slots, plus the padded scratch buffers.
