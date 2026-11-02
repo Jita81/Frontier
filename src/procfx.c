@@ -137,6 +137,89 @@ int procfx_sky_put (float m[9])
 	return !flat_sky;
 }
 
+/* ---- layer 1b: the background stars ----------------------------------
+ *
+ * The game's background stars are the sky object's blobs: Nu_PutBlob while
+ * the object being drawn carries SKY_MODEL (L44200_DrawBGStars), a dim
+ * point (radius 2) under a brighter core (radius 0) for some.  Each is a
+ * view vertex some 50000 to 70000 units out; turned back by the object's
+ * rotation (its transpose) it is the star's direction in the sky's frame,
+ * steady to about 4e-5 radian from frame to frame however the view turns.
+ * Smooth value noise over that direction gives each star its look: the
+ * jitter moves it a few thousandths of a noise cell, so nothing ever pops,
+ * where a hash of a rounded direction would flip a star on a cell's edge.
+ * The blobs of the other objects (the dust that streams past the ship)
+ * keep the game's look. */
+#define STAR_CELLS	64.0f	/* noise cells per radian: the closest stars sit 1.5 apart */
+
+static float pf_smooth (float e0, float e1, float x)
+{
+	float t = (x - e0) / (e1 - e0);
+	t = t < 0 ? 0 : t > 1 ? 1 : t;
+	return t * t * (3 - 2 * t);
+}
+
+/* smooth value noise on the integer lattice, one field per salt, spread
+ * back to about uniform on [0, 1] (the blend of eight corners leaves it
+ * near normal, sd 0.185, so few stars would reach the tails) */
+static float pf_star_noise (const float p[3], unsigned int salt)
+{
+	float f[3], c[8];
+	int i[3], k;
+	unsigned int h;
+
+	for (k = 0; k < 3; k++) {
+		i[k] = (int) floorf (p[k]);
+		f[k] = pf_smooth (0, 1, p[k] - i[k]);
+	}
+	for (k = 0; k < 8; k++) {
+		h = (unsigned) (i[0] + (k & 1)) * 73856093u ^ (unsigned) (i[1] + (k >> 1 & 1)) * 19349663u
+		  ^ (unsigned) (i[2] + (k >> 2)) * 83492791u ^ salt * 2654435761u;
+		h ^= h >> 16; h *= 0x7feb352du; h ^= h >> 15; h *= 0x846ca68bu; h ^= h >> 16;
+		c[k] = (h & 0xffffff) / 16777216.0f;
+	}
+	for (k = 0; k < 4; k++) c[k] = c[2*k] + (c[2*k+1] - c[2*k]) * f[0];
+	for (k = 0; k < 2; k++) c[k] = c[2*k] + (c[2*k+1] - c[2*k]) * f[1];
+	return 0.5f + 0.5f * erff ((c[0] + (c[1] - c[0]) * f[2] - 0.5f) / 0.262f);
+}
+
+unsigned int procfx_starfield_put (unsigned int v)
+{
+	unsigned int a6 = (unsigned int) GetReg (REG_A6), rec;
+	float p[3], d[3], n = 0;
+	int j, k;
+
+	if (flat_starfield || !(rec = pf_record ()) || !rd_ok (a6 - FRAME_ROT, 18) || !rd_ok (v, 12)) return 0;
+	if ((STMemory_ReadWord (rec + OBJ_MODEL) & 0xffff) != SKY_MODEL) return 0;
+	for (k = 0; k < 3; k++) p[k] = (float) (int) STMemory_ReadLong (v + 4*k);
+	for (j = 0; j < 3; j++) {
+		for (d[j] = 0, k = 0; k < 3; k++)
+			d[j] += (short) STMemory_ReadWord (a6 - FRAME_ROT + 2*(3*j + k)) * p[k];
+		n += d[j] * d[j];
+	}
+	if (n <= 0) return 0;
+	for (n = STAR_CELLS / sqrtf (n), j = 0; j < 3; j++) d[j] *= n;
+	return 0x10000 | (unsigned) (255 * pf_star_noise (d, 1)) << 8 | (unsigned) (255 * pf_star_noise (d, 2));
+}
+
+/* Magnitude (u): most stars 0.72 to 0.95 of the game's grey, the top one
+ * in twenty up to 1.6 with a soft glow, the top one in a hundred half as
+ * large again.  Colour (t): a blackbody-like tint, orange-yellow through
+ * white to blue-white, a third of the stars plain white, low saturation. */
+float procfx_starfield_look (unsigned int tag, float rgb[3], float *glow)
+{
+	static const float warm[3] = { 1.18f, 0.96f, 0.72f }, cool[3] = { 0.84f, 0.96f, 1.20f };
+	float u = (tag >> 8 & 255) / 255.0f, t = (tag & 255) / 255.0f - 0.5f;
+	float b = 0.72f + 0.23f * u + 0.65f * pf_smooth (0.94f, 0.98f, u);
+	float w = pf_smooth (0.16f, 0.45f, fabsf (t));
+	const float *c = t < 0 ? warm : cool;
+	int k;
+
+	for (k = 0; k < 3; k++) rgb[k] = fminf (1, rgb[k] * b * (1 + (c[k] - 1) * w));
+	*glow = pf_smooth (0.94f, 0.97f, u);
+	return 1 + 0.5f * pf_smooth (0.985f, 0.995f, u);
+}
+
 /* m (as procfx_sky_put) as the eye-to-object matrix: GL eye (x, y, z) is
  * the game's view (x, y, -z) (znode_wrvertex), and the object's frame is
  * the transpose of its rotation applied to that */

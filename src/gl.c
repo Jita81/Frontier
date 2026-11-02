@@ -5547,6 +5547,7 @@ static int circle_slices (double size, double z)
 #define A6_HYPER_TOTAL	13882	/* long: the transit's time */
 #define HYPERCLOUD	0xba	/* the cloud's model word (hull_model_key) */
 #define BLOB_HYPER	0x80000000u	/* on a blob's colour, a circle's tag word: one of the cloud's */
+#define BLOB_SKY	0x40000000u	/* on a blob's colour: one of the background stars (procfx) */
 
 static int hyper_hd (void)
 {
@@ -5979,26 +5980,61 @@ void Nu_DrawOval (void **data)
 	glPopMatrix ();
 }
 
+/* A background star with its own magnitude and colour (procfx): the game's
+ * point (rad 0, or the dimmer rad 2 under some stars' core), and round the
+ * core of the brightest a soft glow out to 3 pixels at 1600x1200. */
+static void sky_star (const int *v, int rad, unsigned int c, unsigned int tag)
+{
+	float rgb[3] = { (c >> 8 & 15) / 15.0f, (c >> 4 & 15) / 15.0f, (c & 15) / 15.0f }, glow, size;
+	int k;
+
+	size = procfx_starfield_look (tag, rgb, &glow) * ((rad/2)+1) * px_scale ();
+	if (glow > 0 && rad < 2) {
+		glPushAttrib (GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_POINT_BIT);
+		glEnable (GL_BLEND);
+		glBlendFunc (GL_SRC_ALPHA, GL_ONE);
+		glEnable (GL_POINT_SMOOTH);
+		for (k = 3; k > 0; k--) {
+			glPointSize (size + 0.8f * k * px_scale ());
+			glColor4f (rgb[0], rgb[1], rgb[2], 0.35f * glow / k);
+			glBegin (GL_POINTS);
+				glVertex3iv (v);
+			glEnd ();
+		}
+		glPopAttrib ();
+	}
+	glColor3fv (rgb);
+	glPointSize (size);
+	glBegin (GL_POINTS);
+		glVertex3iv (v);
+	glEnd ();
+}
 void Nu_PutBlob ()
 {
+	unsigned int sky;
+
 	if (use_renderer == R_OLD) return;
 	put_fx ();
+	sky = procfx_starfield_put (GetReg (REG_A0)+4);
 	znode_wrlong (NU_BLOB);
 	znode_wrvertex (GetReg (REG_A0)+4);
-	znode_wrlong ((GetReg (REG_D0) & ~BLOB_HYPER) | hyper_tag ());
-	znode_wrlong (GetReg (REG_D1));
+	znode_wrlong ((GetReg (REG_D0) & ~(BLOB_HYPER | BLOB_SKY)) | hyper_tag () | (sky ? BLOB_SKY : 0));
+	/* a sky star's tag in the radius word's high half (unread otherwise) */
+	znode_wrlong (sky ? (GetReg (REG_D1) & 0xffff) | (sky & 0xffff) << 16 : GetReg (REG_D1));
 }
 void Nu_DrawBlob (void **data)
 {
 	int v1[3];
-	unsigned int r, g, b, c;
+	unsigned int r, g, b, c, tag;
 	int rad;
 	int edges;
 	
 	znode_rdvertex (data, v1);
 	c = znode_rdlong (data);
 	split_rgb444i (c, &r, &g, &b);
-	rad = znode_rdlong (data) & 0xffff;
+	rad = znode_rdlong (data);
+	tag = (unsigned int) rad >> 16;
+	rad &= 0xffff;
 	edges = rad+4;
 	if (fx_blob (v1, rad, r >> 24, g >> 24, b >> 24)) return;
 	
@@ -6016,6 +6052,10 @@ void Nu_DrawBlob (void **data)
 	}
 	if ((c & BLOB_HYPER) && rad >= 3) {
 		hyper_glow (v1, -0.002f * rad * v1[2], (c >> 8 & 15) / 15.0f, (c >> 4 & 15) / 15.0f, (c & 15) / 15.0f);
+		return;
+	}
+	if (c & BLOB_SKY) {
+		sky_star (v1, rad, c, tag);
 		return;
 	}
 	glColor3ui (r, g, b);

@@ -192,6 +192,48 @@ close detail), the corona and the rings are built.
   - A real hole contour.
   - The wireframe renderer is untouched.
 
+## Prototype notes: the background stars
+
+The game draws every background star as one flat grey point.  This layer
+gives each one a fixed magnitude and colour.  It is HD only and changes
+nothing in the core.
+
+- **Which blobs are stars.**  `L44200_DrawBGStars` draws the sky object
+  (model word `0xb0`).  Its stars reach the host as `Nu_PutBlob` calls
+  (gl.c:6012), about 220 a frame.  `procfx_starfield_put` (procfx.c:186)
+  reads the object's record and rotation, as `procfx_sky_put` does.  It
+  turns the blob's view vertex back into the sky's frame, so a star keeps
+  the same direction to about 4e-5 radian however the view turns.  The
+  blobs of other objects are left alone.  That includes the `0x76` dust
+  that streams past the ship.
+- **Identity.**  Smooth value noise runs over that direction, at 64 cells
+  per radian (`STAR_CELLS`, procfx.c:153; `pf_star_noise`, procfx.c:165).
+  It is remapped to about uniform.  A star's jitter moves it a few
+  thousandths of a cell, so nothing pops.  Two noise bytes go in the spare
+  high half of the blob's radius word, and `BLOB_SKY` goes on its colour
+  (gl.c:5550).  No RNG and no clock are involved.
+- **Magnitude.**  `procfx_starfield_look` (procfx.c:209) sets each star's
+  brightness:
+  - most stars are 0.72 to 0.95 of the game's grey;
+  - about 1 in 20 is brighter, up to 1.6, with a soft additive glow
+    reaching about 3 px at 1600x1200 (`sky_star`, gl.c:5986);
+  - about 1 in 100 is also drawn 1.5x larger.
+- **Colour.**  The second byte picks a warm (orange-yellow) or cool
+  (blue-white) tint.  Its strength rises from zero near the middle, so
+  most stars stay white.  The tint scales the channels at low saturation,
+  never toward green or purple.
+- **Switch.**  `--flat-starfield` (main.c:265) makes the put step return
+  0, so every blob is drawn as before.  `--flat-sky` keeps its meaning.
+- **Checked** (1600x1200, in flight, one paused frame redrawn with the
+  layer on, then off):
+  - only star pixels change;
+  - total star energy is 1.012x flat in the front view and 0.992x in the
+    rear view;
+  - the median star is 0.93x flat, the brightest 2.7x.
+  - The oracle end line is exact.
+- **Not yet checked.**  Frame time in flight; the numbers so far come
+  from the landed oracle route only.
+
 ## Prototype notes: the game-over backdrop
 
 - **What.**  The tombstone sequence used to sit on flat black.  It now
