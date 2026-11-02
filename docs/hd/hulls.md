@@ -241,6 +241,12 @@ Models (`hull_models[]`, by the whole type word and its table;
 | 58 | Eagle | armour, panels x1.5 (not measured) |
 | 66 | Python | freighter, panels x6 |
 | 70 | Transporter | freighter, panels x6 (not measured) |
+| 22 | small twin-pod utility hauler | civilian, panels x1.5 |
+| 48 | small flat wedge trader | civilian, panels x3 |
+| 54 | faceted armed wedge, toothed nose | armour, panels x8 |
+| 60 | swept-wing passenger transport | civilian, panels x6 |
+| 62 | long faceted hexagonal hauler | freighter, panels x6 |
+| 72 | oval disc freighter, four drives | freighter, panels x8 |
 | intro's 72 | the orbital station behind the menu | station |
 | 80 | orbital station outside, close up | station |
 | 82 | launch structure | station |
@@ -255,6 +261,30 @@ times across a face and read as crazy paving. The fighters use the armour
 tile: the fighter tile's fine diagonal weave, once big enough to see,
 read as wood grain on an orange Krait.
 
+### Census (B2, slice 1)
+
+`FE2_HULL_LOG=1` names each model once a session, so the count is the
+number of census sessions (of ten: three traffic routes,
+the docked start, and six shipyard visits at two surface
+ports) that met the word, not frames. Each ship was then opened in the
+shipyard's view and its scale set by eye, base against branch, to one to
+one and a half tiles across its biggest face.
+
+| word | shape and role | unit | sessions | where | class | panels |
+|---|---|---|---|---|---|---|
+| 22 | small twin-pod utility hauler (cargo boxes slung between twin cones) | 2^7 | 1 | shipyard | civilian | x1.5 |
+| 48 | small flat tan wedge trader | 2^9 | 1 | shipyard | civilian | x3 |
+| 54 | tan faceted armed wedge, toothed nose | 2^11 | 1 | shipyard | armour | x8 |
+| 60 | white swept-wing passenger transport | 2^10 | 1 | shipyard | civilian | x6 |
+| 62 | long faceted hexagonal hauler | 2^10 | 1 | shipyard | freighter | x6 |
+| 72 | grey oval disc freighter, four drive glows | 2^11 | 1 | shipyard | freighter | x8 |
+| 76 | giant blocky grey bulk freighter | 2^10 | 1 | shipyard | not listed (flat faces stayed flat) | - |
+| 10, 12 | tiny stubs met at a surface launch | 2^7 | 2, 1 | launch | not listed | - |
+
+Traffic met in the three routes was the listed ships only; none of the
+new words was met in flight, so the proof is shipyard close-ups. The
+other orbital station types (86, 88) were not met.
+
 - **Adding a model:** add one line.
 - **Adding a class:**
   1. Make a tile (below).
@@ -264,11 +294,17 @@ read as wood grain on an orange Krait.
 Not listed, so drawn flat:
 - game table 32 (the landing pad and the landed ship's markings) and 198
   (the port's clouds, not a city as this page used to say);
-- game table 12 and 10 (unit 2^7), met only during a lift-off; not
-  identified;
-- game table 72: its unit (2^11) is a ship's, not a station's; it was not
-  seen in a capture and is not guessed at;
-- game table 176 (unit 2^0), seen beside the bay; not identified;
+- game table 76 (unit 2^10), a giant blocky bulk freighter: plated, its
+  biggest faces stayed flat at x6 and x12 (only its pods took the tile);
+  its record is a 34-byte stub that draws other models, so the census
+  left it out;
+- game table 12 and 10 (unit 2^7, 34-byte stubs), met only during a
+  lift-off; not identified;
+- game table 86 and 88 (units 2^13 and 2^16): by the backdrop code's
+  orbital range (`hdback.c`, port models 84 to 88) the other orbital
+  station types, but no census route reached one, so they are not listed;
+- game table 176 (unit 2^0), seen beside the bay, and 98 and 148 (ground,
+  around a surface port); not identified;
 - the intro's 4 (the title), 12, 34 (the banner), 36, 38, 40 to 54 (its
   scenes, the city among them) and every other intro word but 72 and the
   scene rows below.

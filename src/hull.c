@@ -113,6 +113,13 @@ static const struct {
 	{ 52,  HC_CIVIL,	3.0f },	/* Cobra Mk III */
 	{ 56,  HC_ARMOUR,	5.0f },	/* Asp */
 	{ 58,  HC_ARMOUR,	1.5f },	/* Eagle */
+	/* B2: more ships, met in the census (docs/hd/hulls.md), by shape and role */
+	{ 22,  HC_CIVIL,	1.5f },	/* small twin-pod utility hauler */
+	{ 48,  HC_CIVIL,	3.0f },	/* small flat wedge trader */
+	{ 54,  HC_ARMOUR,	8.0f },	/* faceted armed wedge, toothed nose */
+	{ 60,  HC_CIVIL,	6.0f },	/* swept-wing passenger transport */
+	{ 62,  HC_FREIGHT,	6.0f },	/* long faceted hexagonal hauler */
+	{ 72,  HC_FREIGHT,	8.0f },	/* oval disc freighter, four drives */
 	{ 66,  HC_FREIGHT,	6.0f },	/* Python */
 	{ 70,  HC_FREIGHT,	6.0f },	/* Transporter */
 	{ HULL_TAB_INTRO | 72, HC_STATION, 1.0f },	/* the orbital station behind the menu */
