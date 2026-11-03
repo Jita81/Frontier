@@ -2550,7 +2550,9 @@ static void hull_make_class (int cls, int shader)
 	int tiled = lum != NULL;
 	Uint32 t = SDL_GetTicks ();
 
-	if (!lum) n = 512;
+	/* B10's small objects: a quarter of the bake (a texel per model unit at
+	 * panel 256), so the first sight of a canister costs no dropped frame */
+	if (!lum) n = cls == HC_CARGO || cls == HC_CAPSULE ? 256 : 512;
 	buf = malloc ((size_t) n * n * 8);
 	if (!buf) {
 		free (lum);
@@ -3562,10 +3564,16 @@ static void hull_begin_shader (int prof, int level, int calm)
 static int hull_begin5 (int cls, int calm)
 {
 	const struct HullClass *c = &hull_classes[cls];
-	int cur = 1000 + cls * 2 + calm;
+	int cur = 1000 + cls * 2 + calm, k;
 
 	if (hull_on == 2 && hull_cur == cur) return 1;
-	if (!hull_cls[cls].t[0] && !hull_cls[cls].failed) hull_make_class (cls, 1);
+	if (!hull_cls[cls].t[0] && !hull_cls[cls].failed) {
+		hull_make_class (cls, 1);
+		/* B10: the small objects' maps made in the port's load hitch, not
+		 * mid-flight at a canister's first sight (else lazily, as any) */
+		for (k = HC_CARGO; cls == HC_STATION && k <= HC_CAPSULE; k++)
+			if (!hull_cls[k].t[0] && !hull_cls[k].failed) hull_make_class (k, 1);
+	}
 	if (!hull_cls[cls].t[0]) return 0;
 	if (hull_on == 1) hull_end ();
 	glUseProgram (hull_prog5);
@@ -3990,7 +3998,7 @@ static int hull_paint (double p[][3], int n, int have_ctx, const struct HullCtx 
 	hull_gnd[0] = hull_gnd[1] = hull_gnd[2] = hull_gnd[3] = 0;
 	/* the plating belongs to the ships and stations listed in
 	 * hull_models[]: anything else (the intro's titles and banners,
-	 * text, planets, buildings, missiles, debris, cargo) is drawn flat,
+	 * text, planets, buildings, missiles, debris) is drawn flat,
 	 * as with --flat-hulls */
 	if (flat_hulls || fx_tagged () || !have_ctx || !hull_key_listed (cx->key)) {
 		hull_end ();
@@ -6327,8 +6335,8 @@ void Nu_DrawCylinder (void **data)
 		cx.key = znode_rdlong (data);
 		for (k = 0; k < 3; k++) cx.light[k] = znode_rdword (data);
 	}
-	if (hull_ctx && use_renderer == R_GL && !classic_ui && !pixel_art && !pixel_text && !pixel_faces
-	    && hull_key_listed (cx.key) && (hull_ctx == 1 || cx.wok)) {	/* else the base look */
+	if (hull_ctx && use_renderer == R_GL && hull_key_listed (cx.key) &&
+	    (hull_ctx == 1 || cx.wok)) {	/* as the far faces' hull_paint; else the base look */
 		k = hull_class_of_key (cx.key, &sc, off);
 		plate = k == HC_CARGO || k == HC_CAPSULE;
 	}

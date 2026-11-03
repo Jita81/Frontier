@@ -600,6 +600,15 @@ are listed in `hull_models[]` at x1, each with a class of its own.
   has a tile; each bakes its profile in code, as the building class does.
   Both sit before `HC_STATION` in the enum (not buildings), and their rows
   in `hull_classes[]` sit in the same place (the array is positional).
+- **The bake.** The two classes bake at 256x256, not the 512 of the other
+  seeded classes: a texel per model unit at panel 256, about one to two
+  screen pixels per texel at the closest view, and a quarter of the work.
+  With style 5 they are made with the station class, inside that load
+  hitch (`hull_begin5`), so a canister's first sight in flight bakes
+  nothing (`FE2_HULL_LOG=1`, load about 15: station 102 ms, then cargo
+  5 ms and capsule 4 ms in the same frame; at the jettison, no bake). A
+  game that never makes the station class makes them lazily, as any class
+  (cargo alone measured 8 ms at 256 under load, 13 to 23 ms at 512).
   The bands and the capsule's "darker" are tone only: plating keeps a
   face's mean brightness at the game's colour, as on every class, so no
   new colour (no yellow and black) is added.
@@ -626,8 +635,9 @@ are listed in `hull_models[]` at x1, each with a class of its own.
   side-on some 20 to 25 m from the eye, about 230 px tall at 1600x1200.
 - **Off.** `--flat-hulls` and `--old-renderer` give `hull_ctx` 0: nothing
   extra is written or read and the side is `gluCylinder` as before.
-  `--classic-ui` and the `--pixel-*` modes keep the base's cylinder too
-  (checked in `Nu_DrawCylinder`), though ships stay plated under them.
+  `--classic-ui` and the `--pixel-*` modes follow the ships: the far
+  faces go through `hull_paint`, which does not test them, so the close
+  side does not either, and near and far agree under every flag.
 
 ## Switches
 
