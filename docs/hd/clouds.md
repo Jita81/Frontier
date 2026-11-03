@@ -55,8 +55,10 @@ take the ground's own colour, so the night side shows what the game drew
 there and no cloud turns into a dark patch over the night ground.  On the
 lit side and through the terminator each cloud is lit as a mass
 (`cl_light`, in `CLOUD_GLSL` so every view of the clouds can call it): the
-two-octave base is read at the deck point and 0.02 away along two tangents
-of the deck, and its gradient tilts the cloud's normal.  A flank that
+two-octave base is read at the deck point and 0.02 away along each of the
+three model axes; the differences, projected onto the deck, are its
+gradient, and the gradient tilts the cloud's normal.  There is no tangent
+basis to switch, so no seam line anywhere on the sphere.  A flank that
 faces the sun goes to 0.97 of the tint; one turned away goes to a cool
 grey (0.5, 0.55, 0.65 of it).  With the sun high nearly every flank faces
 it, so the relief is strongest towards the terminator, as with real
@@ -88,9 +90,9 @@ captures (`tools/p2shots --routes orbit`), the cover of the lit disc of
 the first terran world, measured against a capture with full cover, was
 41% at shot 02, 32% at 03 and 31% at 05.
 
-**Cost.**  Per planet fragment the cloud program reads the noise fourteen
+**Cost.**  Per planet fragment the cloud program reads the noise sixteen
 times: five octaves for the cover (two of the base, three of detail),
-three for the shadow and six for the relief (the two-octave base at three
+three for the shadow and eight for the relief (the two-octave base at four
 points; the driver may share the centre one with the cover's).  If a slow
 machine needs it, cut the shadow to two octaves first, then the cover to
 four.
@@ -99,14 +101,14 @@ The global cover above was re-measured on the warped base with the same
 float32 replica (detail octaves at full weight, the mean of the soft
 threshold before the haze floor and opacity).  Old and new:
 
-| Class | 3 seeds x 100k, old | new | 40 seeds x 20k, old | new |
-|---|---|---|---|---|
-| terran, ocean | 32.3-35.7% | 32.2-35.6% | 24.1-37.6% (mean 30.6) | 24.1-37.8% (mean 30.6) |
-| ice | 11.5-15.0% | 11.6-14.8% | 7.3-17.1% (mean 11.4) | 7.1-17.2% (mean 11.4) |
-| rocky | 6.6-9.9% | 6.7-9.7% | 3.7-11.3% (mean 6.8) | 3.6-11.5% (mean 6.8) |
+| Class | 40 seeds x 20k, old | new |
+|---|---|---|
+| terran, ocean | 24.1-37.6% (mean 30.6) | 24.1-37.8% (mean 30.6) |
+| ice | 7.3-17.1% (mean 11.4) | 7.1-17.2% (mean 11.4) |
+| rocky | 3.7-11.3% (mean 6.8) | 3.6-11.5% (mean 6.8) |
 
-(The 3 seeds are not the ones the table above used, so the 3-seed ranges
-differ from it; old and new are the same seeds.)
+The detail octaves fade by the pixel size of the unwarped base, as
+before the warp, so the warp does not make them fade early.
 
 ## Sky deck
 

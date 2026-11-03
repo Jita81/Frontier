@@ -324,16 +324,20 @@ int flat_planets = 0;
  * pixel.  The deck turns about the spin axis, model y (measured: the
  * object matrix turns about it, frame to frame, in orbit), and slowly
  * evolves, both on the game clock (uClRot).  cl_light (q, s) is the
- * relief: a normal tilted by the gradient of the base along two tangents,
- * lit from the sun s, and how thick the cloud is there. */
+ * relief: a normal tilted by the gradient of the base (differenced along
+ * the three model axes, then projected onto the deck, so no tangent basis
+ * and no seam), lit from the sun s, and how thick the cloud is there. */
 #define CLOUD_GLSL \
 	"uniform vec3 uClSeed;\n" \
 	"uniform vec4 uClRot, uClCover;\n" \
 	"const float CL_K = 6.0, CL_H = " PF_STR (CLOUD_DECK_H) ", CL_T = " PF_STR (CLOUD_DECK_T) ";\n" \
 	"const float CL_W = 1.5, CL_E = 0.02, CL_B = 0.1;\n" \
-	"float cl_base (vec3 q, out vec3 p) {\n" \
+	"vec3 cl_q (vec3 q) {\n" \
 	"	q = normalize (q);\n" \
-	"	q.xz = vec2 (uClRot.x * q.x - uClRot.y * q.z, uClRot.y * q.x + uClRot.x * q.z);\n" \
+	"	return vec3 (uClRot.x * q.x - uClRot.y * q.z, q.y, uClRot.y * q.x + uClRot.x * q.z);\n" \
+	"}\n" \
+	"float cl_base (vec3 q, out vec3 p) {\n" \
+	"	q = cl_q (q);\n" \
 	"	p = q * CL_K + uClSeed + vec3 (uClRot.zw, 0.0);\n" \
 	"	float a = pf_noise (p);\n" \
 	"	p = p * 2.03 + vec3 (1.7, 9.2, 3.1) + (a - 0.5) * CL_W * vec3 (q.z, 0.3, -q.x);\n" \
@@ -343,7 +347,7 @@ int flat_planets = 0;
 	"}\n" \
 	"float cl_cover (vec3 q, int oct) {\n" \
 	"	vec3 p;\n" \
-	"	float n = cl_base (q, p), px = length (fwidth (p)), a = 0.03;\n" \
+	"	float n = cl_base (q, p), px = length (fwidth (cl_q (q) * CL_K)) * 4.1209, a = 0.03;\n" \
 	"	for (int k = 3; k < 6; k++) {\n" \
 	"		if (k > oct || px >= 0.4) break;\n" \
 	"		n += a * (1.0 - smoothstep (0.1, 0.4, px)) * (pf_noise (p) - 0.5);\n" \
@@ -354,11 +358,11 @@ int flat_planets = 0;
 	"}\n" \
 	"vec2 cl_light (vec3 q, vec3 s) {\n" \
 	"	q = normalize (q);\n" \
-	"	vec3 t = normalize (cross (q, abs (q.y) < 0.9 ? vec3 (0.0, 1.0, 0.0) : vec3 (1.0, 0.0, 0.0)));\n" \
-	"	vec3 b = cross (q, t), p;\n" \
+	"	vec3 p;\n" \
 	"	float d = cl_base (q, p), f = 1.0 - smoothstep (0.15, 0.5, length (fwidth (q)) * CL_K * 2.03);\n" \
-	"	vec2 g = vec2 (cl_base (q + CL_E * t, p), cl_base (q + CL_E * b, p)) - d;\n" \
-	"	vec3 nn = normalize (q - f * CL_B / CL_E * (g.x * t + g.y * b));\n" \
+	"	vec3 g = vec3 (cl_base (q + vec3 (CL_E, 0.0, 0.0), p), cl_base (q + vec3 (0.0, CL_E, 0.0), p),\n" \
+	"	               cl_base (q + vec3 (0.0, 0.0, CL_E), p)) - d;\n" \
+	"	vec3 nn = normalize (q - f * CL_B / CL_E * (g - dot (g, q) * q));\n" \
 	"	return vec2 (dot (nn, normalize (s)), smoothstep (uClCover.x, uClCover.x + 0.12, d));\n" \
 	"}\n"
 
