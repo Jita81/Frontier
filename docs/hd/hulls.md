@@ -251,6 +251,7 @@ Models (`hull_models[]`, by the whole type word and its table;
 | 80 | orbital station outside, close up | station |
 | 82 | launch structure | station |
 | 84 | docking bay seen through the slot | hangar; its faces out of the bay's box (the station's outside) station |
+| 88 | large cross-armed orbital station, its slot tunnel too | station |
 | 288, 290, 294 | hangar interior and its parts | hangar |
 | 96 | a surface port: its buildings, apron, roads and signs | building (walls only, see below) |
 
@@ -283,7 +284,24 @@ one and a half tiles across its biggest face.
 
 Traffic met in the three routes was the listed ships only; none of the
 new words was met in flight, so the proof is shipyard close-ups. The
-other orbital station types (86, 88) were not met.
+other orbital station types (86, 88) were not met here; B5 met 88.
+
+**B5, the large orbital station (88).** Route:
+`tools/drive/scripts/p2-stations.drv`. From start 2 (landed at a surface
+port of the fourth planet) it buys a ship with an autopilot, lifts off,
+targets the orbital station beside that planet on the system map and
+lets the autopilot dock at 100x (the game slows itself near the
+station). `FE2_HULL_LOG=1` names it `model 88 -> class station`, unit
+2^16. 88 is a long central shaft with broad arms swept out to either
+side and lattice trusses at its ends; the slot and its tunnel are faces
+of 88 itself, and docking goes on to the hangar words 288, 290 and 294
+already listed, so 88 needs no bay row (84 has one because it is a
+separate model). Scale x1, set by eye: at 800 m and in the slot the
+shaft and the tunnel walls show several panels across each face, read as
+plating rather than paving; the broad arm faces still read mostly flat
+in the approach frames (seen at a grazing angle; not checked further).
+The small station's route (start docked, launch, turn back) names the
+same models with the same classes as base.
 
 - **Adding a model:** add one line.
 - **Adding a class:**
@@ -300,9 +318,13 @@ Not listed, so drawn flat:
   left it out;
 - game table 12 and 10 (unit 2^7, 34-byte stubs), met only during a
   lift-off; not identified;
-- game table 86 and 88 (units 2^13 and 2^16): by the backdrop code's
-  orbital range (`hdback.c`, port models 84 to 88) the other orbital
-  station types, but no census route reached one, so they are not listed;
+- game table 86 (unit 2^13): by the backdrop code's orbital range
+  (`hdback.c`, port models 84 to 88) the remaining orbital station type,
+  thought to be the one at a station orbiting a moon (not seen). B5's
+  route could not target such a station (the system map would not
+  recentre on the inner planet to pick its moon's station), so it is not
+  listed; a route would first fly to that planet under autopilot, then
+  target the station from close in;
 - game table 176 (unit 2^0), seen beside the bay, and 98 and 148 (ground,
   around a surface port); not identified;
 - the intro's 4 (the title), 12, 34 (the banner), 36, 38, 40 to 54 (its
