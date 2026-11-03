@@ -841,8 +841,9 @@ void hdface_frame (const unsigned char *raster, unsigned char *out,
 static void rr_outline (float x0, float y0, float x1, float y1, float ex, float ey,
 			float d, float *pt)
 {
-	/* in ST pixels: 5 window pixels each at 1600 wide, 6 at 1200 high */
-	const float rx = THUMB_R / 5.0f, ry = THUMB_R / 6.0f;
+	/* in ST pixels: THUMB_R of a window 1200 high (6 to an ST pixel),
+	 * round whatever shape the ST pixels are */
+	const float ry = THUMB_R / 6.0f, rx = ry * ex / ey;
 	int c, i, n = 0;
 
 	for (c = 0; c < 4; c++)

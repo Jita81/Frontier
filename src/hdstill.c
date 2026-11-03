@@ -316,7 +316,7 @@ static struct look {
 
 /* drawing: the context, the art's top left in ST pixels, device pixels
  * an ST pixel, the art's size in device pixels and U, a device pixel of a
- * 1600x1200 window (what the design's sizes are in) */
+ * picture 1200 high (what the design's sizes are in, both ways) */
 static CGContextRef C;
 static CGColorSpaceRef CS;
 static float OX, OY, SX, SY, AW, AH, U;
@@ -2670,7 +2670,7 @@ static int build (struct tex *t, int a, int x, int y, float sx, float sy)
 	SY = sy;
 	AW = aw * sx;
 	AH = ah * sy;
-	U = (sx / 5 + sy / 6) / 2;
+	U = sy / 6;	/* a pixel at 1200 high, as hdui's: one size both ways */
 	if (ar) draw_art (ar, x, y);
 	else if (body_now) draw_body (body_now);
 	else gauges_paint ();

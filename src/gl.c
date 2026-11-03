@@ -134,6 +134,9 @@ float hack;
  * --size sets it; 0 picks one that fits the desktop, see pick_window_size. */
 int screen_w = 0;
 int screen_h = 0;
+/* --tall-pixels: each ST pixel shown 1.2 times taller than wide, a 4:3
+ * picture, as before planets were round (docs/hd/aspect.md) */
+int tall_pixels = 0;
 /* The window's framebuffer in pixels, which every glViewport is in: the
  * same as screen_w x screen_h unless the window has a higher pixel density
  * (sdl12-compat with SDL12COMPAT_HIGHDPI=1 and SDL12COMPAT_OPENGL_SCALING=0
@@ -142,10 +145,11 @@ static int fb_w = 640, fb_h = 480;
 /* The windowed size (from --size, or picked) and the desktop's, taken
  * before the first mode set: fullscreen uses the whole desktop. */
 static int win_w, win_h, desk_w, desk_h;
-/* The picture: the largest 4:3 rectangle that fits the framebuffer,
+/* The picture: the game's 320x200 screen with square pixels, the largest
+ * 16:10 rectangle that fits the framebuffer (4:3 under --tall-pixels),
  * centred, in framebuffer pixels from the bottom left (pic_*) and in SDL
- * coordinates from the top left (view_*, for the mouse). On a wider
- * screen the sides are black bars. */
+ * coordinates from the top left (view_*, for the mouse). A window of
+ * another shape has bars at the sides or at the top and bottom. */
 static int pic_x, pic_y, pic_w = 640, pic_h = 480;
 int view_x = 0, view_y = 0, view_w = 0, view_h = 0;
 #define GLERR { printf ("GL: %s\n", gluErrorString (glGetError ()));}
@@ -184,12 +188,14 @@ static void set_ctrl_viewport ()
 
 static void set_picture_rect ()
 {
-	if (fb_w * 3 > fb_h * 4) {
+	int aw = tall_pixels ? 4 : 16, ah = tall_pixels ? 3 : 10;
+
+	if (fb_w * ah > fb_h * aw) {
 		pic_h = fb_h;
-		pic_w = fb_h * 4 / 3;
+		pic_w = fb_h * aw / ah;
 	} else {
 		pic_w = fb_w;
-		pic_h = fb_w * 3 / 4;
+		pic_h = fb_w * ah / aw;
 	}
 	pic_x = (fb_w - pic_w) / 2;
 	pic_y = (fb_h - pic_h) / 2;
@@ -208,27 +214,30 @@ void gl_picture_rect (int *x, int *y, int *w, int *h)
 }
 
 /* Point sizes were chosen for a 640x480 window: keep them the same share
- * of the view at any picture size. */
+ * of the picture's width at any size (its height, as before, under
+ * --tall-pixels). */
 static float px_scale (void)
 {
-	return pic_h > 480 ? pic_h / 480.0f : 1.0f;
+	float s = tall_pixels ? pic_h / 480.0f : pic_w / 640.0f;
+	return s > 1 ? s : 1.0f;
 }
 
-/* The original's 4:3 shape (640x480) as large as fits on the desktop
- * below the menu bar, title bar and dock (128 pixels kept free), in whole
- * steps of 64x48 and never smaller than 640x480. */
+/* The picture's shape, 16:10 (4:3 under --tall-pixels), as large as
+ * fits on the desktop below the menu bar, title bar and dock (128 pixels
+ * kept free), in whole steps of 64x40 (64x48) and never smaller than
+ * 640x480 (768x480). */
 static void pick_window_size ()
 {
-	int k = 10;
+	int step = tall_pixels ? 48 : 40, k0 = tall_pixels ? 10 : 12, k = k0;
 
 	if (desk_w > 0 && desk_h > 0) {
 		int kw = desk_w / 64;
-		int kh = (desk_h - 128) / 48;
+		int kh = (desk_h - 128) / step;
 		k = kw < kh ? kw : kh;
-		if (k < 10) k = 10;
+		if (k < k0) k = k0;
 	}
 	win_w = 64 * k;
-	win_h = 48 * k;
+	win_h = step * k;
 }
 
 /*
@@ -362,10 +371,13 @@ static void change_vidmode ()
 	glMatrixMode (GL_PROJECTION);
 	glLoadIdentity ();
 	/* Aspect ratio of frontier's 3d view is 320/168 = 1.90, in ST
-	 * pixels, whatever the window's shape: the software renderer
-	 * stretches its 320x200 frame over the whole window, so the GL view
+	 * pixels, whatever the picture's shape: the software renderer
+	 * stretches its 320x200 frame over the whole picture, so the GL view
 	 * has to stretch the same way or the two renderers frame different
-	 * parts of the sky. With the window's own aspect instead (screen_w /
+	 * parts of the sky. With square ST pixels (the 16:10 picture) the
+	 * viewport is 1.90 too and spheres are round; under --tall-pixels
+	 * (4:3) both renderers draw them 1.2 times taller than wide.
+	 * With the window's own aspect instead (screen_w /
 	 * (screen_h - ctrl_h), taken over with B's 981d304), a 640x480 window
 	 * sees about 32 degrees either side in the software renderer but only
 	 * 28 in GL, so a planet near the edge - Lave from Lave Station - is on

@@ -230,6 +230,8 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --fullscreen or -f    Try to use fullscreen mode.\n"
                "  --nosound             Disable sound (faster!).\n"
                "  --size w h            Start at specified window size.\n"
+               "  --tall-pixels         The ST's pixels 1.2 times taller than wide (a 4:3\n"
+               "                        picture, planets taller than wide), as before.\n"
 			   "  --old-renderer        Start with the old renderer.\n"
                "  --flat-hulls          Flat ship faces, no hull plating.\n"
                "  --flat-wear           Every ship of a model plated alike (no wear\n"
@@ -333,6 +335,8 @@ void Main_ReadParameters(int argc, char *argv[])
 	 * to 3d object position code... */
 	if (screen_h == 0) screen_h = 5*screen_w/8;
       }
+      else if (!strcmp(argv[i], "--tall-pixels"))
+	tall_pixels = 1;
       else
       {
 	      /* some time make it possible to read alternative

@@ -131,13 +131,25 @@ static int game_menu_up (void)
 	return rb (10469) == 1 && rl (10428) == 0;
 }
 
+/* The design in a w x h picture: one scale both ways, the largest that
+ * fits, centred (a 16:10 picture has room at the sides); ox, oy: its top
+ * left */
+static float fit (float w, float h, float *ox, float *oy)
+{
+	float k = w * DH < h * DW ? w / DW : h / DH;
+	*ox = (w - DW * k) / 2;
+	*oy = (h - DH * k) / 2;
+	return k;
+}
+
 /* the pointer in design units */
 static void pointer (float *x, float *y)
 {
 	float vx = view_w > 0 ? view_x : 0, vy = view_h > 0 ? view_y : 0;
 	float vw = view_w > 0 ? view_w : screen_w, vh = view_h > 0 ? view_h : screen_h;
-	*x = (input.abs_x - vx) * DW / vw;
-	*y = (input.abs_y - vy) * DH / vh;
+	float ox, oy, k = fit (vw, vh, &ox, &oy);
+	*x = (input.abs_x - vx - ox) / k;
+	*y = (input.abs_y - vy - oy) / k;
 }
 
 /* ---------------------------------------------------------------- */
@@ -651,7 +663,7 @@ static void paint (CGContextRef g)
 			spot (bx + k * (bw + gap), my + mh - 80, bx + k * (bw + gap) + bw, my + mh - 30, ids[k]);
 		if (g) {
 			fill_col (g, C_BG0, 0.55f);
-			CGContextFillRect (g, CGRectMake (0, 0, DW, DH));
+			CGContextFillRect (g, CGContextGetClipBoundingBox (g));
 			glass (g, mx, my, mw, mh, 14, 0.96f, 0.92f);
 			{
 				CGPathRef bar = rrect (mx, my, 6, mh, 3);
@@ -689,6 +701,7 @@ static void render (int W, int H)
 {
 	unsigned char *buf;
 	CGContextRef g;
+	float ox, oy, k = fit (W, H, &ox, &oy);
 
 	load_faces ();
 	if (!rgb_space) rgb_space = CGColorSpaceCreateDeviceRGB ();
@@ -700,8 +713,8 @@ static void render (int W, int H)
 		free (buf);
 		return;
 	}
-	CGContextTranslateCTM (g, 0, H);
-	CGContextScaleCTM (g, W / (float) DW, -H / (float) DH);
+	CGContextTranslateCTM (g, ox, H - oy);
+	CGContextScaleCTM (g, k, -k);
 	CGContextSetShouldAntialias (g, true);
 	CGContextSetShouldSmoothFonts (g, false);
 	{
@@ -736,7 +749,8 @@ static void render (int W, int H)
 	pic_h = H;
 }
 
-/* the game menu's way in: a small glass pill, top right of the picture */
+/* the game menu's way in: a small glass pill, top right of the picture
+ * (a design's width from its right edge) */
 #define EP_X0	1270
 #define EP_Y0	24
 #define EP_X1	1576
@@ -748,8 +762,8 @@ static void render_entry (int W, int H, int st)
 {
 	unsigned char *buf;
 	CGContextRef g;
-	float k = H / (float) DH;
-	int w = (int) ceilf ((EP_X1 - EP_X0) * W / (float) DW), h = (int) ceilf ((EP_Y1 - EP_Y0) * k);
+	float ox, oy, k = fit (W, H, &ox, &oy);
+	int w = (int) ceilf ((EP_X1 - EP_X0) * k), h = (int) ceilf ((EP_Y1 - EP_Y0) * k);
 
 	load_faces ();
 	if (!rgb_space) rgb_space = CGColorSpaceCreateDeviceRGB ();
@@ -761,7 +775,7 @@ static void render_entry (int W, int H, int st)
 		float ew = EP_X1 - EP_X0, eh = EP_Y1 - EP_Y0;
 		CGPathRef p;
 		CGContextTranslateCTM (g, 0, h);
-		CGContextScaleCTM (g, W / (float) DW, -k);
+		CGContextScaleCTM (g, k, -k);
 		p = rrect (2, 2, ew - 4, eh - 4, (eh - 4) / 2);
 		CGContextSaveGState (g);
 		CGContextAddPath (g, p);
@@ -1171,7 +1185,7 @@ void controls_page_draw (void)
 {
 #ifdef __APPLE__
 	int fw, fh, W, H;
-	float x, y;
+	float x, y, ox, oy, k;
 
 	/* the Esc that paused the game: let go after a few frames, and see
 	 * whether it did */
@@ -1230,15 +1244,16 @@ void controls_page_draw (void)
 		SDL_ShowCursor (SDL_ENABLE);
 	} else {
 		int st;
-		entry_hover = x >= EP_X0 && x < EP_X1 && y >= EP_Y0 && y < EP_Y1;
+		k = fit (fw, fh, &ox, &oy);
+		entry_hover = x >= EP_X0 + ox / k && x < EP_X1 + ox / k && y >= EP_Y0 && y < EP_Y1;
 		st = entry_hover ? (entry_pressed ? 2 : 1) : 0;
 		W = fw;
 		H = fh;
-		if (st != entry_state || !entry_tex || entry_h != (int) ceilf ((EP_Y1 - EP_Y0) * H / (float) DH))
+		if (st != entry_state || !entry_tex || entry_h != (int) ceilf ((EP_Y1 - EP_Y0) * k))
 			render_entry (W, H, st);
-		quad (entry_tex, entry_tw, entry_th, entry_w, entry_h,
-		      EP_X0 * fw / (float) DW, EP_Y0 * fh / (float) DH,
-		      EP_X0 * fw / (float) DW + entry_w, EP_Y0 * fh / (float) DH + entry_h);
+		x = fw - (DW - EP_X0) * k;
+		y = oy + EP_Y0 * k;
+		quad (entry_tex, entry_tw, entry_th, entry_w, entry_h, x, y, x + entry_w, y + entry_h);
 	}
 
 	end_picture ();
@@ -1390,8 +1405,8 @@ static void render_end (int W, int H)
 {
 	unsigned char *buf;
 	CGContextRef g;
-	float k = H / (float) DH, sz;
-	int w = (int) ceilf ((EC_W + 2 * EC_M) * W / (float) DW), h = (int) ceilf ((EC_H + 2 * EC_M) * k);
+	float ox, oy, k = fit (W, H, &ox, &oy), sz;
+	int w = (int) ceilf ((EC_W + 2 * EC_M) * k), h = (int) ceilf ((EC_H + 2 * EC_M) * k);
 	char date[40];
 	int i;
 
@@ -1403,7 +1418,7 @@ static void render_end (int W, int H)
 				   kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
 	if (g) {
 		CGContextTranslateCTM (g, 0, h);
-		CGContextScaleCTM (g, W / (float) DW, -k);
+		CGContextScaleCTM (g, k, -k);
 		CGContextTranslateCTM (g, EC_M, EC_M);
 		glass (g, 0, 0, EC_PW, EC_H, 22, 0.86f, 0.74f);
 		glass (g, EC_W - EC_PW, 0, EC_PW, EC_H, 22, 0.86f, 0.74f);
@@ -1456,7 +1471,7 @@ void endcard_draw (void)
 #ifdef __APPLE__
 	char key[sizeof end_key];
 	int fw, fh;
-	float a, x0, y0;
+	float a, x0, y0, ox, oy, k;
 
 	if (!end_on || !begin_picture (&fw, &fh)) return;
 	snprintf (key, sizeof key, "%s/%lu/%dx%d", end_name, end_day, fw, fh);
@@ -1465,8 +1480,9 @@ void endcard_draw (void)
 		strcpy (end_key, key);
 	}
 	a = end_fade ();
-	x0 = (EC_X - EC_M) * fw / (float) DW;
-	y0 = (EC_Y - EC_M) * fh / (float) DH;
+	k = fit (fw, fh, &ox, &oy);
+	x0 = ox + (EC_X - EC_M) * k;
+	y0 = oy + (EC_Y - EC_M) * k;
 	glEnable (GL_TEXTURE_2D);
 	glBindTexture (GL_TEXTURE_2D, end_tex);
 	glColor4f (a, a, a, a);
