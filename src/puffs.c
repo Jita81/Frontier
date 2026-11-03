@@ -185,13 +185,13 @@ static float puff_seed (const double w[3])
  * edge's points exactly.  Where they lie on either side of it on screen
  * the edge is inside the cloud, and a soft edge there shows the sky
  * through as a light seam; so an edge softens only where, last frame,
- * no two shapes lay on either side of either of its ends (ang: the
- * shape's inward normal there, 256 to a turn).  A point not seen last
+ * no two shapes lay on either side of either of its ends (nx ny: the
+ * shape's inward normal there, of any length).  A point not seen last
  * frame is hard: a cloud coming into view has hard edges for one frame.
  * The table's clock is frames drawn (puff_frame), never time.
  */
 #define PT_BITS 15
-static struct { unsigned int key, id, at, fl; } pt[1 << PT_BITS];	/* fl: 1 inside this frame, 2 last frame, 4 seen last frame; ang << 8 */
+static struct { unsigned int key, id, at, fl; float nx, ny; } pt[1 << PT_BITS];	/* fl: 1 inside this frame, 2 last frame, 4 seen last frame */
 static unsigned int frame = 2, shapes;
 
 void puff_frame (void)
@@ -200,7 +200,7 @@ void puff_frame (void)
 	frame++;
 }
 
-static int puff_shared (const double w[3], unsigned int ang)
+static int puff_shared (const double w[3], float nx, float ny)
 {
 	unsigned int h = cur.seed * 0x9e3779b1u, i, k, m = (1 << PT_BITS) - 1;
 	int j;
@@ -214,10 +214,25 @@ static int puff_shared (const double w[3], unsigned int ang)
 	i = (h + k) & m;
 	if (pt[i].key != h) pt[i].key = h, pt[i].at = 0;
 	if (pt[i].at != frame)
-		pt[i].fl = (pt[i].at + 1 == frame ? 4 | (pt[i].fl & 1) << 1 : 0) | ang << 8, pt[i].id = shapes, pt[i].at = frame;
-	else if (pt[i].id != shapes && ((ang - (pt[i].fl >> 8) + 64) & 255) > 128)
+		pt[i].fl = pt[i].at + 1 == frame ? 4 | (pt[i].fl & 1) << 1 : 0, pt[i].nx = nx, pt[i].ny = ny, pt[i].id = shapes, pt[i].at = frame;
+	else if (pt[i].id != shapes && nx * pt[i].nx + ny * pt[i].ny < 0)
 		pt[i].fl |= 1;
-	return (pt[i].fl & 7) != 4;
+	return pt[i].fl != 4;
+}
+
+/* the direction of (x, y) to about 0.005 rad, a fortieth of a rim bin:
+ * a shape takes a couple of hundred of these */
+static double puff_atan2 (double y, double x)
+{
+	double ax = fabs (x), ay = fabs (y), hi = fmax (ax, ay), a, s, r;
+
+	if (hi == 0) return 0;
+	a = fmin (ax, ay) / hi;
+	s = a * a;
+	r = ((-0.0464964749 * s + 0.15931422) * s - 0.327622764) * s * a + a;
+	if (ay > ax) r = M_PI / 2 - r;
+	if (x < 0) r = M_PI - r;
+	return y < 0 ? -r : r;
 }
 
 /*
@@ -260,7 +275,7 @@ int puff_shape (const double (*e)[3], int n, const double mv[16], const double p
 	for (i = 0; i < n; i++) {
 		double tx = win[(i+1)%n][0] - win[(i+n-1)%n][0], ty = win[(i+1)%n][1] - win[(i+n-1)%n][1];
 		puff_obj (e[i], w);
-		hard[i] = puff_shared (w, (unsigned int) (int) floor (atan2 (l > 0 ? tx : -tx, l > 0 ? -ty : ty) * 128 / M_PI) & 255);
+		hard[i] = puff_shared (w, (float) (l > 0 ? -ty : ty), (float) (l > 0 ? tx : -tx));
 	}
 	sheet = hi[1] - lo[1] < 0.02 * fmax (hi[0] - lo[0], hi[2] - lo[2]);
 	c[0] = (x0 + x1) / 2; s[0] = (x1 - x0) / 2;
@@ -273,7 +288,7 @@ int puff_shape (const double (*e)[3], int n, const double mv[16], const double p
 		for (k = 0; k < 4; k++) {
 			double qx = (win[i][0] + (win[(i+1)%n][0] - win[i][0]) * k / 4.0 - c[0]) / s[0];
 			double qy = (win[i][1] + (win[(i+1)%n][1] - win[i][1]) * k / 4.0 - c[1]) / s[1];
-			j = (int) floor ((atan2 (qy, qx) / M_PI + 1) * RIM_BINS / 2) % RIM_BINS;
+			j = (int) floor ((puff_atan2 (qy, qx) / M_PI + 1) * RIM_BINS / 2) % RIM_BINS;
 			R[j] = fmax (R[j], sqrt (qx * qx + qy * qy));
 			if (hard[i] && hard[(i+1)%n]) H[j] = fmax (H[j], sqrt (qx * qx + qy * qy));
 		}
