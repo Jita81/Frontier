@@ -57,6 +57,7 @@ int flat_lights = 0;	/* --flat-lights: no halo round the game's lights (gl.c) */
 int flat_lasers = 0;	/* --flat-lasers: every laser one plain ribbon, as before bolts and hot cores */
 int flat_missiles = 0;	/* --flat-missiles: a missile's plume only near its smoke, as before */
 int flat_hud_hits = 0;	/* --flat-hud-hits: one red hit flash, no critical tint (hddamage.c) */
+int flat_sight = 0;	/* --flat-sight: the thin HD gun sight and brackets, as before (hdinst.c) */
 int flat_exhaust = 0;	/* --flat-exhaust: the game's flat engine plumes (gl.c) */
 
 /*-----------------------------------------------------------------------*/
@@ -245,6 +246,7 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --flat-lasers         Every laser one steady ribbon (no bolts or hot cores).\n"
                "  --flat-missiles       A missile's flame only near its smoke trail (as before).\n"
                "  --flat-hud-hits       One red flash for every hit, no critical hull tint.\n"
+               "  --flat-sight          The thin HD gun sight, its ticks found as one (as before).\n"
                "  --flat-exhaust        The game's flat engine plumes (no HD exhaust).\n"
                "  --hull-style N        Hull look, 0 plating, 1 big texture, 2 panels,\n"
                "                        3 bump and weathering, 4 per model, 5 a material\n"
@@ -297,6 +299,8 @@ void Main_ReadParameters(int argc, char *argv[])
 		flat_missiles = 1;
 	  else if (!strcmp(argv[i], "--flat-hud-hits"))
 		flat_hud_hits = 1;
+	  else if (!strcmp(argv[i], "--flat-sight"))
+		flat_sight = 1;
 	  else if (!strcmp(argv[i], "--flat-exhaust"))
 		flat_exhaust = 1;
 	  else if (!strcmp(argv[i], "--hull-style") && i + 1 < argc) {

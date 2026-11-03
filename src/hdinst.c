@@ -23,6 +23,15 @@
  * is drawn again, the ticks it has, as thin lines with a faint glow.
  * hdtext is told which pixels they are, so a label the sight was drawn
  * over is still read; a label over the sight is moved clear of it.
+ * That is --flat-sight.  Otherwise its two parts are found each on its
+ * own: the straight ticks (the view has a laser) at their fixed place,
+ * and the diagonal ones, the velocity marker the front view draws round
+ * where the ship is heading, wherever it is (last frame's place, the
+ * middle, then the view).  Each is drawn as crisp bars with a soft dark
+ * outline, legible over a star or a world; a pulse or mining laser's shot
+ * (the recharge word rising, which only they set) opens the straight
+ * ticks a pixel and tints them its hue for the first eighth of the
+ * recharge, so it stands still while the game is paused.
  *
  * Lock boxes.  Over a 3D view in flight (the GL renderer leaves the view
  * clear in the ST screen; the scanner was drawn lately, or the game says a
@@ -53,6 +62,10 @@
 #include "hdinst.h"
 #include "hdback.h"
 #include "bindings.h"
+#include "../m68000.h"
+#include "../fixups.h"
+
+#define A6		__DL5eb6_a6_base
 
 #define ST_W		320
 #define ST_H		200
@@ -242,6 +255,10 @@ static int n_shown;
 static short sight[52][2];
 static int sight_col = -1, sight_n;	/* 52, or 32: no diagonal ticks */
 static unsigned char sight_mask[ST_W * ST_H];
+/* not --flat-sight: the straight ticks' colour and the velocity marker's
+ * (-1: not found) and its middle; a shot's response, 0..1, its class */
+static int ticks_col = -1, marker_col = -1, mx = 160, my = 84, fire_cls;
+static float fire;
 
 /* corner brackets: the corner pixel's centre and the arms (signed, ST) */
 #define MAX_LINE	256
@@ -281,6 +298,86 @@ static int on (void)
 	return !classic_ui && use_renderer == R_GL;
 }
 
+/* sight pixel i, the marker's (32..51) round its middle (mx, my) */
+static int pix (int i)
+{
+	return i < 32 ? sight[i][1] * ST_W + sight[i][0] :
+		(sight[i][1] + my - 84) * ST_W + sight[i][0] + mx - 160;
+}
+
+static int is_tick (int x, int y)	/* one of the straight ticks' 32 pixels */
+{
+	return (y == 84 && ((x >= 145 && x <= 152) || (x >= 167 && x <= 174))) ||
+	       (x == 160 && ((y >= 69 && y <= 76) || (y >= 92 && y <= 99)));
+}
+
+/* The marker round (x, y), in the ticks' colour c if they are there: its
+ * first stubs' pixels first, then 19 of its 20 in one colour, its middle
+ * and the points between its ticks not (a straight tick may be there). */
+static int marker_try (const unsigned char *raster, int x, int y, int c)
+{
+	static const signed char in[5][2] = { { 0, 0 }, { 4, 4 }, { 4, -4 }, { -4, 4 }, { -4, -4 } };
+	int col = raster[(y - 14) * ST_W + x - 14], i, n = 0;
+
+	if (col == 255 || (c >= 0 && col != c) || raster[(y - 13) * ST_W + x - 13] != col ||
+	    raster[(y - 14) * ST_W + x + 13] != col)
+		return -1;
+	for (i = 32; i < 52; i++)
+		n += raster[(y + sight[i][1] - 84) * ST_W + x + sight[i][0] - 160] == col;
+	for (i = 0; i < 5 && n >= 19; i++)
+		if (raster[(y + in[i][1]) * ST_W + x + in[i][0]] == col &&
+		    !(c >= 0 && is_tick (x + in[i][0], y + in[i][1])))
+			return -1;
+	return n >= 19 ? col : -1;
+}
+
+static void mask_parts (const unsigned char *raster)
+{
+	static const short gap[3][2] = { { 160, 84 }, { 156, 84 }, { 160, 80 } };
+	static unsigned last, rech;
+	int count[256], i, j, c = 0, x, y, col = -1, view = STMemory_ReadByte (A6 + 706) & 0xff;
+	unsigned ship = (unsigned) STMemory_ReadLong (A6 + 674), w = 0;
+
+	for (i = 0; i < 52; i++) sight_mask[pix (i)] = 0;
+	ticks_col = marker_col = -1;
+	fire = 0;
+	if (ship && ship < 0x100000) {	/* a shot: the recharge word rose */
+		w = (unsigned short) STMemory_ReadWord (ship + 188);
+		if (w > last) rech = w;
+		last = w;
+	}
+	if (!on () || hdback_concourse_up ()) return;
+	memset (count, 0, sizeof (count));
+	for (i = 0; i < 32; i++) count[raster[pix (i)]]++;
+	for (i = 1; i < 256; i++)
+		if (count[i] > count[c]) c = i;
+	if (c == 255 || count[c] < 25) c = -1;
+	if (view == 0 && bindings_in_flight_view (0, 0) && !hdback_active ()) {
+		if ((col = marker_try (raster, mx, my, c)) < 0 &&
+		    (col = marker_try (raster, mx = 160, my = 84, c)) < 0)
+			for (y = 14; y <= 153 && col < 0; y++)
+				for (x = 14; x <= 305 && col < 0; x++)
+					if ((col = marker_try (raster, x, y, c)) >= 0) mx = x, my = y;
+		marker_col = col;
+	}
+	/* the gaps between the straight ticks clear, but for the marker's */
+	for (i = 0; c >= 0 && i < 3; i++) {
+		for (j = 32; marker_col >= 0 && j < 52 && pix (j) != gap[i][1] * ST_W + gap[i][0]; j++)
+			;
+		if (raster[gap[i][1] * ST_W + gap[i][0]] == c && !(marker_col >= 0 && j < 52)) c = -1;
+	}
+	ticks_col = c;
+	for (i = 0; i < 52; i++) {
+		int k = i < 32 ? ticks_col : marker_col;
+		if (k >= 0) sight_mask[pix (i)] |= raster[pix (i)] == k;
+	}
+	if (ticks_col >= 0 || marker_col >= 0) hdtext_skip (sight_mask);
+	/* the class of the view's laser (bits 3-6 of its type, as fx.c reads it) */
+	fire_cls = view < 4 && ship && ship < 0x100000 ? (STMemory_ReadByte (ship + 168 + view) & 0xff) >> 3 & 15 : 0;
+	if (ticks_col >= 0 && fire_cls >= 1 && fire_cls <= 3 && rech && w <= rech && (rech - w) * 8 < rech)
+		fire = 1 - (rech - w) * 8.0f / rech;
+}
+
 void hdinst_mask (const unsigned char *raster)
 {
 	int count[256], i, c = 0, d = 0;
@@ -289,6 +386,12 @@ void hdinst_mask (const unsigned char *raster)
 	if (since < 99) since++;
 	if (armed == ((VideoBase & 0x100000) != 0)) commit ();
 	sight_init ();
+	if (!flat_sight) {
+		sight_col = -1;
+		hdtext_skip (NULL);
+		mask_parts (raster);
+		return;
+	}
 	for (i = 0; i < 52; i++) sight_mask[sight[i][1] * ST_W + sight[i][0]] = 0;
 	sight_col = -1;
 	hdtext_skip (NULL);
@@ -586,6 +689,13 @@ static const float ticks[8][4] = {
 static int hits_sight (float x0, float y0, float x1, float y1)
 {
 	int i;
+	for (i = 0; !flat_sight && i < 8; i++) {	/* each part found, the marker where it is */
+		float dx = i < 4 ? 0 : mx - 160, dy = i < 4 ? 0 : my - 84;
+		if ((i < 4 ? ticks_col : marker_col) >= 0 && x0 < ticks[i][2] + dx && x1 > ticks[i][0] + dx &&
+		    y0 < ticks[i][3] + dy && y1 > ticks[i][1] + dy)
+			return 1;
+	}
+	if (!flat_sight) return 0;
 	for (i = 0; i < (sight_n == 52 ? 8 : 4); i++)
 		if (x0 < ticks[i][2] && x1 > ticks[i][0] && y0 < ticks[i][3] && y1 > ticks[i][1])
 			return 1;
@@ -639,6 +749,11 @@ void hdinst_frame (const unsigned char *raster, unsigned char *out)
 			int o = sight[i][1] * ST_W + sight[i][0];
 			if (raster[o] == sight_col) out[o] = 255;
 		}
+		labels ();
+	}
+	if (ticks_col >= 0 || marker_col >= 0) {	/* not --flat-sight */
+		for (i = 0; i < 52; i++)
+			if (sight_mask[pix (i)]) out[pix (i)] = 255;
 		labels ();
 	}
 	/* the boxes are told from text by where hdtext found it: under
@@ -729,6 +844,80 @@ static void stroke (float x0, float y0, float x1, float y1, float a)
 	seg (x0, y0, x1, y1, 2.2f * K, 1.1f, a);
 }
 
+/* Lift the colour toward white until its luma is 0.75, keeping its hue. */
+static void lift (void)
+{
+	float l = 0.299f * R + 0.587f * G + 0.114f * B, t = l < 0.75f ? (0.75f - l) / (1 - l) : 0;
+
+	R += t * (1 - R);
+	G += t * (1 - G);
+	B += t * (1 - B);
+}
+
+/* A bar of the sight or a bracket, w its core's width: pass 0 a faint glow,
+ * 1 a soft dark outline (alpha o) a little past each end, 2 the crisp core
+ * (alpha a).  Each pass is drawn for every bar before the next, so no
+ * outline covers a neighbouring core. */
+static void bar (float x0, float y0, float x1, float y1, float w, int pass, float a, float o)
+{
+	float r = R, g = G, b = B, dx = (x1 - x0) * SX, dy = (y1 - y0) * SY;
+	float e = 1.3f * K / fmaxf (sqrtf (dx * dx + dy * dy), 1e-4f);
+
+	w = fmaxf (w, 1.6f);
+	if (pass == 0) seg (x0, y0, x1, y1, 0, 6 * K, 0.12f * a);
+	if (pass == 2) seg (x0, y0, x1, y1, w, 1, a);
+	if (pass != 1) return;
+	R = G = B = 0.02f;
+	seg (x0 - (x1 - x0) * e, y0 - (y1 - y0) * e, x1 + (x1 - x0) * e, y1 + (y1 - y0) * e,
+	     w + 2.6f * K, 1.6f * K, o);
+	R = r, G = g, B = b;
+}
+
+/* fx.c looks[1..3].rgb: the pulse and mining lasers' hues (kept in step) */
+static const float fire_rgb[4][3] = { { 0 }, { 1, .2f, .1f }, { 1, .45f, .1f }, { 1, .8f, .25f } };
+
+static void parts (const unsigned int *pal, int pass)
+{
+	float s = fire, dx = mx - 160, dy = my - 84, w = 3 * K;
+	int i;
+
+	if (ticks_col >= 0) {	/* a shot opens the inner ends along the game's lines */
+		rgb (pal[ticks_col], 1);
+		lift ();
+		if (pass == 2 && s > 0) {
+			R += s * (fire_rgb[fire_cls][0] - R);
+			G += s * (fire_rgb[fire_cls][1] - G);
+			B += s * (fire_rgb[fire_cls][2] - B);
+		}
+		bar (145, 84.5f, 153 - s, 84.5f, w, pass, 1, .55f);
+		bar (167 + s, 84.5f, 175, 84.5f, w, pass, 1, .55f);
+		bar (160.5f, 69, 160.5f, 77 - s, w, pass, 1, .55f);
+		bar (160.5f, 92 + s, 160.5f, 100, w, pass, 1, .55f);
+	}
+	if (marker_col >= 0) {
+		rgb (pal[marker_col], 1);
+		lift ();
+		bar (146 + dx, 70 + dy, 151 + dx, 75 + dy, w, pass, 1, .55f);
+		bar (174 + dx, 70 + dy, 169 + dx, 75 + dy, w, pass, 1, .55f);
+		bar (174 + dx, 99 + dy, 169 + dx, 94 + dy, w, pass, 1, .55f);
+		bar (146 + dx, 99 + dy, 151 + dx, 94 + dy, w, pass, 1, .55f);
+	}
+	rgb (C_ACCENT, 0);
+	lift ();
+	w = 2.6f * K;
+	for (i = 0; i < n_edges; i++) {
+		float ex = 1.1f / SX, ey = 1.1f / SY;
+		bar (fmaxf (edges[i].x0, ex), fmaxf (edges[i].y0, ey),
+		     fminf (edges[i].x1, ST_W - ex), fminf (edges[i].y1, VIEW_H - ey), w, pass, 0.35f, 0.25f);
+	}
+	for (i = 0; i < n_brackets; i++) {	/* each arm half a core past the corner */
+		float x = brackets[i].x, y = brackets[i].y, hw = w * 0.5f;
+		float h = brackets[i].h, v = brackets[i].v;
+		if (h) bar (x - (h > 0 ? hw : -hw) / SX, y, x + h, y, w, pass, 1, .55f);
+		if (v) bar (x, y - (v > 0 ? hw : -hw) / SY, x, y + v, w, pass, 1, .55f);
+	}
+}
+
 void hdinst_draw (const unsigned int *pal, const unsigned int *ctrl_pal)
 {
 	GLint vp[4] = { 0, 0, 0, 0 };
@@ -736,7 +925,7 @@ void hdinst_draw (const unsigned int *pal, const unsigned int *ctrl_pal)
 
 	if (!fresh) return;
 	fresh = 0;
-	if (!n_shown && sight_col < 0 && !n_brackets && !n_edges) return;
+	if (!n_shown && sight_col < 0 && ticks_col < 0 && marker_col < 0 && !n_brackets && !n_edges) return;
 	glGetIntegerv (GL_VIEWPORT, vp);
 	if (vp[2] > 0 && vp[3] > 0) {
 		SX = vp[2] / (float) ST_W;
@@ -771,6 +960,14 @@ void hdinst_draw (const unsigned int *pal, const unsigned int *ctrl_pal)
 			disc (c->x, c->blip, 4.5f * K, 7 * K, 0.3f);
 			disc (c->x, c->blip, 4.5f * K, 1.2f, 1);
 		}
+	}
+
+	if (!flat_sight) {	/* the parts found, then the boxes: outlines, then cores */
+		int pass;
+		if (hdback_concourse_up ()) ticks_col = marker_col = -1;	/* came up this frame */
+		for (pass = 0; pass < 3; pass++) parts (pal, pass);
+		glPopAttrib ();
+		return;
 	}
 
 	/* the gun sight, unless the concourse came up this frame */
