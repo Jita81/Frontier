@@ -57,6 +57,7 @@ int flat_lights = 0;	/* --flat-lights: no halo round the game's lights (gl.c) */
 int flat_clouds = 0;	/* --flat-clouds: no clouds on any world (procfx.c) */
 int flat_lasers = 0;	/* --flat-lasers: every laser one plain ribbon, as before bolts and hot cores */
 int flat_missiles = 0;	/* --flat-missiles: a missile's plume only near its smoke, as before */
+int flat_shields = 0;	/* --flat-shields: the base flat shield flash, other HD weapon effects kept */
 int flat_hud_hits = 0;	/* --flat-hud-hits: one red hit flash, no critical tint (hddamage.c) */
 int flat_wear = 0;	/* --flat-wear: every ship of a model plated alike (gl.c) */
 int flat_sight = 0;	/* --flat-sight: the thin HD gun sight and brackets, as before (hdinst.c) */
@@ -253,6 +254,7 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --flat-explosions     Flat explosions only (HD lasers and missiles kept).\n"
                "  --flat-lasers         Every laser one steady ribbon (no bolts or hot cores).\n"
                "  --flat-missiles       A missile's flame only near its smoke trail (as before).\n"
+               "  --flat-shields        The flat shield-hit flash (no HD shield bubble).\n"
                "  --flat-hud-hits       One red flash for every hit, no critical hull tint.\n"
                "  --flat-sight          The thin HD sight and the old lock brackets (as before).\n"
                "  --flat-exhaust        The game's flat engine plumes (no HD exhaust).\n"
@@ -312,6 +314,8 @@ void Main_ReadParameters(int argc, char *argv[])
 		flat_lasers = 1;
 	  else if (!strcmp(argv[i], "--flat-missiles"))
 		flat_missiles = 1;
+	  else if (!strcmp(argv[i], "--flat-shields"))
+		flat_shields = 1;
 	  else if (!strcmp(argv[i], "--flat-hud-hits"))
 		flat_hud_hits = 1;
 	  else if (!strcmp(argv[i], "--flat-sight"))

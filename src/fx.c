@@ -28,6 +28,7 @@
 #define M_EXPL		188	/* an explosion */
 #define M_LASER		190	/* a laser beam, put each frame of a shot */
 #define M_SMOKE		194	/* smoke and sparks, also a missile's trail */
+#define M_SHIELD	192	/* a shield hit: see shield_hit */
 #define M_SHELL		200	/* an ECM pulse or an energy bomb: see shell_put */
 /* The look of each type.  A laser's class is bits 3-6 of its type byte (the
  * game's own damage table is indexed so): 1-3 are pulse lasers ($88 the start
@@ -297,7 +298,7 @@ int fx_tag_for (unsigned int tag[3])
 {
 	unsigned int rec;
 	int m = put_model (&rec);
-	if (!MISSILE (m) && m != M_SMOKE && m != M_SHELL && (m != M_EXPL || flat_explosions)) return 0;
+	if (!MISSILE (m) && m != M_SMOKE && m != M_SHELL && (m != M_SHIELD || flat_shields) && (m != M_EXPL || flat_explosions)) return 0;
 	if (MISSILE (m)) missile_rot (rec);
 	if (m == M_SHELL) shell_put (rec);
 	tag[0] = m, tag[1] = m == M_SMOKE ? rb (rec + OBJ_AGE) : intro_fire, tag[2] = rec;
@@ -560,6 +561,27 @@ static void death_bursts (const float *v, float R, float k, float g, unsigned in
 	}
 }
 
+/* A shield hit (fe2.s L4452a): on its next drawn frame the game puts the hit
+ * ship as model 192, one flat circle round its centre the size of the ship's
+ * model, in place of the ship; one frame a hit, so a beam held on it keeps it
+ * up.  fx draws a bubble there instead, on those frames only, one a ship
+ * (keyed by its record, at most 4): t0 is its run's first frame on the game's
+ * clock, so a pause holds it and a replay draws it the same. */
+static struct bubble { unsigned int rec, seen, t0; float c[3], R; } bubbles[4];
+static int shield_hit (const float *v, float R)
+{
+	struct bubble *s = bubbles;
+	int i;
+	for (i = 0; i < 4; i++)
+		if (bubbles[i].rec == cur.rec && n_frames - bubbles[i].seen <= 1) break;
+		else if (bubbles[i].seen < s->seen) s = &bubbles[i];
+	if (i < 4) s = &bubbles[i];
+	else s->rec = cur.rec, s->t0 = fx_ms;	/* a new run */
+	s->seen = n_frames, s->R = R;
+	memcpy (s->c, v, sizeof s->c);
+	return 1;
+}
+
 int fx_circle (const int *iv, unsigned int d2, int r, int g, int b)
 {
 	float v[3] = { iv[0], iv[1], iv[2] }, R = 0.002f * ((short) d2 + (d2 >> 16) / 65536.0f) * fabsf (v[2]);
@@ -567,6 +589,7 @@ int fx_circle (const int *iv, unsigned int d2, int r, int g, int b)
 	unsigned int seed;
 	struct ball *o;
 	int fl, mis, i, n = 0, l;
+	if (cur.kind == M_SHIELD) return shield_hit (v, R);
 	if (cur.kind != M_EXPL) return 0;
 	for (i = 0; i < n_balls; i++)	/* an inner ring of a blob of this record drawn already */
 		if (balls[i].rec == cur.rec && (n++, R <= balls[i].R && dist2 (balls[i].v, v) < 0.25f * balls[i].R * balls[i].R))
@@ -758,6 +781,27 @@ static void draw_shell (const struct shell *s)
 	if (s->bomb) col (1, 0.92f, 0.75f, 0.6f * a), d < g * s->R ? screen_quad (0, 0, 0.95f * h) : sprite (s->c, 0.95f * R, -spin);
 }
 
+/* The bubble: the shell's rim round a faint mottled haze (the game draws no
+ * ship on these frames), soft blue-cyan, its rim just inside the flat
+ * circle's edge, with a ripple running out from the centre every 240 ms (its
+ * phase seeded by the slot); brightest on a run's first frame, settling to
+ * half in about 150 ms.  Eased under 0.6 of the view's height, and faded out
+ * as the eye nears it: no whiteout at point-blank range. */
+static void draw_bubble (const struct bubble *s, int slot)
+{
+	float t = fx_ms - s->t0, d = sqrtf (dist2 (s->c, (float [3]) { 0, 0, 0 })), raw = s->R / px_world (s->c[2]), S = 0.6f * vp_h;
+	float u = fmodf (t / 240 + hashf (s->rec, slot), 1), spin = 6.283f * hashf (s->rec, M_SHIELD) + 0.002f * t;
+	float a = GLOW_CAP * (0.5f + 0.5f * expf (-t / 150)) * fminf (fmaxf (d / s->R - 1, 0), 1), R = raw * S / (raw + S) * px_world (s->c[2]);
+	blend (1, T_PUFF);
+	col (0.3f, 0.6f, 1, 0.3f * a);
+	sprite (s->c, 0.85f * R, spin);
+	blend (1, T_SHELL);
+	col (0.45f, 0.8f, 1, a);
+	sprite (s->c, R, spin);
+	col (0.6f, 0.9f, 1, 0.6f * a * (1 - u));
+	sprite (s->c, R * (0.3f + 0.7f * u), -spin);	/* the ripple */
+}
+
 void fx_frame_end (void)
 {
 	GLint vp[4];
@@ -787,6 +831,7 @@ void fx_frame_end (void)
 		else if (ring[i].fade) draw_effect (&ring[i]);
 	}
 	for (i = 0; i < 4; i++) if (shells[i].seen == n_frames) draw_shell (&shells[i]);
+	for (i = 0; i < 4; i++) if (bubbles[i].seen == n_frames) draw_bubble (&bubbles[i], i);
 	blend_end ();
 }
 
