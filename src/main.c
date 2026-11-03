@@ -55,6 +55,7 @@ int flat_explosions = 0;	/* --flat-explosions: the base explosions, other HD wea
 int flat_buildings = 0;	/* --flat-buildings: a surface port's buildings unplated (hull.c) */
 int flat_lights = 0;	/* --flat-lights: no halo round the game's lights (gl.c) */
 int flat_clouds = 0;	/* --flat-clouds: no clouds on any world (procfx.c) */
+int flat_sunglow = 0;	/* --flat-sunglow: no glow round the sun down in the air (procfx.c) */
 int flat_lasers = 0;	/* --flat-lasers: every laser one plain ribbon, as before bolts and hot cores */
 int flat_missiles = 0;	/* --flat-missiles: a missile's plume only near its smoke, as before */
 int flat_hud_hits = 0;	/* --flat-hud-hits: one red hit flash, no critical tint (hddamage.c) */
@@ -239,6 +240,7 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --flat-planets        Hard light zones and flat atmosphere rings.\n"
                "  --flat-biomes         Flat seas and land: no sea depth, beaches or biomes.\n"
                "  --flat-stars          No corona round the stars.\n"
+               "  --flat-sunglow        No glow round the sun down in a planet's air.\n"
                "  --flat-buildings      A surface port's buildings without plating\n"
                "                        and windows.\n"
                "  --flat-rings          The game's flat planetary rings.\n"
@@ -288,6 +290,8 @@ void Main_ReadParameters(int argc, char *argv[])
 		flat_biomes = 1;
 	  else if (!strcmp(argv[i], "--flat-stars"))
 		flat_stars = 1;
+	  else if (!strcmp(argv[i], "--flat-sunglow"))
+		flat_sunglow = 1;
 	  else if (!strcmp(argv[i], "--flat-buildings"))
 		flat_buildings = 1;
 	  else if (!strcmp(argv[i], "--flat-rings"))

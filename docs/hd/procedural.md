@@ -9,7 +9,7 @@ noise library.  Three are built:
 |---|---|---|---|
 | 1, sky band | procfx sky | star clouds and dust lanes in the Milky Way polygons | `--flat-sky` |
 | 2, planets (#38) | procfx planet + gl.c | soft terminator, limb darkening, close detail, the lit limb rim (`uRim`) and the atmosphere halo (`draw_planet_halo`) | `--flat-planets` |
-| 3, star corona | procfx corona | soft light and streamers round a star's disc, by class, flight view only | `--flat-stars` |
+| 3, star corona | procfx corona | soft light and streamers round a star's disc, by class, flight view only; down in a planet's air, a soft glow in the air's colour instead (W15) | `--flat-stars` (the air glow alone: `--flat-sunglow`) |
 
 Down in the atmosphere, layer 2 keys its lit rim and its sun fall-off off
 altitude: their weight (`planet_aloft` in gl.c) ramps from 0 on the ground
@@ -313,6 +313,18 @@ the core.
     switch: no put, no program bound.
   - The square leaves the depth mask alone; depth writes are not on in
     the far-to-near znode pass.
+  - Down in the air (W15): the nearest planet put in the view
+    (`Nu_PutPlanet`) leaves its air colour, the sun's height over its
+    horizon (from the game's light vector) and a weight, 1 below 1.02
+    radii to 0 at 2 (0 airless).  With weight, the same square grows (up
+    to 4x when the sun is low) and the `GROUND` variant of the shader adds
+    a soft glow, star tone mixed with the air, warmer as the sun sinks;
+    the streamers fade out as the glow fades in.  This opens the gate in
+    daylight, where the game puts no sky.  The weight drawn eases toward
+    the planet's by at most 0.04 a view, and holds while the planet is
+    out of sight and the game's sky colour is not black, so neither a
+    climb nor turning from the horizon pops it.  Space views and airless
+    bodies draw as before; `--flat-sunglow` turns off this part only.
 - **Checked** (this build, on the integration base, against the base
   binary): see the stream's report for captures.  Captures from the first
   build (ed7343a: additive blend, old tones; Sirius, Leesti, Lave) are not

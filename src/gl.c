@@ -1375,6 +1375,16 @@ void Nu_3DViewInit ()
 	obj_data_pos = 0;
 	detached_pos = 0;
 	procfx_sky_seen = 0;
+	/* the sun's glow eases toward what the last view put; with its planet
+	 * out of sight it holds while the game's sky is lit, else goes, so
+	 * turning from the planet never pops it */
+	{
+		struct procfx_sunglow *g = &procfx_sunglow;
+		float aim = g->dr ? g->aim : MainRGBPalette[fe2_bgcol] & 0xffffff ? g->w : 0;
+
+		g->w += fmaxf (-0.04f, fminf (0.04f, aim - g->w));
+		g->dr = 0;
+	}
 
 	//add_node (&znode_start, 0);
 	znode_start = NULL;
@@ -5879,6 +5889,21 @@ void Nu_PutPlanet ()
 			air = STMemory_ReadWord (q + 4) & 0xfff;
 	}
 	cloud_look (mw, air >= 0, air, p.seed, p.cl_cover, p.cl_tint);
+	/* the sun's glow down in the air: the nearest planet's, the sun's
+	 * height over its horizon (light comes from -light, up is -centre) */
+	{
+		struct procfx_sunglow *g = &procfx_sunglow;
+		double d = sqrt (pdot (p.centre, p.centre)), dr = p.R > 0 ? d / p.R : 0;
+		double l = sqrt (pdot (p.light, p.light));
+
+		if (dr > 0 && l > 0 && (!g->dr || dr < g->dr)) {
+			g->dr = dr;
+			g->aim = air < 0 ? 0 : 1 - planet_ramp (1.02, PLANET_SKY_RATIO, dr);
+			g->y = pdot (p.light, p.centre) / (l * d);
+			for (i = 0; i < 3; i++)
+				g->air[i] = (air < 0 ? 0 : air >> (8 - 4*i) & 15) / 15.0f;
+		}
+	}
 
 	znode_wrlong (NU_PLANET);
 	/* S-7: through the checked writer */
