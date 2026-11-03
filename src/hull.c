@@ -542,50 +542,40 @@ static void paint_panel (const struct Panel *pl, const struct HullProfile *pr, i
 		rivets (pl);
 }
 
-/* The building profile: four storeys to the tile, each a row of concrete
- * or metal slabs (faint seams between them) with a strip of windows. Which
- * windows are lit is a hash of the seed, never the game's; HZ marks them
- * (hull_bake turns the mark into a little warm grime). */
+/* The building profile: four storeys to the tile (16384 units each), each
+ * a spandrel of cladding under a ribbon of glass. Every line lands on the
+ * grid the tile wraps on: panes a sixteenth of a tile wide between thin
+ * frames, a column every four panes through all the storeys and a floor
+ * line at each storey's foot, so a wall laid from a column and from its
+ * foot (gl.c, hull_storey_fit) is never cut mid-pane. One cladding for
+ * the tile, concrete or metal from the seed, so a block reads as one
+ * material and not a patchwork. HZ marks the glass for the shader (the
+ * sky in it); a pane's tone (blinds, a lit room) is a hash of the seed,
+ * never the game's. */
 static void paint_storeys (unsigned int seed)
 {
-	int sh = N / 4, r, x, y;
+	int sh = N / 4, pane = N / 16, g0 = (int) (0.40f * sh), g1 = (int) (0.88f * sh);
+	int m = S (5), cw = S (8), metal = hull_mix (seed) & 1, x, y;
 
-	for (r = 0; r < 4; r++) {
-		int pos = 0, k = 0, off = hull_mix (seed + r) % N, y0 = r * sh + (int) (0.40f * sh);
-		int wh = (int) (0.36f * sh), pane = S (48);
-		while (pos < N) {
-			unsigned int h = hull_mix (seed + r * 64 + k++);
-			int w = N / 4 * (1 + h % 3), metal = (h >> 8) % 3 == 0;
-			float tone = 1 + 0.08f * (((h >> 12) & 255) / 127.5f - 1);
-			if (N - pos < w + N / 8) w = N - pos;
-			for (y = 0; y < sh; y++)
-				for (x = 0; x < w; x++) {
-					float s = sstep (0.5f, 2.0f, imin4 (x, w - 1 - x, y, sh - 1 - y) / SC);
-					int i = IX (off + pos + x, r * sh + y);
-					float g = metal ? 1 : 0.92f + 0.16f * vnoise ((float) (off + pos + x) / N,
-										 (float) (r * sh + y) / N, 64, 64, h);
-					Hh[i] = -1.2f + 1.2f * s;
-					AL[i] = tone * g * (0.88f + 0.12f * s);
-					GS[i] = metal ? 0.5f : 0.15f;
-				}
-			pos += w;
-		}
-		for (y = 0; y < wh; y++)
-			for (x = 0; x < N; x++) {
-				int px = x % pane, i = IX (x, y0 + y);
-				int lit = (hull_mix (seed * 31 + r * 977 + x / pane) & 3) != 0 &&
-					  (hull_mix (seed + r * 7) & 1);
-				if (px < S (4) || y < S (3) || y >= wh - S (3)) {	/* frame, mullion */
-					Hh[i] -= 0.3f;
-					AL[i] *= 0.8f;
-					continue;
-				}
-				Hh[i] = -2.0f;
-				AL[i] = lit ? 1.4f : 0.8f;
-				GS[i] = 0.9f;
-				HZ[i] = lit;
+	for (y = 0; y < N; y++)
+		for (x = 0; x < N; x++) {
+			int i = IX (x, y), sy = y % sh, px = x % pane, c = x % (4 * pane);
+			unsigned int h = hull_mix (seed * 31 + (y / sh) * 977 + x / pane);
+			float gr = metal ? 1 : 0.94f + 0.12f * vnoise ((float) x / N, (float) y / N, 64, 64, seed);
+
+			if (c < cw || 4 * pane - c <= cw) {		/* column */
+				Hh[i] = 0.5f; AL[i] = 1.06f * gr; GS[i] = metal ? 0.55f : 0.2f;
+			} else if (sy < S (4)) {			/* floor line */
+				Hh[i] = -0.6f; AL[i] = 0.85f * gr; GS[i] = 0.3f;
+			} else if (sy < g0 || sy >= g1) {		/* spandrel */
+				Hh[i] = 0; AL[i] = gr; GS[i] = metal ? 0.5f : 0.15f;
+			} else if (px < m || sy < g0 + m || sy >= g1 - m) {	/* frame */
+				Hh[i] = -0.4f; AL[i] = 0.7f; GS[i] = 0.6f;
+			} else {					/* glass */
+				Hh[i] = -1.4f; AL[i] = 0.42f + 0.05f * (h & 3) + ((h & 15) == 0 ? 0.12f : 0);
+				GS[i] = 0.95f; HZ[i] = 1;
 			}
-	}
+		}
 }
 
 /* ---- maps ---- */
@@ -684,8 +674,6 @@ void hull_bake (int prof, int level, int n, unsigned char *t0, unsigned char *t1
 				    (h & 255) / 255.0f < 0.25f + 0.6f * pr->wear)
 					CH[i] = 1;
 			}
-		for (i = 0; prof == HP_BUILDING && i < cnt; i++)	/* lit windows: a touch warm */
-			GR[i] += 0.3f * HZ[i], HZ[i] = 0;
 		scratches = (int) (160 * pr->wear * SC * SC);
 		rs = hull_mix (seed + 99);
 		for (p = 0; p < scratches; p++) {
