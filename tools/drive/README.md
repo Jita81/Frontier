@@ -40,7 +40,7 @@ and writes that directory's `savs/`. `fi07-save.drv` leaves a save named
 | `--out` | | run directory, created if missing |
 | `--timeout` | 120 | wall-clock limit in seconds; then SIGTERM, then SIGKILL, to the game's PID only |
 | `--args` | | extra game arguments, one string |
-| `--pos` | `1300,640` | `SDL_VIDEO_WINDOW_POS` |
+| `--pos` | `$SDL_VIDEO_WINDOW_POS`, else `1840,30` | `SDL_VIDEO_WINDOW_POS` |
 | `--quiet` | | do not echo the game log |
 | `--lib` | `libfe2drive.dylib` here | the driver library |
 

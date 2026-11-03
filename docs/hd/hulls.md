@@ -514,7 +514,7 @@ Seeded ground props round a port (trees, shrubs, ice spires; W11b, #81)
 were tried and removed at the operator's call: props are not terrain and
 make no sense in a base. The effort on a port goes into its buildings.
 
-## Wear: each ship its own (B12, slice 1)
+## Wear: each ship its own (B12, slices 1 and 2)
 
 Two ships of one model used to carry the same plating to the texel. Style
 5 now lays a broad, low-frequency wear over each object: patches of warm
@@ -538,21 +538,45 @@ from ship to ship and stay put on the hull.
 - **The noise.** Two octaves of the procedural library's value noise
   (`pf_fbm`, the same "hash without sine" as the skies), in the model's
   own frame: the face's corners as the bays and decals use them
-  (`w = M(v - o)`), divided by 0.9 of the class's tile (`panel`), which is
-  some 4 to 6 plates, plus an offset hashed from the seed. It is passed as
-  a fifth texture coordinate (`hull_wear_at`), so the wear rides with the
-  hull, runs on across face edges with no seam and does not move as the
-  ship or the view turns. No game RNG and no clock.
-- **The bounds.** `ws = clamp(6 fbm - 2.6, -1, 1)` times the face's
-  weathering (`uQ.z`: half on a decal's host, 40% on a painted face, and it
-  fades with the plating far away). The colour is scaled by `1 + 0.11 ws`;
-  grime (`ws < 0`) also takes a slight warm tint (1.04, 1, 0.92) and fade
-  (`ws > 0`) loses up to 30% of its saturation. So a pixel moves at most
-  11% either way, and the bias leans the mean paler: on the player's ship
-  in the external view, plated pixels went +0.7% to +1.0% in mean
-  luminance, with the 5th to 95th percentile of the per-pixel ratio 0.93
-  to 1.09; the station's body moved -0.3%, inside the flight route's own
-  run-to-run noise.
+  (`w = M(v - o)`), divided by 0.9 of the model's tile (`panel` of the
+  model's class times its scale), which is some 4 to 6 plates, plus an
+  offset hashed from the seed. It is the model's tile, not the face's: a
+  station's hangar faces (drawn as station or deck) and an alcove door
+  (tile x 0.55) used to take their own, so the patches changed size from
+  face to face of one object; now one object has one wear scale. It is
+  passed as a fifth texture coordinate (`hull_wear_at`), so the wear rides
+  with the hull, runs on across face edges with no seam and does not move
+  as the ship or the view turns. No game RNG and no clock.
+- **The bounds.** `ws = 2 smoothstep(0.30, 0.58, fbm) - 1` times the
+  face's weathering (`uQ.z`: half on a decal's host, 40% on a painted
+  face, and it fades with the plating far away). The smoothstep gives the
+  patches firm edges (slice 1 had a linear ramp, `6 fbm - 2.6`, and a
+  gain of 0.11, about +1% and hard to see). Grime (`ws < 0`) scales the
+  colour by `1 + 0.16 ws` and takes a slight warm tint (1.04, 1, 0.92);
+  fade (`ws > 0`) scales it by `1 + 0.2 ws`. Grime is held lower than fade
+  so it reads as weathering, not dirt, and because one object's few
+  patches can fall mostly on the dark side: with an even +-0.2 the
+  player's ship in the traffic route came out 4.3% darker than base.
+  The centre, 0.44 of a noise whose mean is 0.5, leans the mean paler.
+- **Paint.** Fade loses up to 30% of its saturation, times the face's
+  bare-metal weight (`paint`: 1 on grey metal, 0 on a saturated face), so
+  bare metal looks sun-faded and a painted face keeps its colour instead
+  of going paler and greyer.
+- **Measured** (1600x1200, mean luminance of the plated pixels, base =
+  slice 1, flat = `--flat-wear`): the player's ship in the traffic route's
+  external view (runs line up; the pixels the wear moves) flat 81.0, base
+  81.7, slice 2 83.1: +1.7% on base, +2.6% on flat, the 5th to 95th
+  percentile of the per-pixel ratio to base 0.92 to 1.10. The port's
+  building in the landed route's view 3: +1.3% on base. The station in the
+  dock route's approach (runs do not line up, so the station's own pixels
+  in each frame): base 119.9, slice 2 123.4, flat 119.0, +2.9% on base.
+  The player's ship from behind in the dock route's autopilot shot: +5.0%
+  on base, but base and flat differ by 5.9% there, so that one is mostly
+  the route's run-to-run noise. None is darker than base. The 3D view's
+  draw time in the traffic route (`FE2_HULL_LOG=1`, three runs each,
+  one game at a time, alternating) has a median of 2.23 ms a frame for
+  base and 2.04 ms for slice 2: no cost beyond the noise (single runs'
+  medians range 1.8 to 2.5 ms).
 - **Where.** Style 5 with its shader only: every plated class (ships,
   stations, hangar, deck, buildings). A face with no model frame gets
   none. Styles 0 to 4, and style 5 in fixed function, have no object frame
@@ -561,11 +585,17 @@ from ship to ship and stay put on the hull.
   scene record logged carried the same seed, so the intro's ships are worn
   the same way each time it plays, and two of one model there would look
   alike.
-- **Off.** `--flat-wear` puts nothing extra in the stream, sends no fifth
-  coordinate and compiles the shader from its original single source, so
-  frames are those of the build before the wear (the landed route, which
-  repeats bit for bit, gave identical frames). `--flat-hulls` draws no
-  plating at all, so no wear either (identical frames too).
+- **Off.** `--flat-wear` puts nothing extra in the stream (the seed long
+  goes in only for style 5's context, and not under the switch), sends no
+  fifth coordinate, sets no wear coordinate and compiles the shader from
+  its original single source, so its frames are those of the build before
+  the wear (slice 1 checked that). In the landed route the 3D view of all three shots was bit for
+  bit that of slice 1's `--flat-wear`; view 3's whole frame matched only
+  within base's own run-to-run variance (the console clock can read a
+  second apart), not bit for bit. The traffic route does not repeat even
+  for base, so there it is within that variance too. `--flat-hulls` draws
+  no plating at all, so no wear either (in the landed route its 3D view
+  was bit for bit slice 1's `--flat-hulls`).
 
 ## Small objects (B10, slice 1b)
 
@@ -646,7 +676,7 @@ are listed in `hull_models[]` at x1, each with a class of its own.
 | `--hull-style 5` | the per-class material (default) |
 | `--hull-style 0..4` | the earlier looks, unchanged pixel for pixel: 0 fixed-function plating (`art/hull/plating.lum`), 1 big seeded texture, 2 panels, 3 bump and weathering, 4 a seeded profile per model (its own table, by the low byte of the word, as it always was) |
 | `--flat-hulls` | no plating at all: the game's flat faces exactly (buildings too) |
-| `--flat-wear` | every ship of a model plated alike: no per-object wear, the frames before the wear exactly |
+| `--flat-wear` | every ship of a model plated alike: no per-object wear, the 3D view of the build before the wear exactly |
 | `--flat-buildings` | a surface port's buildings flat, everything else as it is: the frames before the building class, exactly |
 | Ctrl+Shift+H | steps 5, off, 0, 1, 2, 3, 4, 5 |
 | `FE2_HULL_TILE=path` | every class takes this raw square grey tile (64 to 2048 a side, a power of two, 128 = x1.0), to try a tile without a rebuild; set but empty, every class bakes its seeded plating |
