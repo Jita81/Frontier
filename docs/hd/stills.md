@@ -233,6 +233,20 @@ land as before.
   (above the speed strip at the bottom), not as bare edge-to-edge lines. A box cut off
   on one side only keeps a faint line on that edge. The brackets stay while the missile
   pylons are in the bay in place of the scanner: the flight-view test lets them through.
+- The gun sight is found in two parts: the straight ticks at the centre, and the
+  diagonal velocity marker wherever it is. The marker is searched for only in the front
+  view while flying: last place first, then the centre, then one pass over the view.
+  Elsewhere only a centred marker is taken, as before. Both are drawn with a dark
+  outline under a lifted core, meant to hold against a bright star or planet (not yet
+  seen against one). The lock
+  brackets use the accent cyan with the same outline. When a pulse or mining laser
+  fires, the ticks' inner ends step out by up to 1 ST pixel and the cores take the
+  shot's hue for the first eighth of the recharge. Beam and plasma lasers never write
+  the recharge word (fe2.s:28447, :28471), so they get no response. A later slice could
+  key off the heat word (+190) rising. `--flat-sight` keeps the old thin sight, found as
+  one. Cost over the oracle tape (3106 frames): mask, frame and draw together p50
+  92 us against 93 us before, p95 211 us against 183 us. A search that finds nothing
+  (every front-view frame in flight with no marker seen) costs about 0.07 ms at p50.
 - The status panel's laser heat was not seen rising in play. The start ship's pulse
   laser cools faster than it heats, so its heat stays near 0. The hot states were
   checked with `FE2_HD_GAUGES` only.
