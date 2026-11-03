@@ -13,6 +13,7 @@
 #include <string.h>
 #include "../../src/planet.h"
 int flat_biomes = 0;
+int flat_relief = 0;
 static unsigned int seed = 1;
 static int airless;
 unsigned int psurf_seed (struct PSurf *s) { return seed; }

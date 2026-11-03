@@ -121,4 +121,6 @@ void controls_page_forget (void);
 void endcard_frame (void);
 void endcard_draw (void);
 
+#define DEATH_CAMERA	0x58	/* 704(a6): fx.c's death camera, held through the start menu */
+
 #endif /* BINDINGS_H */

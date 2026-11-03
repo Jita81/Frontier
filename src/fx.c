@@ -10,6 +10,7 @@
 #include "../fixups.h"	/* __DL5eb6_a6_base */
 #include "fx.h"
 #include "hull.h"	/* hull_intro_fx */
+#include "bindings.h"	/* DEATH_CAMERA */
 #define A6		__DL5eb6_a6_base
 #define A6_TOOLS_MODE	42	/* byte: negative while a 3D view fills the screen */
 #define A6_START_FLAGS	598	/* byte: bit 5 set in the intro and the start menu */
@@ -27,6 +28,8 @@
 #define M_EXPL		188	/* an explosion */
 #define M_LASER		190	/* a laser beam, put each frame of a shot */
 #define M_SMOKE		194	/* smoke and sparks, also a missile's trail */
+#define M_SHIELD	192	/* a shield hit: see shield_hit */
+#define M_SHELL		200	/* an ECM pulse or an energy bomb: see shell_put */
 /* The look of each type.  A laser's class is bits 3-6 of its type byte (the
  * game's own damage table is indexed so): 1-3 are pulse lasers ($88 the start
  * ship's, $9a mining), 4-9 beam lasers ($a1 the police's) and accelerators.
@@ -75,7 +78,7 @@ static int put_model (unsigned int *rec)
 	}	/* else as the base: the death camera's blasts and smoke, below */
 	if ((signed char) rb (A6 + A6_TOOLS_MODE) >= 0) return 0;
 	m = readable (*rec, 256) ? STMemory_ReadWord (*rec + OBJ_MODEL) & 0xffff : 0;
-	return in_flight () || ((m == M_EXPL || m == M_SMOKE) && rb (A6 + A6_STATE) == 0x58) ? m : 0;
+	return in_flight () || ((m == M_EXPL || m == M_SMOKE) && rb (A6 + A6_STATE) == DEATH_CAMERA) ? m : 0;
 }
 /* an integer hash, 0..1 (never the game's random numbers) */
 static float hashf (unsigned int a, unsigned int b)
@@ -94,7 +97,7 @@ static float vnoise (float x, float y)
 	return a + (b - a) * v;
 }
 
-enum { T_GLOW, T_PUFF, T_BALL, T_N, T_BEAM = -1 };	/* T_BEAM: a ring entry drawn as a beam */
+enum { T_GLOW, T_PUFF, T_BALL, T_SHELL, T_N, T_BEAM = -1 };	/* T_BEAM: a ring entry drawn as a beam */
 static GLuint tex[T_N];
 static void make_textures (void)
 {
@@ -107,6 +110,7 @@ static void make_textures (void)
 			float n = 0.65f * vnoise (3 * u + 8, 3 * v + 8) + 0.35f * vnoise (7 * u + 8, 7 * v + 8);
 			float r = sqrtf (u * u + v * v), a = t == T_GLOW ? 0.55f * expf (-4 * r * r) + 0.45f * expf (-28 * r * r)
 				: t == T_PUFF ? (r < 1 ? powf (1 - r, 1.2f) * (0.3f + 1.1f * n) : 0)
+				: t == T_SHELL ? (expf (-250 * (r - 0.82f) * (r - 0.82f)) + (r < 0.82f ? 0.12f * r : 0)) * (0.6f + 0.8f * n)	/* a rim round a faint inside */
 				: (0.9f - r + 0.2f * (n - 0.5f)) / 0.25f;	/* two gaussians; noise in a soft disc; a full disc, ragged */
 			px[2 * i] = t == T_GLOW ? 255 : 255 * (t == T_PUFF ? 0.65f + 0.35f * n : 0.8f + 0.2f * n);
 			px[2 * i + 1] = a > 1 ? 255 : a < 0 ? 0 : 255 * a;
@@ -181,7 +185,7 @@ static void ribbon (const float *a, const float *b, float wa, float wb, int trap
 #define NR	32
 static struct effect {
 	unsigned int t0, fade;	/* fade 0: a free slot */
-	int t;			/* T_BEAM or a glow, size pixels across growing by grow */
+	int t, drawn;		/* T_BEAM or a glow, size pixels across growing by grow; frames drawn as the clock ran */
 	float a[3], b[3], size, grow, rgb[3];
 	const struct look *lk;	/* a beam's */
 } ring[NR];
@@ -209,7 +213,7 @@ static void check_scene (void)
 	if (now != scene) memset (ring, 0, sizeof ring), scene = now;
 }
 
-static unsigned int n_frames, fx_game, intro_n;
+static unsigned int n_frames, fx_game, intro_n, fx_step, fx_rate;	/* the game's ms this frame, uncapped; the last running frame's */
 static unsigned long long game_was;	/* the game's clock last frame, ms */
 #define STEP	20	/* ms: the intro draws one frame a VBL, 50 Hz */
 static int drew_3d;		/* this frame has a 3D view */
@@ -242,13 +246,14 @@ void fx_frame_begin (void)
 	 * time acceleration, and a replay sees the same clock on the same frame */
 	unsigned long long now = (unsigned int) STMemory_ReadLong (A6 + A6_DAY) * 86400000ull +
 		((unsigned int) STMemory_ReadLong (A6 + A6_TOD) * 86400000ull >> 32), d = now - game_was;
-	game_was = now, n_frames++;
+	game_was = now, n_frames++, fx_step = d;
+	if (d) fx_rate = d;	/* a pause keeps the rate it stopped at */
 	drew_3d = 1;
 	for (n_mprev = 0; n_mprev < n_missiles; n_mprev++) memcpy (mprev[n_mprev], missiles[n_mprev].v[0], sizeof mprev[0]);
 	n_missiles = n_smoke = n_balls = n_mrot = 0;
 	/* the intro and start menu (bit 5 of 598(a6)), not the death camera's
 	 * (also bit 5; its state 0x58); the game data pointer is the game's here */
-	intro_on = !flat_fx && (rb (A6 + A6_START_FLAGS) & 0x20) && rb (A6 + A6_STATE) != 0x58;
+	intro_on = !flat_fx && (rb (A6 + A6_START_FLAGS) & 0x20) && rb (A6 + A6_STATE) != DEATH_CAMERA;
 	check_scene ();
 	/* at most 50 ms a frame, base's cap: at 10x a 90 ms beam would pass
 	 * between two frames unseen; a step back (a load) or a jump counts 50 */
@@ -258,12 +263,44 @@ void fx_frame_begin (void)
 	fx_ms = intro_on ? STEP * intro_n : fx_game;
 }
 
+static int corner (int reg, float *v);
+/* An ECM pulse or an energy bomb (model 200, fe2.s L44480): the game puts a
+ * copy of the object, its flags byte at +117 (bit 5 ECM, bit 6 bomb), twice a
+ * frame, randomly turned, as patches on a sphere round it.  Its countdown,
+ * +283, steps down a second of game time at a time to 0.  fx draws one shell
+ * per object, keyed by its seed (+118): p, 0 to 1, runs on the game's clock
+ * to the countdown's expected end, retimed at each step (pause holds it,
+ * acceleration runs it, a replay draws it the same). */
+#define OBJ_FLAGS	117
+#define OBJ_SEED	118
+#define OBJ_COUNT	283
+static struct shell { unsigned int key, seen, cd; unsigned long long t, end; float p, c[3], R; int bomb; } shells[4];
+static void shell_put (unsigned int rec)
+{
+	unsigned int a6 = GetReg (REG_A6), key = STMemory_ReadLong (rec + OBJ_SEED), cd = rb (rec + OBJ_COUNT), i, k;
+	struct shell *s = shells;
+	float v[3];
+	for (i = 0; i < 4; i++)
+		if (shells[i].key == key && n_frames - shells[i].seen <= 1) break;
+		else if (shells[i].seen < s->seen) s = &shells[i];
+	if (i < 4 && shells[i].seen == n_frames) return;	/* its second copy, or its next patch */
+	if (!readable (a6 - 16, 12) || !corner (REG_A0, v)) return;
+	if (i < 4) s = &shells[i];
+	else *s = (struct shell) { key, 0, cd, game_was, game_was + cd * 1000ull - 500, 0 };	/* new: mid-way through its first second */
+	if (cd != s->cd) s->cd = cd, s->end = game_was + cd * 1000ull;
+	if (game_was > s->t) s->p += (1 - s->p) * (s->end > s->t ? fminf ((float) (game_was - s->t) / (s->end - s->t), 1) : 1);	/* past its end: gone */
+	s->t = game_was, s->seen = n_frames, s->bomb = rb (rec + OBJ_FLAGS) >> 6 & 1;
+	for (k = 0; k < 3; k++) s->c[k] = (k == 2 ? -1.0f : 1.0f) * (int) STMemory_ReadLong (a6 - 16 + 4 * k);
+	if (!s->R) s->R = sqrtf (dist2 (v, s->c));	/* its sphere, once: the patches' corners differ by a few per cent */
+}
+
 int fx_tag_for (unsigned int tag[3])
 {
 	unsigned int rec;
 	int m = put_model (&rec);
-	if (!MISSILE (m) && m != M_SMOKE && (m != M_EXPL || flat_explosions)) return 0;
+	if (!MISSILE (m) && m != M_SMOKE && m != M_SHELL && (m != M_SHIELD || flat_shields) && (m != M_EXPL || flat_explosions)) return 0;
 	if (MISSILE (m)) missile_rot (rec);
+	if (m == M_SHELL) shell_put (rec);
 	tag[0] = m, tag[1] = m == M_SMOKE ? rb (rec + OBJ_AGE) : intro_fire, tag[2] = rec;
 	return 1;
 }
@@ -332,6 +369,7 @@ static struct { unsigned int kind, aux, rec; } cur;	/* the tag in force */
 static int in_complex;
 void fx_draw_tag (void **data) { memcpy (&cur, *data, sizeof cur); *data = (char *) *data + sizeof cur; }
 int fx_tagged (void) { return cur.kind != 0; }
+int fx_shell (void) { return cur.kind == M_SHELL; }
 /* a tag holds for one primitive, or for a shape to its end */
 void fx_prim_done (int mark)
 {
@@ -504,7 +542,7 @@ static float death_t (void) { return 1 - fminf ((unsigned int) STMemory_ReadLong
 static float bloom (void)
 {
 	float t = death_t ();
-	return flat_explosions || rb (A6 + A6_STATE) != 0x58 || t <= 0.2f || t >= 0.8f ? 0 : 0.35f * sinf (5.236f * (t - 0.2f));
+	return flat_explosions || rb (A6 + A6_STATE) != DEATH_CAMERA || t <= 0.2f || t >= 0.8f ? 0 : 0.35f * sinf (5.236f * (t - 0.2f));
 }
 static float bloom_at[2];	/* the blast on screen, -1 to 1 */
 static void death_bursts (const float *v, float R, float k, float g, unsigned int seed)
@@ -523,6 +561,27 @@ static void death_bursts (const float *v, float R, float k, float g, unsigned in
 	}
 }
 
+/* A shield hit (fe2.s L4452a): on its next drawn frame the game puts the hit
+ * ship as model 192, one flat circle round its centre the size of the ship's
+ * model, in place of the ship; one frame a hit, so a beam held on it keeps it
+ * up.  fx draws a bubble there instead, on those frames only, one a ship
+ * (keyed by its record, at most 4): t0 is its run's first frame on the game's
+ * clock, so a pause holds it and a replay draws it the same. */
+static struct bubble { unsigned int rec, seen, t0; float c[3], R; } bubbles[4];
+static int shield_hit (const float *v, float R)
+{
+	struct bubble *s = bubbles;
+	int i;
+	for (i = 0; i < 4; i++)
+		if (bubbles[i].rec == cur.rec && n_frames - bubbles[i].seen <= 1) break;
+		else if (bubbles[i].seen < s->seen) s = &bubbles[i];
+	if (i < 4) s = &bubbles[i];
+	else s->rec = cur.rec, s->t0 = fx_ms;	/* a new run */
+	s->seen = n_frames, s->R = R;
+	memcpy (s->c, v, sizeof s->c);
+	return 1;
+}
+
 int fx_circle (const int *iv, unsigned int d2, int r, int g, int b)
 {
 	float v[3] = { iv[0], iv[1], iv[2] }, R = 0.002f * ((short) d2 + (d2 >> 16) / 65536.0f) * fabsf (v[2]);
@@ -530,6 +589,7 @@ int fx_circle (const int *iv, unsigned int d2, int r, int g, int b)
 	unsigned int seed;
 	struct ball *o;
 	int fl, mis, i, n = 0, l;
+	if (cur.kind == M_SHIELD) return shield_hit (v, R);
 	if (cur.kind != M_EXPL) return 0;
 	for (i = 0; i < n_balls; i++)	/* an inner ring of a blob of this record drawn already */
 		if (balls[i].rec == cur.rec && (n++, R <= balls[i].R && dist2 (balls[i].v, v) < 0.25f * balls[i].R * balls[i].R))
@@ -561,7 +621,7 @@ int fx_circle (const int *iv, unsigned int d2, int r, int g, int b)
 	fireball (v, R, a, k, mis, c8 (g), spin);
 	if ((fl & 2) && !n) {	/* the event's sprays */
 		embers (v, top, a, k, mis, seed);
-		if (rb (A6 + A6_STATE) == 0x58 && rb (cur.rec + OBJ_OWNER) == 0xff) death_bursts (v, last, k, c8 (g), seed);
+		if (rb (A6 + A6_STATE) == DEATH_CAMERA && rb (cur.rec + OBJ_OWNER) == 0xff) death_bursts (v, last, k, c8 (g), seed);
 	}
 	relight (l);
 	return 1;
@@ -643,11 +703,17 @@ static void piece (const struct effect *e, float u0, float u1, float wa, float w
 	ribbon (p[0], p[1], wa + (wb - wa) * (u[0] - u0) / (u1 - u0), wa + (wb - wa) * (u[1] - u0) / (u1 - u0), 1);
 }
 
+/* from 10x up (200 ms of game time a frame, fx's clock 50) a pulse laser fires
+ * every fourth frame and its 90 ms bolt showed on two of them: it runs over
+ * three, in even steps, counted on running frames only, so a pause holds it */
+static int held (const struct effect *e)
+	{ return fx_rate >= 100 && e->t == T_BEAM && e->lk->shape == BOLT && !flat_lasers && e->drawn <= 3; }
 static void draw_effect (const struct effect *e)
 {
 	float age = (float) (fx_ms - e->t0) / e->fade, shim;
 	const float *c = e->rgb;
 	int i;
+	if (held (e)) age = fminf (age, 0.35f * fmaxf (e->drawn - 1, 0));	/* not before its first running frame */
 	if (e->t != T_BEAM) {
 		col (c[0], c[1], c[2], 1 - age);
 		sprite (e->a, e->size * (1 + e->grow * age) * px_world (e->a[2]), 0);
@@ -680,10 +746,66 @@ static void draw_effect (const struct effect *e)
 	}
 }
 
+/* a quad of the bound texture over the 3D view, centred at x, y (-1 to 1),
+ * h of the view's half-height across, square on screen */
+static void screen_quad (float x0, float y0, float h)
+{
+	int k;
+	glMatrixMode (GL_PROJECTION), glPushMatrix (), glLoadIdentity ();
+	glMatrixMode (GL_MODELVIEW), glPushMatrix (), glLoadIdentity ();
+	glBegin (GL_QUADS);
+	for (k = 0; k < 4; k++) {
+		float x = k == 1 || k == 2, y = k > 1;
+		glTexCoord2f (x, y);
+		glVertex2f (x0 + (2 * x - 1) * h * vp_h / vp_w, y0 + (2 * y - 1) * h);
+	}
+	glEnd ();
+	glPopMatrix (), glMatrixMode (GL_PROJECTION), glPopMatrix (), glMatrixMode (GL_MODELVIEW);
+}
+/* The shell: out from a tenth of the game's sphere to all of it, fading as it
+ * goes, an additive rim round a faint inside (ECM blue-white; a bomb's a hot
+ * white-orange with a second, brighter rim inside it).  Never over 0.45 of the
+ * view's height in radius, and gone as it reaches the eye: no whiteout close.
+ * From inside it (a ship's own, from its cockpit) its rim runs out past the
+ * view's edges on the same pulse, fading in from 0 as the rim passes the eye. */
+static void draw_shell (const struct shell *s)
+{
+	float g = 0.1f + 0.9f * (1 - (1 - s->p) * (1 - s->p)), R = g * s->R, d = sqrtf (dist2 (s->c, (float [3]) { 0, 0, 0 }));
+	float raw = R / px_world (s->c[2]), S = 0.45f * vp_h, spin = 6.283f * hashf (s->key, 200) + s->p, h = (0.8f + 0.9f * g) / 0.82f;
+	float a = GLOW_CAP * (1 - s->p) * sqrtf (1 - s->p) * fminf (fabsf (d - R) / (0.3f * fmaxf (d, R)), 1);
+	R = raw * S / (raw + S) * px_world (s->c[2]);
+	blend (1, T_SHELL);
+	col (s->bomb ? 1 : 0.6f, s->bomb ? 0.6f : 0.8f, s->bomb ? 0.25f : 1, a);
+	if (d < g * s->R) screen_quad (0, 0, h);
+	else sprite (s->c, R, spin);
+	if (s->bomb) col (1, 0.92f, 0.75f, 0.6f * a), d < g * s->R ? screen_quad (0, 0, 0.95f * h) : sprite (s->c, 0.95f * R, -spin);
+}
+
+/* The bubble: the shell's rim round a faint mottled haze (the game draws no
+ * ship on these frames), soft blue-cyan, its rim just inside the flat
+ * circle's edge, with a ripple running out from the centre every 240 ms (its
+ * phase seeded by the slot); brightest on a run's first frame, settling to
+ * half in about 150 ms.  Eased under 0.6 of the view's height, and faded out
+ * as the eye nears it: no whiteout at point-blank range. */
+static void draw_bubble (const struct bubble *s, int slot)
+{
+	float t = fx_ms - s->t0, d = sqrtf (dist2 (s->c, (float [3]) { 0, 0, 0 })), raw = s->R / px_world (s->c[2]), S = 0.6f * vp_h;
+	float u = fmodf (t / 240 + hashf (s->rec, slot), 1), spin = 6.283f * hashf (s->rec, M_SHIELD) + 0.002f * t;
+	float a = GLOW_CAP * (0.5f + 0.5f * expf (-t / 150)) * fminf (fmaxf (d / s->R - 1, 0), 1), R = raw * S / (raw + S) * px_world (s->c[2]);
+	blend (1, T_PUFF);
+	col (0.3f, 0.6f, 1, 0.3f * a);
+	sprite (s->c, 0.85f * R, spin);
+	blend (1, T_SHELL);
+	col (0.45f, 0.8f, 1, a);
+	sprite (s->c, R, spin);
+	col (0.6f, 0.9f, 1, 0.6f * a * (1 - u));
+	sprite (s->c, R * (0.3f + 0.7f * u), -spin);	/* the ripple */
+}
+
 void fx_frame_end (void)
 {
 	GLint vp[4];
-	int i, k, had_3d = drew_3d, l;
+	int i, had_3d = drew_3d, l;
 	float wash;
 	cur.kind = in_complex = drew_3d = 0;
 	if (flat_fx) return;
@@ -693,28 +815,23 @@ void fx_frame_end (void)
 	glGetIntegerv (GL_VIEWPORT, vp);
 	vp_h = vp[3] > 0 ? vp[3] : 480, vp_w = vp[2] > 0 ? vp[2] : 640;
 	if (wash > 0) {	/* the player's death: the bloom, a glow round the blast over the 3D view */
-		glMatrixMode (GL_PROJECTION), glPushMatrix (), glLoadIdentity ();
-		glMatrixMode (GL_MODELVIEW), glPushMatrix (), glLoadIdentity ();
 		l = unlit ();
 		blend (1, T_GLOW);
 		col (1, 0.93f, 0.82f, wash);
-		glBegin (GL_QUADS);
-		for (k = 0; k < 4; k++) {
-			float x = k == 1 || k == 2, y = k > 1;
-			glTexCoord2f (x, y);
-			glVertex2f (bloom_at[0] + (2 * x - 1) * 2.5f * vp_h / vp_w, bloom_at[1] + (2 * y - 1) * 2.5f);
-		}
-		glEnd ();
+		screen_quad (bloom_at[0], bloom_at[1], 2.5f);
 		blend_end ();
 		relight (l);
-		glPopMatrix (), glMatrixMode (GL_PROJECTION), glPopMatrix (), glMatrixMode (GL_MODELVIEW);
 	}
 	if (!scene) return;
 	blend (1, T_GLOW);
 	for (i = 0; i < n_missiles; i++) draw_plume (&missiles[i]);
-	for (i = 0; i < NR; i++)
-		if (ring[i].fade && fx_ms - ring[i].t0 >= ring[i].fade) ring[i].fade = 0;
+	for (i = 0; i < NR; i++) {
+		ring[i].drawn += fx_step && ring[i].fade;	/* the running frames it has been up */
+		if (ring[i].fade && fx_ms - ring[i].t0 >= ring[i].fade && !held (&ring[i])) ring[i].fade = 0;
 		else if (ring[i].fade) draw_effect (&ring[i]);
+	}
+	for (i = 0; i < 4; i++) if (shells[i].seen == n_frames) draw_shell (&shells[i]);
+	for (i = 0; i < 4; i++) if (bubbles[i].seen == n_frames) draw_bubble (&bubbles[i], i);
 	blend_end ();
 }
 

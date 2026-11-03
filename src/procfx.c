@@ -706,26 +706,48 @@ void procfx_star_put (struct procfx_star *s)
  * over the direction away from the star (the eye ray less its part along
  * the star's), turned into the sky's frame (a star's own rotation is not
  * kept where it is drawn) so they stay put when the ship rolls, seeded by
- * the star.  Deep tone by the disc. */
-static const char corona_glsl[] =
-	"uniform mat3 uRot;\n"
-	"uniform vec3 uC, uCol, uSeed;\n"
-	"uniform float uDisc;\n"
-	"void main () {\n"
-	"	vec2 q = gl_TexCoord[0].xy;\n"
-	"	float r = length (q);\n"
-	"	if (r >= 1.0) discard;\n"
-	"	float t = clamp ((r - uDisc) / (1.0 - uDisc), 0.0, 1.0);\n"
-	"	vec3 e = normalize (uC + vec3 (q, 0.0)), n = normalize (uC);\n"
-	"	vec3 d = e - n * dot (e, n), u = uRot * (d / max (length (d), 1e-6));\n"
-	"	float s = smoothstep (0.45, 0.8, pf_fbm (u * (2.5 + 1.5 * t) + uSeed, 4));\n"
-	"	float g = min (0.55 * pow (1.0 - t, 4.0) + 0.6 * s * pow (1.0 - t, 2.0), 1.0);\n"
-	"	gl_FragColor = vec4 (mix (uCol, uCol * uCol, (1.0 - t) * (1.0 - t)) * g, 1.0);\n"
-	"}\n";
+ * the star.  Deep tone by the disc.
+ *
+ * GROUND, down in a planet's air: a wider square with a soft glow, uGlow
+ * (its colour and weight) falling to 0 at the edge from uGDisc, the disc
+ * on this square; the space corona inside, on its own square (uSpace of
+ * this one), weighted by uMix. */
+#define CORONA_GLSL_TEXT \
+	"uniform mat3 uRot;\n" \
+	"uniform vec3 uC, uCol, uSeed;\n" \
+	"uniform float uDisc;\n" \
+	"#ifdef GROUND\n" \
+	"uniform vec3 uGlow;\n" \
+	"uniform float uSpace, uMix, uGDisc;\n" \
+	"#endif\n" \
+	"void main () {\n" \
+	"	vec2 q = gl_TexCoord[0].xy;\n" \
+	"#ifdef GROUND\n" \
+	"	float x = 1.0 - clamp ((length (q) - uGDisc) / (1.0 - uGDisc), 0.0, 1.0);\n" \
+	"	vec3 glow = uGlow * (0.55 * pow (x, 4.0) + 0.45 * x * x);\n" \
+	"	q /= uSpace;\n" \
+	"	if (uMix <= 0.0 || length (q) >= 1.0) { gl_FragColor = vec4 (min (glow, 1.0), 1.0); return; }\n" \
+	"#endif\n" \
+	"	float r = length (q);\n" \
+	"	if (r >= 1.0) discard;\n" \
+	"	float t = clamp ((r - uDisc) / (1.0 - uDisc), 0.0, 1.0);\n" \
+	"	vec3 e = normalize (uC + vec3 (q, 0.0)), n = normalize (uC);\n" \
+	"	vec3 d = e - n * dot (e, n), u = uRot * (d / max (length (d), 1e-6));\n" \
+	"	float s = smoothstep (0.45, 0.8, pf_fbm (u * (2.5 + 1.5 * t) + uSeed, 4));\n" \
+	"	float g = min (0.55 * pow (1.0 - t, 4.0) + 0.6 * s * pow (1.0 - t, 2.0), 1.0);\n" \
+	"	gl_FragColor = vec4 (mix (uCol, uCol * uCol, (1.0 - t) * (1.0 - t)) * g, 1.0);\n" \
+	"#ifdef GROUND\n" \
+	"	gl_FragColor.rgb = min (glow + uMix * gl_FragColor.rgb, 1.0);\n" \
+	"#endif\n" \
+	"}\n"
+static const char corona_glsl[] = CORONA_GLSL_TEXT;
+static const char sunglow_glsl[] = "#define GROUND\n" CORONA_GLSL_TEXT;
 
-static GLuint corona_prog;
-static int corona_failed;
-static GLint u_rot, u_c, u_col, u_cseed, u_disc;
+/* the space corona, and with GROUND */
+enum { UC_ROT, UC_C, UC_COL, UC_SEED, UC_DISC, UC_GLOW, UC_SPACE, UC_MIX, UC_GDISC, UC_N };
+static struct CoronaProg { GLuint prog; int failed; GLint u[UC_N]; } corona[2];
+
+struct procfx_sunglow procfx_sunglow;
 
 /* by star_light */
 static const float tone[L_MAX][3] = {
@@ -735,19 +757,33 @@ static const float tone[L_MAX][3] = {
 
 float procfx_corona_begin (const struct procfx_star *s, const float c[3], float r)
 {
+	static const char *un[UC_N] = { "uRot", "uC", "uCol", "uSeed", "uDisc", "uGlow", "uSpace",
+					"uMix", "uGDisc" };
 	/* three disc radii, and as far as the game's twinkle reaches */
-	float h = 3 * r - 0.016f * c[2];
+	float h = 3 * r - 0.016f * c[2], hs = h, w = procfx_sunglow.w, glow[3];
+	const float *col;
 	unsigned int z = s->seed;
+	int ground = !flat_sunglow && w > 0, i;
+	struct CoronaProg *k = &corona[ground];
 
-	if (flat_stars || !s->model || !procfx_sky_seen || c[2] >= 0 || corona_failed) return 0;
-	if (!corona_prog) {
-		corona_prog = procfx_program ("corona", corona_glsl);
-		if (!corona_prog) { corona_failed = 1; return 0; }
-		u_rot = glGetUniformLocation (corona_prog, "uRot");
-		u_c = glGetUniformLocation (corona_prog, "uC");
-		u_col = glGetUniformLocation (corona_prog, "uCol");
-		u_cseed = glGetUniformLocation (corona_prog, "uSeed");
-		u_disc = glGetUniformLocation (corona_prog, "uDisc");
+	/* the ground glow opens the gate in daylight too, where no sky is put */
+	if (flat_stars || !s->model || !(procfx_sky_seen || ground) || c[2] >= 0 || k->failed) return 0;
+	if (!k->prog) {
+		k->prog = procfx_program (ground ? "sun glow" : "corona", ground ? sunglow_glsl : corona_glsl);
+		if (!k->prog) { k->failed = 1; return 0; }
+		for (i = 0; i < UC_N; i++) k->u[i] = glGetUniformLocation (k->prog, un[i]);
+	}
+	col = tone[star_light (s->model)];
+	if (ground) {
+		/* wider and warmer as the sun sinks */
+		const float *air = procfx_sunglow.air, y = procfx_sunglow.y;
+		float low = 1 - fminf (1, fmaxf (0, (y - 0.02f) / 0.48f)), warm[3];
+
+		low = low * low * (3 - 2 * low);
+		warm[0] = 1; warm[1] = 1 - 0.35f * low; warm[2] = 1 - 0.6f * low;
+		h = hs + w * hs * (0.8f + 2.2f * low);
+		for (i = 0; i < 3; i++)
+			glow[i] = w * (0.35f + 0.25f * low) * 0.5f * (col[i] + air[i]) * warm[i];
 	}
 	/* screen blend: light over a bright disc tints it, never burns it white */
 	glPushAttrib (GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_CURRENT_BIT);
@@ -755,12 +791,19 @@ float procfx_corona_begin (const struct procfx_star *s, const float c[3], float 
 	glEnable (GL_BLEND);
 	glBlendFunc (GL_ONE, GL_ONE_MINUS_SRC_COLOR);
 	glBlendEquation (GL_FUNC_ADD);
-	glUseProgram (corona_prog);
-	pf_frame (u_rot, sky_rot);
-	glUniform3f (u_c, c[0] / h, c[1] / h, c[2] / h);
-	glUniform3fv (u_col, 1, tone[star_light (s->model)]);
-	glUniform3f (u_cseed, (z & 1023) / 37.0f, (z >> 10 & 1023) / 41.0f, (z >> 20 & 1023) / 43.0f);
-	glUniform1f (u_disc, r / h);
+	glUseProgram (k->prog);
+	pf_frame (k->u[UC_ROT], sky_rot);
+	glUniform3f (k->u[UC_C], c[0] / hs, c[1] / hs, c[2] / hs);
+	glUniform3fv (k->u[UC_COL], 1, col);
+	glUniform3f (k->u[UC_SEED], (z & 1023) / 37.0f, (z >> 10 & 1023) / 41.0f, (z >> 20 & 1023) / 43.0f);
+	glUniform1f (k->u[UC_DISC], r / hs);
+	if (ground) {
+		glUniform3fv (k->u[UC_GLOW], 1, glow);
+		glUniform1f (k->u[UC_SPACE], hs / h);
+		/* the streamers give way to the glow */
+		glUniform1f (k->u[UC_MIX], procfx_sky_seen ? 1 - w : 0);
+		glUniform1f (k->u[UC_GDISC], r / h);
+	}
 	return h;
 }
 
@@ -778,9 +821,11 @@ void procfx_forget (void)
 	if (pp_cl.prog) glDeleteProgram (pp_cl.prog);
 	if (pp_deck.prog) glDeleteProgram (pp_deck.prog);
 	if (end_prog) glDeleteProgram (end_prog);
-	if (corona_prog) glDeleteProgram (corona_prog);
-	sky_prog = end_prog = corona_prog = 0;
-	sky_failed = end_failed = corona_failed = 0;
+	if (corona[0].prog) glDeleteProgram (corona[0].prog);
+	if (corona[1].prog) glDeleteProgram (corona[1].prog);
+	sky_prog = end_prog = 0;
+	sky_failed = end_failed = 0;
+	memset (corona, 0, sizeof corona);
 	memset (&pp_base, 0, sizeof pp_base);
 	memset (&pp_cl, 0, sizeof pp_cl);
 	memset (&pp_deck, 0, sizeof pp_deck);

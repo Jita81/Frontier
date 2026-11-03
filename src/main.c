@@ -51,12 +51,15 @@ extern enum RENDERERS use_renderer;
 int delta_x, delta_y, abs_delta_x, abs_delta_y;
 int flat_fx = 0;	/* --flat-fx: no HD weapon effects (fx.c); both renderers link this */
 int flat_biomes = 0;	/* --flat-biomes: flat seas and land, no coasts or biomes (worlds.c) */
+int flat_relief = 0;	/* --flat-relief: no crater bowls or ground relief on airless bodies (worlds.c) */
 int flat_explosions = 0;	/* --flat-explosions: the base explosions, other HD weapon effects kept */
 int flat_buildings = 0;	/* --flat-buildings: a surface port's buildings unplated (hull.c) */
 int flat_lights = 0;	/* --flat-lights: no halo round the game's lights (gl.c) */
 int flat_clouds = 0;	/* --flat-clouds: no clouds on any world (procfx.c) */
+int flat_sunglow = 0;	/* --flat-sunglow: no glow round the sun down in the air (procfx.c) */
 int flat_lasers = 0;	/* --flat-lasers: every laser one plain ribbon, as before bolts and hot cores */
 int flat_missiles = 0;	/* --flat-missiles: a missile's plume only near its smoke, as before */
+int flat_shields = 0;	/* --flat-shields: the base flat shield flash, other HD weapon effects kept */
 int flat_hud_hits = 0;	/* --flat-hud-hits: one red hit flash, no critical tint (hddamage.c) */
 int flat_wear = 0;	/* --flat-wear: every ship of a model plated alike (gl.c) */
 int flat_sight = 0;	/* --flat-sight: the thin HD gun sight and brackets, as before (hdinst.c) */
@@ -238,7 +241,10 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --flat-starfield      The game's plain background stars (no magnitude or colour).\n"
                "  --flat-planets        Hard light zones and flat atmosphere rings.\n"
                "  --flat-biomes         Flat seas and land: no sea depth, beaches or biomes.\n"
+               "  --flat-relief         Airless bodies without crater bowls and ground\n"
+               "                        relief.\n"
                "  --flat-stars          No corona round the stars.\n"
+               "  --flat-sunglow        No glow round the sun down in a planet's air.\n"
                "  --flat-buildings      A surface port's buildings without plating\n"
                "                        and windows.\n"
                "  --flat-rings          The game's flat planetary rings.\n"
@@ -253,6 +259,7 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --flat-explosions     Flat explosions only (HD lasers and missiles kept).\n"
                "  --flat-lasers         Every laser one steady ribbon (no bolts or hot cores).\n"
                "  --flat-missiles       A missile's flame only near its smoke trail (as before).\n"
+               "  --flat-shields        The flat shield-hit flash (no HD shield bubble).\n"
                "  --flat-hud-hits       One red flash for every hit, no critical hull tint.\n"
                "  --flat-sight          The thin HD sight and the old lock brackets (as before).\n"
                "  --flat-exhaust        The game's flat engine plumes (no HD exhaust).\n"
@@ -286,8 +293,12 @@ void Main_ReadParameters(int argc, char *argv[])
 		flat_planets = 1;
 	  else if (!strcmp(argv[i], "--flat-biomes"))
 		flat_biomes = 1;
+	  else if (!strcmp(argv[i], "--flat-relief"))
+		flat_relief = 1;
 	  else if (!strcmp(argv[i], "--flat-stars"))
 		flat_stars = 1;
+	  else if (!strcmp(argv[i], "--flat-sunglow"))
+		flat_sunglow = 1;
 	  else if (!strcmp(argv[i], "--flat-buildings"))
 		flat_buildings = 1;
 	  else if (!strcmp(argv[i], "--flat-rings"))
@@ -312,6 +323,8 @@ void Main_ReadParameters(int argc, char *argv[])
 		flat_lasers = 1;
 	  else if (!strcmp(argv[i], "--flat-missiles"))
 		flat_missiles = 1;
+	  else if (!strcmp(argv[i], "--flat-shields"))
+		flat_shields = 1;
 	  else if (!strcmp(argv[i], "--flat-hud-hits"))
 		flat_hud_hits = 1;
 	  else if (!strcmp(argv[i], "--flat-sight"))

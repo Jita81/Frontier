@@ -24,7 +24,9 @@
  *
  * Layer 3, the star corona: soft light and streamers round a star's disc
  * in the colour of its class, the disc drawn over it; flight view only.
- * Off: --flat-stars.
+ * Down in a planet's air the streamers give way to a soft glow in the
+ * air's colour, wider and warmer as the sun sinks.  Off: --flat-stars;
+ * the glow alone: --flat-sunglow.
  */
 #ifndef _PROCFX_H
 #define _PROCFX_H
@@ -115,6 +117,15 @@ void procfx_star_put (struct procfx_star *s);
  * half side of the square to fill about c with the program bound, then
  * procfx_corona_end; 0, nothing bound, for none. */
 float procfx_corona_begin (const struct procfx_star *s, const float c[3], float r);
+/* --flat-sunglow (main.c): no glow round the sun down in the air */
+extern int flat_sunglow;
+/* Put by the nearest planet in sight (gl.c, Nu_PutPlanet): aim, the
+ * glow's weight there, 1 in its air to 0 at two radii out (0 airless);
+ * y, the sine of the sun's height over its horizon; air, its innermost
+ * layer's colour; dr, its distance in radii (0: none this view).  w, the
+ * weight drawn, eases toward aim view by view (Nu_3DViewInit). */
+struct procfx_sunglow { float w, aim, y, dr, air[3]; };
+extern struct procfx_sunglow procfx_sunglow;
 void procfx_corona_end (void);
 
 /* a layer's program: the shared noise library plus body, its main();
