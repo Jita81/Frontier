@@ -1,0 +1,276 @@
+# p2-shields.drv - C4 slice 1: shield hits, seen from outside the ship.
+#
+# Verifies: C4 (a)-(c) the shield bubble: on the frames the game draws a
+#         shield hit (model 192), one translucent rim-lit bubble round the
+#         hit ship in place of the flat circle; it holds still while paused.
+# Run:  record once with --pace in --args and --timeout 400 (docs/hd/weapons.md,
+#       Shield hits), then replay the tape to capture frames; the tape lives
+#       outside git.  Unpaced, the waits drift and the return fire may not land.
+# Expect: the ship hovering over its port in the external view; after three
+#         bursts of its own laser the port's patrols answer with beams, and
+#         each hit its shields take shows a bubble round it until they are
+#         gone; then a train of short pauses, some landing on a hit.
+# Start 2 (landed), new game only: remove the beam laser for the cash,
+# fit a pulse laser and a shield generator, lift off.
+wait 6000
+key space
+wait 2000
+key 2
+# Comms, shipyard, upgrades; More to the last page; remove the beam laser.
+wait 11000
+mouse 57 193
+click 200
+wait 2000
+mouse 270 52
+click 200
+wait 2000
+mouse 170 58
+click 200
+wait 2000
+mouse 298 160
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+mouse 141 102
+click 200
+wait 1500
+# Go back, upgrades: fit the pulse laser (first page).
+mouse 151 161
+click 200
+wait 1500
+mouse 170 58
+click 200
+wait 2000
+mouse 129 119
+click 200
+wait 1500
+# More to the last page: fit the shield generator.
+mouse 298 160
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+mouse 129 84
+click 200
+wait 1500
+# Comms, then launch: lift off and climb clear of the pad.
+mouse 57 193
+wait 300
+click 200
+wait 2500
+mouse 171 57
+wait 300
+click 200
+wait 3000
+mouse 263 193
+wait 300
+click 200
+wait 2000
+mouse 2 120
+wait 12000
+# Pitch the nose down a little with the right button held.
+mouse 160 100
+press right
+move 0 8 25 20
+release right
+wait 1000
+# The view icon twice for the external view.
+mouse 8 193
+wait 300
+click 200
+wait 2000
+mouse 8 193
+wait 300
+click 200
+wait 2000
+mouse 2 120
+wait 300
+sdlkey esc
+wait 500
+shot 01-ext
+sdlkey f1 shift
+wait 1000
+# Three bursts of the laser at the port; its patrols answer.
+log FIRE
+keydown space
+wait 3000
+keyup space
+wait 2000
+keydown space
+wait 3000
+keyup space
+wait 2000
+keydown space
+wait 3000
+keyup space
+# Short pauses while the return fire lands: a hit held in the pause stays still.
+wait 3000
+log PAUSES
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+sdlkey esc
+wait 700
+sdlkey f1 shift
+wait 120
+wait 2000
+sdlkey esc
+wait 500
+shot 02-after
+sdlkey f1 shift
+wait 1000
+quit
