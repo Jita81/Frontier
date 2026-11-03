@@ -5939,13 +5939,31 @@ static void soft_ring (const int *v, float s, float r, float g, float b)
 	soft_disc (v, 0.68f * s, 0.76f * s, 0.86f * s, 0.94f * s, r, g, b, 1);
 }
 
-/* a disc of a hypercloud (radius s) as a glow */
+#define HYPER_MAX_D2	0x3f0	/* the original skips a disc this big or bigger (its diameter
+				 * in ST pixels, the word both draws read); so does HD.  A word,
+				 * as there: a size of $10000 or more wraps, as it does there */
+#define A6_START_FLAGS	598	/* byte: bit 5 set in the intro and the start menu */
+
+/* a disc of a hypercloud (radius s) as a glow.  In a game, in four steps,
+ * outer first: together they cover 0.6 to 0.55 s, 0.44 to 0.8 s, 0.3 to s
+ * and a halo of 0.13 that fades out by 1.3 s, so the cloud's nested discs
+ * read as bands at about the old single soft disc's brightness.  The
+ * intro's glows (its engines and cloud) keep the soft disc: banded,
+ * they read as hard rings */
 static void hyper_glow (const int *v, float s, float r, float g, float b)
 {
+	static const float edge[4] = { 1.15f, 1, 0.8f, 0.55f }, alpha[4] = { 0.13f, 0.195f, 0.2f, 0.286f };
+	int i;
+
 	glPushAttrib (GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT);
 	glEnable (GL_BLEND);
 	glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	soft_disc (v, 0, 0, 0.5f * s, 1.3f * s, r, g, b, 0.55f);
+	if (STMemory_ReadByte (__DL5eb6_a6_base + A6_START_FLAGS) & 0x20)
+		soft_disc (v, 0, 0, 0.5f * s, 1.3f * s, r, g, b, 0.55f);
+	else for (i = 0; i < 4; i++) {
+		float w = i ? 0.015f : 0.15f;	/* the halo's soft edge, the bands' crisp ones */
+		soft_disc (v, 0, 0, (edge[i] - w) * s, (edge[i] + w) * s, r, g, b, alpha[i]);
+	}
 	glPopAttrib ();
 }
 
@@ -6092,7 +6110,8 @@ void Nu_DrawCircle (void **data)
 		return;
 	}
 	if (hyper & BLOB_HYPER) {
-		hyper_glow (v1, size, (unsigned char) r / 255.0f, (unsigned char) g / 255.0f, (unsigned char) b / 255.0f);
+		if ((dreg2 & 0xffff) < HYPER_MAX_D2)
+			hyper_glow (v1, size, (unsigned char) r / 255.0f, (unsigned char) g / 255.0f, (unsigned char) b / 255.0f);
 		return;
 	}
 	
@@ -6401,7 +6420,8 @@ void Nu_DrawBlob (void **data)
 		return;
 	}
 	if ((c & BLOB_HYPER) && rad >= 3) {
-		hyper_glow (v1, -0.002f * rad * v1[2], (c >> 8 & 15) / 15.0f, (c >> 4 & 15) / 15.0f, (c & 15) / 15.0f);
+		if (rad < HYPER_MAX_D2)
+			hyper_glow (v1, -0.002f * rad * v1[2], (c >> 8 & 15) / 15.0f, (c >> 4 & 15) / 15.0f, (c & 15) / 15.0f);
 		return;
 	}
 	if (c & BLOB_SKY) {
