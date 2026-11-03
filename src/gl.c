@@ -56,6 +56,7 @@ typedef void (*_GLUfuncptr)();
 #include "bindings.h"
 #include "hdtip.h"
 #include "hddamage.h"
+#include "shadows.h"
 /* MEM_SIZE, and the engine's variables by label address (__D<label>) */
 #include "../host.h"
 #include "../fixups.h"
@@ -1191,6 +1192,7 @@ enum NuPrimitive {
 	NU_COMPLEX_OVAL,
 	NU_FX,		/* fx.c's tag for the primitive that follows */
 	NU_RINGS,	/* skies.c: the complex shape that follows is a ring */
+	NU_SHADOW,	/* shadows.c: a landed ship's contact shadow */
 	NU_MAX
 };
 /* the next primitive belongs to a weapon, missile, explosion...: say which (fx.c) */
@@ -1276,6 +1278,7 @@ static void *add_detached_node (struct ZNode **root, unsigned int zval, int size
 
 static bool no_znodes_kthx;
 
+static struct ZNode **shadow_tree; static unsigned int shadow_z;	/* shadows.c: the landed ship's farthest face */
 /*
  * Nested z-trees.
  *
@@ -1384,6 +1387,7 @@ void Nu_3DViewInit ()
 	ztree_heads[0] = STMemory_ReadLong (__DL385d0_3dview_thing2);
 	scene_overflow = 0;
 	hull_latch ();
+	shadow_tree = NULL, shadows_begin (use_renderer == R_GL && !classic_ui && !pixel_art);
 }
 
 static void lighting_on (float light_vec[4], int rgb444_light_col, int rgb444_extra_col, int rgb444_obj_col)
@@ -4083,6 +4087,7 @@ static void hull_complex_end (void)
 	hull_cdoor = NULL;
 }
 
+#define shadow_put(f, n, r) do if (shadows_put (f, n, r) && znode_cur && (!shadow_tree || znode_cur->z >= shadow_z)) shadow_z = znode_cur->z, shadow_tree = cur_ztree; while (0)
 void Nu_PutTriangle ()
 {
 	if (use_renderer == R_OLD) return;
@@ -4093,6 +4098,7 @@ void Nu_PutTriangle ()
 	znode_wrvertex (GetReg (REG_A2)+4);
 	znode_wrcolor (GetReg (REG_D6));
 	if (hull_ctx) hull_put_ctx (3);
+	shadow_put (REG_A0, 3, 0);
 }
 void Nu_DrawTriangle (void **data)
 {
@@ -4144,6 +4150,7 @@ void Nu_PutQuad ()
 	znode_wrvertex (GetReg (REG_A3)+4);
 	znode_wrcolor (GetReg (REG_D6));
 	if (hull_ctx) hull_put_ctx (4);
+	shadow_put (REG_A0, 4, 0);
 }
 void Nu_DrawQuad (void **data)
 {
@@ -5725,6 +5732,7 @@ static int circle_slices (double size, double z)
 #define HYPERCLOUD	0xba	/* the cloud's model word (hull_model_key) */
 #define HYPERCLOUD_INTRO	0xd6	/* the intro's, in its scenes (hull_intro_part) */
 #define BLOB_HYPER	0x80000000u	/* on a blob's colour, a circle's tag word: one of the cloud's */
+#define BLOB_SKY	0x40000000u	/* on a blob's colour: one of the background stars (procfx) */
 
 static int hyper_hd (void)
 {
@@ -5988,6 +5996,7 @@ void Nu_PutCylinder ()
 	znode_wrlong (GetReg (REG_D1));
 	znode_wrlong (GetReg (REG_D5));
 	znode_wrlong (GetReg (REG_D4));
+	shadow_put (REG_A2, 2, MAX (GetReg (REG_D0) & 0xffff, GetReg (REG_D1) & 0xffff));
 }
 void Nu_DrawCylinder (void **data)
 {
@@ -6192,26 +6201,61 @@ void Nu_DrawOval (void **data)
 	glPopMatrix ();
 }
 
+/* A background star with its own magnitude and colour (procfx): the game's
+ * point (rad 0, or the dimmer rad 2 under some stars' core), and round the
+ * core of the brightest a soft glow out to 3 pixels at 1600x1200. */
+static void sky_star (const int *v, int rad, unsigned int c, unsigned int tag)
+{
+	float rgb[3] = { (c >> 8 & 15) / 15.0f, (c >> 4 & 15) / 15.0f, (c & 15) / 15.0f }, glow, size;
+	int k;
+
+	size = procfx_starfield_look (tag, rgb, &glow) * ((rad/2)+1) * px_scale ();
+	if (glow > 0 && rad < 2) {
+		glPushAttrib (GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_POINT_BIT);
+		glEnable (GL_BLEND);
+		glBlendFunc (GL_SRC_ALPHA, GL_ONE);
+		glEnable (GL_POINT_SMOOTH);
+		for (k = 3; k > 0; k--) {
+			glPointSize (size + 0.8f * k * px_scale ());
+			glColor4f (rgb[0], rgb[1], rgb[2], 0.35f * glow / k);
+			glBegin (GL_POINTS);
+				glVertex3iv (v);
+			glEnd ();
+		}
+		glPopAttrib ();
+	}
+	glColor3fv (rgb);
+	glPointSize (size);
+	glBegin (GL_POINTS);
+		glVertex3iv (v);
+	glEnd ();
+}
 void Nu_PutBlob ()
 {
+	unsigned int sky;
+
 	if (use_renderer == R_OLD) return;
 	put_fx ();
+	sky = procfx_starfield_put ();
 	znode_wrlong (NU_BLOB);
 	znode_wrvertex (GetReg (REG_A0)+4);
-	znode_wrlong ((GetReg (REG_D0) & ~BLOB_HYPER) | hyper_tag ());
-	znode_wrlong (GetReg (REG_D1));
+	znode_wrlong ((GetReg (REG_D0) & ~(BLOB_HYPER | BLOB_SKY)) | hyper_tag () | (sky ? BLOB_SKY : 0));
+	/* a sky star's tag in the radius word's high half (unread otherwise) */
+	znode_wrlong (sky ? (GetReg (REG_D1) & 0xffff) | (sky & 0xffff) << 16 : GetReg (REG_D1));
 }
 void Nu_DrawBlob (void **data)
 {
 	int v1[3];
-	unsigned int r, g, b, c;
+	unsigned int r, g, b, c, tag;
 	int rad;
 	int edges;
 	
 	znode_rdvertex (data, v1);
 	c = znode_rdlong (data);
 	split_rgb444i (c, &r, &g, &b);
-	rad = znode_rdlong (data) & 0xffff;
+	rad = znode_rdlong (data);
+	tag = (unsigned int) rad >> 16;
+	rad &= 0xffff;
 	edges = rad+4;
 	if (fx_blob (v1, rad, r >> 24, g >> 24, b >> 24)) return;
 	
@@ -6229,6 +6273,10 @@ void Nu_DrawBlob (void **data)
 	}
 	if ((c & BLOB_HYPER) && rad >= 3) {
 		hyper_glow (v1, -0.002f * rad * v1[2], (c >> 8 & 15) / 15.0f, (c >> 4 & 15) / 15.0f, (c & 15) / 15.0f);
+		return;
+	}
+	if (c & BLOB_SKY) {
+		sky_star (v1, rad, c, tag);
 		return;
 	}
 	glColor3ui (r, g, b);
@@ -6286,6 +6334,7 @@ void Nu_PutLine ()
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrvertex (GetReg (REG_A1)+4);
 	znode_wrcolor (GetReg (REG_D6));
+	shadow_put (REG_A0, 2, 0);
 }
 /* The 'you are here' label (the game's own stroke text) set like the HD
  * map names: scaled about its end by the marker to their cap height,
@@ -6496,7 +6545,8 @@ NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	&Nu_DrawSkyBand,
 	&Nu_DrawComplexOval,
 	&fx_draw_tag,
-	&Nu_DrawRings
+	&Nu_DrawRings,
+	&shadows_draw
 };
 
 /*
@@ -6737,6 +6787,9 @@ void Nu_DrawScreen ()
 	//printf ("Frame: %d znodes.\n", znode_buf_pos);
 	planet_ground_seen = 0;
 	galmap_update ();
+	if (shadow_tree && shadow_z + 1) { unsigned char *d = add_detached_node (shadow_tree, shadow_z + 1, 4 + SHADOW_BYTES);
+		if (d) *(int *) d = shadows_write (d + 4) ? NU_SHADOW : NU_END; }	/* NU_END: an empty node */
+	shadow_tree = NULL;
 	if (scene_overflow) {
 		/* S-6: the display lists are cut short somewhere: drop this
 		 * frame's 3D view rather than walk them */

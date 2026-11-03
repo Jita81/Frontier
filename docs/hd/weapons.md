@@ -152,6 +152,40 @@ gone by a quarter of its life. It fades out before it reaches the view's
 edge. It is drawn with the explosion, so in the painter's 3D view (no depth
 test) a nearer hull drawn after it covers it.
 
+Every explosion event (the same test as the ring) throws embers: n =
+round(8 + 16k) seeded sparks, 5 for a missile's. Ember i flies out along a
+seeded direction (flattened by half in depth) as
+pos = start + dir * reach * (1 - (1 - u)^2), where u is its own age (the
+explosion's age over its lifetime, which is 0.6 to 1 of the ember lifetime
+L) and reach is (2.5 + 3k) blob radii scaled by a seeded half to whole
+(1.25 to 2.5 radii at k = 0, up to 5.5 at k = 1; 0.75 to 1.5 for a
+missile's). L is 0.5 + 0.2k of the explosion's life (0.35
+for a missile's), so every ember is gone by 50% of life for a fighter, 70%
+for a heavy ship. Each ember is a short additive streak (from u - 0.07 to u)
+with a dot at its head, under a quarter of the flash across on screen
+(1.5 px plus 3% of the blob's pixel radius wide, at most 0.3 of it), its
+colour cooling from yellow-white through orange to deep red, its alpha
+GLOW_CAP * (1 - u^2). The seed is word +126 and byte +93 of the record, so a
+replay throws the same embers; nothing reads the game RNG or the clock.
+
+The player's own death (`704(a6)` = `$58` and byte +236 = `$ff`, the owner
+byte of the player's explosion) gets more. The death timer `722(a6)` is set
+to `$3cae6` when the death starts and run down by the frame step
+`14446(a6)` every frame (L63b9c); when it would go below zero the game goes
+to the game-over screen without writing it. fx reads t = 1 - timer/$3cae6,
+0 to 1 across the death camera:
+- Two or three seeded secondary bursts (a fireball and embers, no ring),
+  1 to 2 blob radii off the first blob, 0.7 of its size, starting at
+  t = 0.1, 0.28, 0.46 (plus a seeded 0 to 0.1) and each lasting 0.3 of t.
+- A slow white bloom: one additive warm-white glow sprite in screen space
+  over the 3D view (2.5 view-heights across), centred on the blast, alpha
+  0.35 * sin(pi (t - 0.2) / 0.6) from t = 0.2 to 0.8, so at most 0.35 and
+  zero well before the game-over screen. It is drawn after the hulls and
+  before the control panel; lighting is switched off and restored.
+
+The embers, bursts and bloom are part of the HD explosion: `--flat-explosions`
+and `--flat-fx` turn them off with the rest, and there is no new flag.
+
 Smoke (model 194) is an alpha-blended grey noise puff, opaque enough (0.8
 to 1) and large enough (about twice the game's circle) to read like base's
 grey clouds after the fire.
@@ -206,6 +240,22 @@ build of the parent commit:
   milliseconds), so the lighting change has no effect in flight.
 - Police beam lasers (`$a1`, class 4) firing at the player: green beams
   with a pale core.
+
+- Embers and the player's death (on the two death tapes, base | branch at
+  the same frames): yellow-white streaks out of the core in the first tenth
+  of the death camera, cooling and gone by mid-life; two or three secondary
+  bursts; the bloom rises and falls smoothly with no seam. The fire share is
+  at or above base on every frame checked; near-white rises only in the
+  bloom's frames (at most 2.5% of pixels) and is 0% as on base elsewhere.
+  The last death-camera frame differs from base only in the smoke trail,
+  which differs base against base too (smoke spins on wall-clock
+  milliseconds); the game-over screen's fade-in is wall-clock timed and
+  differs base against base, and the frames before and after it are
+  identical to base. `--flat-fx`: byte-identical to base on both tapes
+  except the fade-in frame. With the fx clock fixed (a scratch build), two
+  runs of a death tape give byte-identical frames. The 3D view plus fx
+  takes the same time as base at p50 (within 0.2 ms) with an explosion and
+  the bloom in view.
 
 Not yet seen on screen:
 - An explosion in flight close to the camera; the tapes have none before the

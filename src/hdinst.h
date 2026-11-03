@@ -16,6 +16,8 @@
 #ifndef _HDINST_H
 #define _HDINST_H
 
+extern int flat_sight;	/* --flat-sight: the thin sight, found as one, as before (main.c) */
+
 /* Call_BlitBmp: a bitmap w x h pixels at (x, y) on the screen at ST
  * address scr.  The scanner's starts noting its contacts; any other ends
  * that. */
