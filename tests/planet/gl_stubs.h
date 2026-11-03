@@ -86,6 +86,7 @@ void glPopAttrib (void) { }
 
 /* procfx layer 2: test_render.c runs both paths, smooth and exact */
 int flat_planets;
+int flat_clouds;
 static int planet_shader = 1;
 static float planet_rim_alpha, planet_sun_falloff;
 int procfx_planet_begin (const float lo[4], const float hi[4], float soft,
@@ -102,5 +103,10 @@ void procfx_planet_attr (double c, double mu, const double m[3])
 }
 void procfx_planet_bind (int unit, unsigned int tex) { (void) unit; glBindTexture (GL_TEXTURE_2D, tex); }
 void procfx_planet_end (void) { }
+void procfx_planet_clouds (const float cover[4], const float tint[3], const float rot[4],
+			   const float seed[3], const float eye[3], const float sun[3])
+{
+	(void) cover; (void) tint; (void) rot; (void) seed; (void) eye; (void) sun;
+}
 
 #endif
