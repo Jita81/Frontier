@@ -1,7 +1,7 @@
 /* fx: HD weapon effects for the GL renderer (fx.h, docs/hd/weapons.md).  The put
  * side reads the object drawn and tags its primitive; the draw side turns tagged
  * primitives into sprites and ribbons of two procedural textures.  Beams and
- * flares outlive their frame in a ring aged on game time (held while paused). */
+ * flares outlive their frame in a ring aged on the game's clock (held while paused). */
 #include <SDL.h>
 #include <SDL_opengl.h>
 #include "main.h"
@@ -14,7 +14,8 @@
 #define A6_TOOLS_MODE	42	/* byte: negative while a 3D view fills the screen */
 #define A6_START_FLAGS	598	/* byte: bit 5 set in the intro and the start menu */
 #define A6_VIEW		706	/* byte: 0 front, 1 rear, 2/3 turrets, 4 external */
-#define A6_TIME_RATE	10428	/* long: 0 while the game is paused */
+#define A6_TOD		524	/* long: the game's time of day, a whole day 2^32 */
+#define A6_DAY		528	/* long: the game's day */
 #define FRAME_OBJ	212	/* long at A6-212 during a put: the object drawn */
 #define OBJ_MODEL	90	/* word */
 #define OBJ_AGE		122	/* byte: a smoke puff's age, $7f down to 0 */
@@ -45,7 +46,7 @@ static const struct look { float rgb[3], core, halo, hz; int shape; } looks[20] 
 	{ { 1, .6f, .25f }, .1f, .3f, 25 }, { { 1, .35f, .75f }, .12f, .4f, 20 },	/* naval orange, nuclear magenta */
 };
 
-static unsigned int fx_ms;	/* game time in ms: stands still while paused */
+static unsigned int fx_ms;	/* the game's clock in ms: stands still while paused */
 static int rb (unsigned int a) { return STMemory_ReadByte (a) & 0xff; }
 static int readable (unsigned int a, unsigned int n) { return a <= MEM_SIZE && n <= MEM_SIZE - a; }
 /* a game is on (not the intro or start menu) and a 3D view fills the screen
@@ -208,7 +209,8 @@ static void check_scene (void)
 	if (now != scene) memset (ring, 0, sizeof ring), scene = now;
 }
 
-static unsigned int last_tick, n_frames, fx_wall, intro_n;
+static unsigned int n_frames, fx_game, intro_n;
+static unsigned long long game_was;	/* the game's clock last frame, ms */
 #define STEP	20	/* ms: the intro draws one frame a VBL, 50 Hz */
 static int drew_3d;		/* this frame has a 3D view */
 /* this frame's missile bodies and smoke puffs, for the plumes */
@@ -236,8 +238,11 @@ static void missile_rot (unsigned int rec)
 }
 void fx_frame_begin (void)
 {
-	unsigned int now = SDL_GetTicks (), d = now - last_tick;
-	last_tick = now, n_frames++;
+	/* the game's clock in ms: it stands still while paused, runs faster under
+	 * time acceleration, and a replay sees the same clock on the same frame */
+	unsigned long long now = (unsigned int) STMemory_ReadLong (A6 + A6_DAY) * 86400000ull +
+		((unsigned int) STMemory_ReadLong (A6 + A6_TOD) * 86400000ull >> 32), d = now - game_was;
+	game_was = now, n_frames++;
 	drew_3d = 1;
 	for (n_mprev = 0; n_mprev < n_missiles; n_mprev++) memcpy (mprev[n_mprev], missiles[n_mprev].v[0], sizeof mprev[0]);
 	n_missiles = n_smoke = n_balls = n_mrot = 0;
@@ -245,10 +250,12 @@ void fx_frame_begin (void)
 	 * (also bit 5; its state 0x58); the game data pointer is the game's here */
 	intro_on = !flat_fx && (rb (A6 + A6_START_FLAGS) & 0x20) && rb (A6 + A6_STATE) != 0x58;
 	check_scene ();
-	if (STMemory_ReadLong (A6 + A6_TIME_RATE) != 0) fx_wall += d > 50 ? 50 : d;
+	/* at most 50 ms a frame, base's cap: at 10x a 90 ms beam would pass
+	 * between two frames unseen; a step back (a load) or a jump counts 50 */
+	fx_game += d > 50 ? 50 : d;
 	/* the intro's time is its frames', so its replays draw the same */
 	intro_n = intro_on ? intro_n + 1 : 0;
-	fx_ms = intro_on ? STEP * intro_n : fx_wall;
+	fx_ms = intro_on ? STEP * intro_n : fx_game;
 }
 
 int fx_tag_for (unsigned int tag[3])
