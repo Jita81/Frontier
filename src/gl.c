@@ -1992,14 +1992,34 @@ extern int flat_exhaust;	/* --flat-exhaust (main.c) */
 /* HD engine exhaust (C5): 0 for the game's flat teardrop, else bit 31 and
  * a flicker byte. Only ships get it: the game's own table, the model words
  * above the missiles' ($a-$10) and below the stations' and ports' ($50 on),
- * so chimney flares and the intro's plumes keep the base look. The flicker
- * is seeded by the object's record and the game's clock (A6+524, which
- * stands still while paused), so a frame draws the same in every run. */
+ * so chimney flares keep the base look; in the intro (exhaust_intro) the
+ * parts with a hull_models[] row that is not a building's, or an EXHAUST
+ * row of hull_intro_fx. The flicker is seeded by the object's record and
+ * the game's clock (A6+524, which stands still while paused; it runs in
+ * the intro too), so a frame draws the same in every run; in the intro by
+ * the part and its plume's place in the frame as well, as a scene's ships
+ * share its record. */
+static unsigned int hull_frame_no;	/* the engine's frames, for hull_anim_bind and the plumes */
+static unsigned int exhaust_intro (void)
+{
+	static unsigned int frame, order;
+	unsigned int w = hull_intro_fx_part (), k = 0x80000000u | HULL_TAB_INTRO | HULL_TAB_SCENE | w;
+	float sc, off[2];
+
+	if (!w || (hull_intro_fx (w, NULL) != HULL_FX_EXHAUST &&
+		   (!hull_key_listed (k) || HULL_BUILDING (hull_class_of_key (k, &sc, off)))))
+		return 0;
+	if (frame != hull_frame_no) frame = hull_frame_no, order = 0;
+	order++;
+	return 0x80000000u | (hull_mix (STMemory_ReadLong (GetReg (REG_A6) - 212) ^
+		hull_mix (w ^ order << 16 ^ STMemory_ReadLong (__DL5eb6_a6_base + 524) >> 12)) & 0xff);
+}
 static unsigned int exhaust_put (void)
 {
 	unsigned int key = flat_exhaust || use_renderer != R_GL ? 0 : hull_model_key ();
 	unsigned int m = HULL_KEY_MODEL (key);
 
+	if (HULL_KEY_OK (key) && (key & HULL_TAB_INTRO)) return exhaust_intro ();
 	if (!HULL_KEY_OK (key) || m < 0x12 || m > 0x4e) return 0;
 	return 0x80000000u | (hull_mix (STMemory_ReadLong (GetReg (REG_A6) - 212) ^
 		hull_mix (STMemory_ReadLong (__DL5eb6_a6_base + 524) >> 12)) & 0xff);
@@ -2637,7 +2657,6 @@ struct HullCtx {
 /* this frame's triangles and quads carry a HullCtx: 1 for styles 0 to 4,
  * 2 for style 5 (with the face in the model's frame) */
 static int hull_ctx;
-static unsigned int hull_frame_no;	/* the engine's frames, for hull_anim_bind */
 static int hull_logging = -1;
 
 static int hull_log_on (void)
@@ -2743,6 +2762,18 @@ unsigned int hull_intro_part (void)
 	unsigned int key = hull_model_key ();
 
 	return key & HULL_TAB_SCENE ? key & 0xffff : 0;	/* 0 for the base intro */
+}
+
+/* hull.h: the part word for the intro's effects; its record 72's parts keep
+ * the record's key for the plating */
+unsigned int hull_intro_fx_part (void)
+{
+	unsigned int key = hull_record_key ();
+	int w;
+
+	if (!(key & HULL_TAB_INTRO) || hull_intro_base ()) return 0;
+	if (HULL_INTRO_SCENE (key & 0xffff)) return hull_intro_part ();
+	return (key & 0xffff) == 72 && (w = hull_part_word (key | HULL_TAB_SCENE)) >= 0 ? w : 0;
 }
 
 static int hull_model_unit (unsigned int key);
@@ -5895,7 +5926,6 @@ static int circle_slices (double size, double z)
 #define A6_HYPER_LEFT	722	/* long: transit time left */
 #define A6_HYPER_TOTAL	13882	/* long: the transit's time */
 #define HYPERCLOUD	0xba	/* the cloud's model word (hull_model_key) */
-#define HYPERCLOUD_INTRO	0xd6	/* the intro's, in its scenes (hull_intro_part) */
 #define BLOB_HYPER	0x80000000u	/* on a blob's colour, a circle's tag word: one of the cloud's */
 #define BLOB_SKY	0x40000000u	/* on a blob's colour: one of the background stars (procfx) */
 
@@ -5908,7 +5938,7 @@ static int hyper_hd (void)
 static unsigned int hyper_tag (void)
 {
 	return hyper_hd () && (hull_model_key () == (0x80000000u | HYPERCLOUD) ||
-			       hull_intro_part () == HYPERCLOUD_INTRO) ? BLOB_HYPER : 0;
+			       hull_intro_fx (hull_intro_fx_part (), NULL) == HULL_FX_CLOUD) ? BLOB_HYPER : 0;
 }
 
 /* A circle's tag word: BLOB_HYPER; CIRCLE_LIGHT when it is put while a
@@ -5975,13 +6005,31 @@ static void soft_ring (const int *v, float s, float r, float g, float b)
 	soft_disc (v, 0.68f * s, 0.76f * s, 0.86f * s, 0.94f * s, r, g, b, 1);
 }
 
-/* a disc of a hypercloud (radius s) as a glow */
+#define HYPER_MAX_D2	0x3f0	/* the original skips a disc this big or bigger (its diameter
+				 * in ST pixels, the word both draws read); so does HD.  A word,
+				 * as there: a size of $10000 or more wraps, as it does there */
+#define A6_START_FLAGS	598	/* byte: bit 5 set in the intro and the start menu */
+
+/* a disc of a hypercloud (radius s) as a glow.  In a game, in four steps,
+ * outer first: together they cover 0.6 to 0.55 s, 0.44 to 0.8 s, 0.3 to s
+ * and a halo of 0.13 that fades out by 1.3 s, so the cloud's nested discs
+ * read as bands at about the old single soft disc's brightness.  The
+ * intro's glows (its engines and cloud) keep the soft disc: banded,
+ * they read as hard rings */
 static void hyper_glow (const int *v, float s, float r, float g, float b)
 {
+	static const float edge[4] = { 1.15f, 1, 0.8f, 0.55f }, alpha[4] = { 0.13f, 0.195f, 0.2f, 0.286f };
+	int i;
+
 	glPushAttrib (GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT);
 	glEnable (GL_BLEND);
 	glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	soft_disc (v, 0, 0, 0.5f * s, 1.3f * s, r, g, b, 0.55f);
+	if (STMemory_ReadByte (__DL5eb6_a6_base + A6_START_FLAGS) & 0x20)
+		soft_disc (v, 0, 0, 0.5f * s, 1.3f * s, r, g, b, 0.55f);
+	else for (i = 0; i < 4; i++) {
+		float w = i ? 0.015f : 0.15f;	/* the halo's soft edge, the bands' crisp ones */
+		soft_disc (v, 0, 0, (edge[i] - w) * s, (edge[i] + w) * s, r, g, b, alpha[i]);
+	}
 	glPopAttrib ();
 }
 
@@ -6128,7 +6176,8 @@ void Nu_DrawCircle (void **data)
 		return;
 	}
 	if (hyper & BLOB_HYPER) {
-		hyper_glow (v1, size, (unsigned char) r / 255.0f, (unsigned char) g / 255.0f, (unsigned char) b / 255.0f);
+		if ((dreg2 & 0xffff) < HYPER_MAX_D2)
+			hyper_glow (v1, size, (unsigned char) r / 255.0f, (unsigned char) g / 255.0f, (unsigned char) b / 255.0f);
 		return;
 	}
 	
@@ -6437,7 +6486,8 @@ void Nu_DrawBlob (void **data)
 		return;
 	}
 	if ((c & BLOB_HYPER) && rad >= 3) {
-		hyper_glow (v1, -0.002f * rad * v1[2], (c >> 8 & 15) / 15.0f, (c >> 4 & 15) / 15.0f, (c & 15) / 15.0f);
+		if (rad < HYPER_MAX_D2)
+			hyper_glow (v1, -0.002f * rad * v1[2], (c >> 8 & 15) / 15.0f, (c >> 4 & 15) / 15.0f, (c & 15) / 15.0f);
 		return;
 	}
 	if (c & BLOB_SKY) {
@@ -6494,6 +6544,7 @@ void Nu_DrawPoint (void **data)
 void Nu_PutLine ()
 {
 	if (use_renderer == R_OLD) return;
+	if (use_renderer == R_GL && fx_laser_line ()) return;	/* an intro laser's beam: fx draws it */
 	put_fx ();
 	znode_wrlong (NU_LINE);
 	znode_wrvertex (GetReg (REG_A0)+4);

@@ -38,7 +38,6 @@
 
 #define A6			__DL5eb6_a6_base
 #define A6_PLAYER		674	/* long: the player's ship object */
-#define A6_STATE		704	/* byte: $58 from the death camera through the start menu */
 #define A6_GAME_DATA		14470	/* long: the game data, by object type */
 #define OBJ_TYPE		90	/* word: the object's type, into the game data */
 #define OBJ_SHIELD		180	/* word: shields now (the damage routine takes hits here first) */
@@ -282,9 +281,7 @@ void hddamage_draw (int fb_w, int fb_h)
 	Uint32 now = SDL_GetTicks (), fx_now, ms;
 
 	if (classic_ui || pixel_art || use_renderer == R_OLD) return;
-	/* after a death the player stays set and the start menu can pass the
-	 * flight test: state $58 (fx.c's death camera) is never flight */
-	flying = pl && bindings_in_flight_view (0, 0) && !controls_page_open () && (STMemory_ReadByte (A6 + A6_STATE) & 0xff) != 0x58;
+	flying = pl && hd_flight_overlays_ok () && !controls_page_open ();
 	dt = last_ms ? (now - last_ms) / 1000.0f : 0;
 	last_ms = now;
 	if (!pl) {

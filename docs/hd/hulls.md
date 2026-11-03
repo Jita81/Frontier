@@ -347,8 +347,6 @@ after the table for a part of record N.
 | 86 | the green ship, in several scenes | civilian, panels x2 |
 | 130 | the ship of modules | freighter, panels x6 |
 | 212 | the large ship of the first space scene | armour, panels x2 |
-| 214 | the hypercloud's discs | the game's hypercloud glow (`hyper_tag`, `HYPERCLOUD_INTRO`) |
-| 114, 116 | the fireball's circles | the explosion fireball (`fx.c`, `I_FIRE`, as model 188, drawn young: the scene's record has no clock) |
 
 - **Classes are by role.** Comparing the first 40 header bytes of every
   intro model with every game model finds twins only for 90, 192, 194,
@@ -360,10 +358,39 @@ after the table for a part of record N.
 - **Planets and stars:** the intro's planet is a circle (90, a twin of a
   game circle), and its sun a set of circles, not the game's planet or
   star objects, so the HD planet and the star corona do not draw them.
-- **Lasers and plumes:** the scenes' beams and engine plumes are not
-  matched to a model and keep their look; so does the orange fireball of
-  the credits scene, after the HD one, whose model is not identified (only
-  the first, 114/116, is).
+- **Effects (B15):** the intro's clouds, fireballs and beams are parts
+  too, named by a small table of their own (`hull.c`, `intro_fx`, read by
+  `hull_intro_fx`), apart from `hull_models[]`. Its key is
+  `hull_intro_fx_part` (`gl.c`): the part word in the scenes and also in
+  record 72 (the credits and the start menu), whose parts are the scenes'
+  words while its plating keeps the record's key. Every word below was
+  found by logging each line, teardrop, blob and circle put on the idle
+  intro with its record, part word and colour (a scratch logger, not in
+  the tree).
+
+| intro word | what | HD path |
+|---|---|---|
+| 214 | the hypercloud's discs (blue) | the game's hypercloud glow (`hyper_tag`, `BLOB_HYPER`); in the scenes since #65, in record 72 new |
+| 94 | an orange cloud a ship leaves | the hypercloud glow |
+| 96 | a pale cloud a ship comes out of | the hypercloud glow |
+| 114, 116 | the fireball's circles, in a scene and in the credits | the explosion fireball (`fx.c`, `put_model`, as model 188) |
+| 80, 92, 132 | red beams (ground and space) | a red pulse laser, look 1: travelling bolts with a muzzle glow in the beam's colour (`fx_laser_line`) |
+| 86's plumes | the green ship's engines | the HD plume (halo, white core, flicker; `exhaust_intro`) |
+
+- **Plumes:** a part's plume is HD when its word has a `hull_models[]`
+  row that is not a building's (86 is the only such ship with a plume) or
+  an `EXHAUST` row of `intro_fx` (none yet). The flicker is seeded by the
+  record, the word, the plume's place in the frame and the game's clock,
+  so two ships of one scene do not flicker in step and a replay draws the
+  same.
+- **Left flat:** 144's orange teardrops (on a part not listed: flames,
+  not a ship's engine), the red beams with no part word in records 56 and
+  68 (part -1, the record's own model), 126's circles beside the fireball
+  and the lines and circles not listed above.
+- **Clock:** in the intro (bit 5 of 598(a6) set, not the death camera's
+  state `$58` at 704(a6), and not `--flat-fx`) fx's clock is 20 ms per
+  drawn 3D frame, not the wall clock, so a fireball's age and a bolt's
+  travel are the same in every run.
 - **Off:** `--classic-ui`, `--flat-hulls`, `--flat-fx`, `--pixel-*`
   (`hull_intro_base`: a scene's key is then its record's, as in the base,
   never marked `HULL_TAB_SCENE`, so the rows above are not reached and
@@ -371,13 +398,20 @@ after the table for a part of record N.
 - **Lights:** #57's halo tests the record's key (`hull_record_key`), as in
   the base, so a part whose word is in the stars' range keeps its halo.
 - **Gate:** `fx.c`'s `put_model` tests the intro first (bit 5 of 598(a6)
-  set and `hull_intro_part` 114 or 116), then the flight and death-camera
-  gate, so the intro does not depend on 42(a6) and a death-camera record is
-  never read as an intro part. The fireball takes the explosions' layered
-  look (weapons.md).
-- **No carry-over:** a fireball is drawn from its circle at once; nothing
-  is added to fx's list of live effects, so nothing reaches the menu or a
-  game started from it.
+  set and `hull_intro_fx` FIRE, or LASER in an intro frame, for
+  `hull_intro_fx_part`); any other part falls through to the flight and
+  death-camera gate, as in the base, so the intro does not depend on
+  42(a6) and the death camera (bit 5 set too, but the game's table, so no
+  intro part) keeps its blasts and smoke. The intro frame is latched in
+  `fx_frame_begin` (bit 5 set and 704(a6) not `$58`), never re-read at
+  draw time; the game data pointer cannot latch it, as it names the
+  intro's table only while a model is drawn. The fireball takes the
+  explosions' layered look (weapons.md).
+- **No carry-over:** a fireball is drawn from its circle at once and a
+  beam's bolt and glow live 90 ms of the intro's clock, and a change of
+  scene empties fx's ring; on the newgame tape no pixel of the first
+  flight frames moves by more than 24 of 255 against the base (run to run
+  noise, no beam or glow).
 
 ## A surface port's buildings
 
@@ -432,6 +466,10 @@ profile's own seed, never from the game:
 The class's graze (2.30, the station's) fades a wall seen edge on to its
 own colour, and the footprint fade does the same far away, so the
 windows do not shimmer from the air.
+
+Seeded ground props round a port (trees, shrubs, ice spires; W11b, #81)
+were tried and removed at the operator's call: props are not terrain and
+make no sense in a base. The effort on a port goes into its buildings.
 
 ## Wear: each ship its own (B12, slice 1)
 
@@ -680,7 +718,8 @@ Known limits:
   290 door's fixed edge stays at the same tile coordinate through the
   slide and through the closed door's origin jump), not yet by eye.
 - Some of the intro's parts (76, 206 and others above) are not identified
-  and are flat.
+  and are flat. Of its effects, 144's flames, the part -1 beams of records
+  56 and 68 and 126's circles keep the base look (above).
 - A surface port's buildings are told from its ground and signs only by
   facing, shape and size (the port is one model): a roof that is not
   level, a wall under 0.6 of a tile, or a large sign board of its own

@@ -321,6 +321,21 @@ the core.
   front of a star (the game's draw order should cover it); frame time; a
   star near enough to take the sphere path (it would get no corona).
 
+## Prototype notes: the hypercloud
+
+The cloud is the game's five nested discs; `hyper_glow` draws each as four
+alpha steps (cover 0.6, 0.44 and 0.3, then a halo gone by 1.3x the radius),
+so they read as bands at about the old single soft disc's brightness (the
+intro's glows keep the single soft disc: banded, they read as hard rings).  The
+original's circle draw skips a disc whose size word `d2` (its diameter in
+ST pixels, the word `Nu_DrawBlob` and `Nu_DrawCircle` both read) is `$3f0`
+or more (fe2.s:6560), so its cloud is gone once you are close; HD drew
+those too, up to about 30 times the screen, and a close pass ended in a
+flat wash.  Both hyper branches now return at `HYPER_MAX_D2` (`$3f0`).
+Just under the limit the inner disc still fills the view, as the
+original's does.  The old renderer, `--classic-ui`, `--flat-hulls` and
+`--pixel-art` never tag a hyper disc, so they are unchanged.
+
 ## Lights
 
 The game marks stations, docking bays and landing pads with blinking
@@ -421,17 +436,26 @@ shader, no new file.
 - **Which plumes.**  Decided at put time and carried as one extra znode
   long: `hull_model_key()` must name the game's own table and a model word
   from `$12` to `$4e` (above the missiles, below stations and ports).
-  Chimney flares and the intro's plumes keep the game's flat fill.  The
-  range is inferred from the model tables; only the player's own hull has
-  been seen to take it.
+  Chimney flares keep the game's flat fill.  The range is inferred from
+  the model tables; only the player's own hull has been seen to take it.
+  In the intro (`exhaust_intro`) a part's plume is HD when its word has a
+  `hull_models[]` row that is not a building's or an EXHAUST row of
+  `hull_intro_fx` (hulls.md, the intro's scenes): the green ship's (86) in
+  its scenes and its credits.  Its flicker byte also hashes the part's
+  word and the plume's order in the frame, since a scene's ships share
+  one record, so two ships in one scene flicker apart.  The intro's
+  orange flames (144) keep the flat fill.  `--classic-ui`, `--flat-hulls`,
+  `--flat-fx` and `--pixel-*` keep the base intro.
 - **Small plumes.**  The engine draws a plume whose projected radius is 8
   or less as a 3D line (fe2.s, the branch before the `$70` hostcall), so it
   never reaches the teardrop and keeps the game's look.
 - **Switches.**  `--flat-exhaust` puts a 0 and the draw takes the game's
   path: frames byte-identical to the base build.  `--old-renderer` never
   puts a teardrop, so it is unaffected.
-- **Not checked.**  Another ship's plume; an in-game chimney flare (the
-  intro's flares were checked); missiles.  The plume code does not test
+- **Not checked.**  Another ship's plume in flight; an in-game chimney
+  flare (the intro's flares were checked); missiles.  The intro's plumes
+  were checked on its idle tape (two plumes of one 86 ship, frame 8300;
+  86 ships in several scenes).  In flight the plume code does not test
   `--flat-fx`, `--classic-ui` or `--pixel-art`; whether they should also
   turn it off is open.
 
