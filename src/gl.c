@@ -3072,14 +3072,21 @@ static int hull_obj_coords (unsigned int key, unsigned int seed, unsigned int a6
 	if (a & HULL_ANIM_FLAT) wok |= 4;
 	/* a port's building is mapped in the port's frame, whose ground is its
 	 * y = 0 (a part's own y = 0 can be well over or under it), and known
-	 * by where its part stands on the port, in cells of two tiles: the
-	 * facade it takes (hull_paint5) in bits 4 to 11 */
+	 * by where the port's models place it: each part's frame keeps at -202
+	 * the address of the sub-object command that linked it, exact and the
+	 * same every frame, and the chain of them up to the object names the
+	 * part (one model placed twice is two buildings). A part placed by a
+	 * model of scale 2^10 or under (-208) is a piece of that model's
+	 * building and takes its facade. The facade (hull_paint5) in bits 4
+	 * to 11 */
 	if (cls == HC_BUILDING) {
-		unsigned int h = key & 0xffff;
-		for (j = 0; j < 3; j += 2) {
-			double t = 0;
-			for (k = 0; k < 3; k++) t += Mo[3*j+k] * ((double) o[k] - oo[k]);
-			h = hull_mix (h ^ (unsigned int) (int) floor (t / 131072.0));
+		unsigned int f = a6, up, rec = STMemory_ReadLong (a6 - 212), h = key & 0xffff;
+		int piece = 1;
+		for (k = 0; k < 8 && f != rec && st_readable (f - 208, 212) &&
+			    (up = STMemory_ReadLong (f)) != rec && up && st_readable (up - 208, 2); k++, f = up) {
+			if (piece && (short) STMemory_ReadWord (up - 208) <= 10) continue;
+			piece = 0;
+			h = hull_mix (h ^ (STMemory_ReadLong (f - 202) - STMemory_ReadLong (__DL973c_game_data)));
 		}
 		memcpy (w, wo, n * sizeof wo[0]);
 		wok |= (h & 255) << 4;
