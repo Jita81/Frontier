@@ -1745,6 +1745,7 @@ void Nu_DrawComplexSNext (void **data)
 	} else {
 		GLdouble v[3];
 		znode_rdvertexd (data, v);
+		if (fx_shell ()) return;	/* an ECM or bomb patch: fx draws its shell */
 		push_contour_vertex (v);
 	}
 }
