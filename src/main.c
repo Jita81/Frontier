@@ -54,6 +54,7 @@ int flat_biomes = 0;	/* --flat-biomes: flat seas and land, no coasts or biomes (
 int flat_relief = 0;	/* --flat-relief: no crater bowls or ground relief on airless bodies (worlds.c) */
 int flat_explosions = 0;	/* --flat-explosions: the base explosions, other HD weapon effects kept */
 int flat_buildings = 0;	/* --flat-buildings: a surface port's buildings unplated (hull.c) */
+int flat_pads = 0;	/* --flat-pads: a port's ground, roads and taxi strips flat (gl.c) */
 int flat_lights = 0;	/* --flat-lights: no halo round the game's lights (gl.c) */
 int flat_clouds = 0;	/* --flat-clouds: no clouds on any world (procfx.c) */
 int flat_sunglow = 0;	/* --flat-sunglow: no glow round the sun down in the air (procfx.c) */
@@ -247,6 +248,8 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --flat-sunglow        No glow round the sun down in a planet's air.\n"
                "  --flat-buildings      A surface port's buildings without plating\n"
                "                        and windows.\n"
+               "  --flat-pads           A port's apron, roads and taxi strips flat grey\n"
+               "                        (no grain, slab joints or wear).\n"
                "  --flat-rings          The game's flat planetary rings.\n"
                "  --flat-lights         The game's lights without their soft halo.\n"
                "  --flat-clouds         No clouds on the worlds.\n"
@@ -301,6 +304,8 @@ void Main_ReadParameters(int argc, char *argv[])
 		flat_sunglow = 1;
 	  else if (!strcmp(argv[i], "--flat-buildings"))
 		flat_buildings = 1;
+	  else if (!strcmp(argv[i], "--flat-pads"))
+		flat_pads = 1;
 	  else if (!strcmp(argv[i], "--flat-rings"))
 		flat_rings = 1;
 	  else if (!strcmp(argv[i], "--flat-lights"))

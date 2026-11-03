@@ -2721,6 +2721,7 @@ static void hull_latch (void)
 
 static inline int st_readable (unsigned int addr, unsigned int len);
 extern int flat_wear;	/* --flat-wear (main.c) */
+extern int flat_pads;	/* --flat-pads (main.c): a port's ground flat, gnd_begin */
 
 /* the object's own random seed, the long at +118 of its record (as the
  * planets and stars use it): fixed for one ship, its parts and its whole
@@ -4160,6 +4161,110 @@ static void CALLBACK hull_tess_vertex (GLvoid *vertex, GLvoid *poly_data)
 	glVertex4d (d[0] * w, d[1] * w, d[2] * w, w);
 }
 
+#ifdef HULL_SHADERS
+/*
+ * A port's ground (models 96 and 98): its apron, roads and taxi strips are
+ * grey shapes lying flat at the model's foot. Drawn by gnd_fs in the
+ * model's frame (vOb, in building tiles: x and z run along the ground) as
+ * cast concrete: a fine grain, slabs a third of a tile across with thin
+ * dark joints and a faint tone of their own, and broad worn patches; all
+ * of them scale the shape's colour (its hue kept, its mean about the
+ * same) and fade as their cells shrink toward a pixel, so the far ground
+ * stays the game's flat grey. Grass, water and everything else stay flat.
+ */
+static const char gnd_fs[] =
+	"#version 120\n"
+	"varying vec4 vCol, vOb;\n"
+	"float gnd_fade (float f, float k) { return 1.0 - smoothstep (0.15, 0.6, f * k); }\n"
+	/* value noise on the ground's plane: 4 lattice hashes, not pf_noise's 8 */
+	"float gnd_noise (vec2 x, float c)\n"
+	"{\n"
+	"	vec2 i = floor (x), f = fract (x);\n"
+	"	f = f * f * (3.0 - 2.0 * f);\n"
+	"	return mix (mix (pf_hash (vec3 (i, c)), pf_hash (vec3 (i + vec2 (1.0, 0.0), c)), f.x),\n"
+	"	            mix (pf_hash (vec3 (i + vec2 (0.0, 1.0), c)), pf_hash (vec3 (i + 1.0, c)), f.x), f.y);\n"
+	"}\n"
+	"void main ()\n"
+	"{\n"
+	"	vec2 p = vOb.xz, q = p * 3.0, fq = fwidth (q), d = 0.5 - abs (fract (q) - 0.5);\n"
+	"	float f = max (fwidth (p).x, fwidth (p).y), jf = gnd_fade (max (fq.x, fq.y), 1.0);\n"
+	"	float g = 0.07 * (gnd_noise (p * 64.0, 0.5) - 0.5) * gnd_fade (f, 64.0)\n"
+	"		+ 0.045 * (gnd_noise (p * 16.0, 3.5) - 0.5) * gnd_fade (f, 16.0);\n"
+	"	float j = max (1.0 - smoothstep (0.012, 0.012 + fq.x, d.x), 1.0 - smoothstep (0.012, 0.012 + fq.y, d.y));\n"
+	"	float s = 0.06 * (pf_hash (vec3 (floor (q), 0.5)) - 0.5);\n"
+	"	float w = 0.12 * (0.67 * gnd_noise (p * 0.6, 1.3) + 0.33 * gnd_noise (p * 1.22, 7.1) - 0.5) * gnd_fade (f, 2.0);\n"
+	"	gl_FragColor = vec4 (vCol.rgb * (1.0 + g + w + jf * (s + 0.18 * (0.047 - j))), vCol.a);\n"
+	"}\n";
+static GLuint gnd_prog;
+static int gnd_failed;
+static double gnd_tile;		/* the model's building tile */
+
+static void CALLBACK gnd_tess_vertex (GLvoid *vertex, GLvoid *poly_data)
+{
+	const GLdouble *d = (const GLdouble *) vertex;
+	double e[3], w;
+	float ob[4] = { 0, 0, 0, 1 };
+	int j, k;
+
+	glColor3ub (complex_col[0], complex_col[1], complex_col[2]);
+	if (!gluUnProject (d[0], d[1], d[2], tessModelMatrix, tessProjMatrix, tessViewport,
+			   &e[0], &e[1], &e[2])) {
+		glVertex3dv (d);
+		return;
+	}
+	w = hull_cw[0] * e[0] + hull_cw[1] * e[1] + hull_cw[2] * e[2] + hull_cw[3];
+	if (!(w > 0)) w = 1;
+	for (j = 0; j < 3; j++) {	/* M (v - o), as hull_tess_vertex */
+		for (k = 0; k < 3; k++)
+			ob[j] += hull_cc.M[3*j+k] * ((k == 2 ? -e[k] : e[k]) - hull_cc.o[k]);
+		ob[j] /= gnd_tile;
+	}
+	glMultiTexCoord4fv (GL_TEXTURE4, ob);
+	glVertex4d (d[0] * w, d[1] * w, d[2] * w, w);
+}
+
+/* 1 when the shape is a port's ground (grey, its plane within 3 degrees of
+ * level and every point within 0.02 tile of the model's foot): then it is
+ * drawn by gnd_fs until hull_complex_end */
+static int gnd_begin (GLdouble c[][3], int n, double tile, const int c8[3])
+{
+	double w[2][3], N[3] = { 0, 0, 0 };
+	int i, j, k, m = HULL_KEY_MODEL (hull_cc.key);
+	int mx = MAX (c8[0], MAX (c8[1], c8[2])), mn = MIN (c8[0], MIN (c8[1], c8[2]));
+
+	if (flat_pads || classic_ui || pixel_art || gnd_failed	/* as hyper_hd: the base look */
+	    || (m != 96 && m != 98) || mx - mn >= 24 || !(tile > 0)) return 0;
+	for (i = 0; i <= n; i++) {
+		double *a = w[i & 1], *b = w[!(i & 1)];
+		for (j = 0; j < 3; j++) {
+			a[j] = 0;
+			for (k = 0; k < 3; k++)
+				a[j] += hull_cc.M[3*j+k] * ((k == 2 ? -c[i % n][k] : c[i % n][k]) - hull_cc.o[k]);
+			a[j] /= tile;
+		}
+		if (fabs (a[HULL_DECK_AXIS]) >= 0.02) return 0;
+		if (i) {	/* Newell */
+			N[0] += (b[1] - a[1]) * (b[2] + a[2]);
+			N[1] += (b[2] - a[2]) * (b[0] + a[0]);
+			N[2] += (b[0] - a[0]) * (b[1] + a[1]);
+		}
+	}
+	if (!(fabs (N[HULL_DECK_AXIS]) >= 0.9986 * sqrt (N[0] * N[0] + N[1] * N[1] + N[2] * N[2]))) return 0;
+	if (!gnd_prog && !(gnd_prog = hull_link (gnd_fs, 1))) {
+		fprintf (stderr, "GL: a port's ground needs GLSL 1.20, drawing it flat\n");
+		gnd_failed = 1;
+		return 0;
+	}
+	hull_end ();
+	glUseProgram (gnd_prog);
+	hull_on = 2;	/* hull_end ends it */
+	hull_cur = -1;
+	gnd_tile = tile;
+	gluTessCallback (tobj, GLU_TESS_VERTEX_DATA, (_GLUfuncptr) gnd_tess_vertex);
+	return 1;
+}
+#endif
+
 /* before the shape's last contour goes to the tessellator: 1 when the
  * shape is plated (hull_complex_end after gluTessEndPolygon) */
 static int hull_complex_begin (GLdouble c[][3], int n, void **data)
@@ -4176,7 +4281,15 @@ static int hull_complex_begin (GLdouble c[][3], int n, void **data)
 	hull_chain = calm;
 	if (!hull_cc_on || hull_style < 5 || flat_hulls || fx_tagged () || n < 3) return 0;
 	cls = hull_class_of_key (hull_cc.key, &sc, off);
-	if (cls == HC_BUILDING) return 0;	/* a port's ground, roads and hills */
+	/* w = row 4 of projection x modelview */
+	for (j = 0; j < 4; j++) {
+		hull_cw[j] = 0;
+		for (k = 0; k < 4; k++) hull_cw[j] += tessProjMatrix[3 + 4 * k] * tessModelMatrix[k + 4 * j];
+	}
+#ifdef HULL_SHADERS
+	if (cls == HC_BUILDING) return gnd_begin (c, n, hull_classes[cls].panel * sc, c8);	/* a port's ground */
+#endif
+	if (cls == HC_BUILDING) return 0;	/* its hills, signs, grass and water */
 	hull_cpanel = hull_classes[cls].panel * sc;	/* the model's, as hull_paint5 */
 	mx = mn = c8[0];
 	for (k = 1; k < 3; k++) {
@@ -4214,11 +4327,6 @@ static int hull_complex_begin (GLdouble c[][3], int n, void **data)
 	if (!hull_plane_obj ((const double (*)[3]) c, n, M, hull_cc.o, light,
 			     hull_classes[cls].panel * sc, off, &hull_cplane))
 		return 0;
-	/* w = row 4 of projection x modelview */
-	for (j = 0; j < 4; j++) {
-		hull_cw[j] = 0;
-		for (k = 0; k < 4; k++) hull_cw[j] += tessProjMatrix[3 + 4 * k] * tessModelMatrix[k + 4 * j];
-	}
 #ifdef HULL_SHADERS
 	if (cls == HC_STATION) calm = 0;	/* as hull_paint5 */
 	if (hull_program5 () && hull_begin5 (cls, calm)) hull_cmode = 2;
