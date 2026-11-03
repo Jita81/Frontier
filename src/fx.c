@@ -9,7 +9,7 @@
 #include "../host.h"	/* MEM_SIZE */
 #include "../fixups.h"	/* __DL5eb6_a6_base */
 #include "fx.h"
-#include "hull.h"	/* hull_intro_part */
+#include "hull.h"	/* hull_intro_fx */
 #define A6		__DL5eb6_a6_base
 #define A6_TOOLS_MODE	42	/* byte: negative while a 3D view fills the screen */
 #define A6_START_FLAGS	598	/* byte: bit 5 set in the intro and the start menu */
@@ -26,7 +26,6 @@
 #define M_EXPL		188	/* an explosion */
 #define M_LASER		190	/* a laser beam, put each frame of a shot */
 #define M_SMOKE		194	/* smoke and sparks, also a missile's trail */
-#define I_FIRE(w)	((w) == 114 || (w) == 116)	/* the intro's fireballs (parts in its table) */
 /* The look of each type.  A laser's class is bits 3-6 of its type byte (the
  * game's own damage table is indexed so): 1-3 are pulse lasers ($88 the start
  * ship's, $9a mining), 4-9 beam lasers ($a1 the police's) and accelerators.
@@ -57,16 +56,21 @@ static int in_flight (void) { return !(rb (A6 + A6_START_FLAGS) & 0x20) && (sign
  * there its explosions (every one, not only the player's) and smoke are fx's. */
 #define A6_STATE	704
 static int intro_fire;	/* put_model's last tag was the intro's fireball */
+static int intro_look = -1;	/* its last was an intro laser's beam: its look, else -1 */
 static int put_model (unsigned int *rec)
 {
 	unsigned int a6 = GetReg (REG_A6);
-	int m;
+	int m, fx, look = -1;
+	intro_fire = 0, intro_look = -1;
 	if (flat_fx || !readable (a6 - FRAME_OBJ, 4)) return 0;
 	*rec = STMemory_ReadLong (a6 - FRAME_OBJ);
-	/* the intro's scenes (bit 5 of 598(a6), and its own table): by the part's model */
-	intro_fire = 0;
-	if ((rb (A6 + A6_START_FLAGS) & 0x20) && I_FIRE (hull_intro_part ()))
-		return (intro_fire = readable (*rec, 256)) ? M_EXPL : 0;
+	/* the intro (bit 5 of 598(a6), and its own table): by the part's model,
+	 * whose row says what it is (hull_intro_fx); its record is the scene's */
+	if (rb (A6 + A6_START_FLAGS) & 0x20) {
+		fx = hull_intro_fx (hull_intro_fx_part (), &look);
+		if (fx == HULL_FX_FIRE) return (intro_fire = readable (*rec, 256)) ? M_EXPL : 0;
+		return fx == HULL_FX_LASER ? (intro_look = look, M_LASER) : 0;
+	}
 	if ((signed char) rb (A6 + A6_TOOLS_MODE) >= 0) return 0;
 	m = readable (*rec, 256) ? STMemory_ReadWord (*rec + OBJ_MODEL) & 0xffff : 0;
 	return in_flight () || ((m == M_EXPL || m == M_SMOKE) && rb (A6 + A6_STATE) == 0x58) ? m : 0;
@@ -195,14 +199,17 @@ static struct effect *effect_new (const float *p, const float *b, int t, float s
 }
 
 /* a new screen or view: nothing from the last one stays */
-static int scene = -1;		/* 0 no flight view, else 1 + the view */
+#define SCENE_INTRO	0x1000	/* the intro's, latched at its frame's start */
+static int scene = -1;		/* 0 none, SCENE_INTRO, else 1 + the flight view */
+static int intro_on;		/* this frame is the intro's (bit 5 of 598(a6)) */
 static void check_scene (void)
 {
-	int now = in_flight () ? 1 + rb (A6 + A6_VIEW) : 0;
+	int now = in_flight () ? 1 + rb (A6 + A6_VIEW) : intro_on ? SCENE_INTRO : 0;
 	if (now != scene) memset (ring, 0, sizeof ring), scene = now;
 }
 
-static unsigned int last_tick, n_frames;
+static unsigned int last_tick, n_frames, fx_wall, intro_n;
+#define STEP	20	/* ms: the intro draws one frame a VBL, 50 Hz */
 static int drew_3d;		/* this frame has a 3D view */
 /* this frame's missile bodies and smoke puffs, for the plumes */
 static struct missile { unsigned int rec, kind, n; float v[24][3]; } missiles[4];
@@ -234,8 +241,12 @@ void fx_frame_begin (void)
 	drew_3d = 1;
 	for (n_mprev = 0; n_mprev < n_missiles; n_mprev++) memcpy (mprev[n_mprev], missiles[n_mprev].v[0], sizeof mprev[0]);
 	n_missiles = n_smoke = n_balls = n_mrot = 0;
+	intro_on = !flat_fx && (rb (A6 + A6_START_FLAGS) & 0x20);
 	check_scene ();
-	if (STMemory_ReadLong (A6 + A6_TIME_RATE) != 0) fx_ms += d > 50 ? 50 : d;
+	if (STMemory_ReadLong (A6 + A6_TIME_RATE) != 0) fx_wall += d > 50 ? 50 : d;
+	/* the intro's time is its frames', so its replays draw the same */
+	intro_n = intro_on ? intro_n + 1 : 0;
+	fx_ms = intro_on ? STEP * intro_n : fx_wall;
 }
 
 int fx_tag_for (unsigned int tag[3])
@@ -248,30 +259,28 @@ int fx_tag_for (unsigned int tag[3])
 	return 1;
 }
 
-/* a laser's beam: a halo in its type's hue round a near-white core, a muzzle
- * bloom and, on a hit, a flare */
-int fx_laser_quad (void)
+/* the class of the laser being put (its type's bits 3-6, or the intro's
+ * look), -1 if none; and the eye-space corner at an address register */
+static int laser_class (unsigned int *rec)
 {
-	float v[4][3], ends[2][3], *n, *f, t;
-	const struct look *lk;
-	unsigned int rec, i, k;
-	int j = put_model (&rec) == M_LASER ? rb (rec + OBJ_LASER) >> 3 & 15 : -1;	/* its class */
-	if (j < 0) return 0;
-	lk = &looks[j > 9 ? 9 : j];
-	for (i = 0; i < 4; i++) {
-		if (!readable (GetReg (REG_A0 + i) + 4, 12)) return 0;
-		for (k = 0; k < 3; k++)
-			v[i][k] = (k == 2 ? -1.0f : 1.0f) * STMemory_ReadLong (GetReg (REG_A0 + i) + 4 + 4 * k);
-	}
-	/* the corners go round the quad: its ends are the pair of opposite
-	 * edges, 0-1 and 2-3 or 1-2 and 3-0, farther apart in depth */
-	j = fabsf (v[0][2] + v[1][2] - v[2][2] - v[3][2]) < fabsf (v[1][2] + v[2][2] - v[3][2] - v[0][2]);
-	for (k = 0; k < 3; k++) {
-		ends[0][k] = (v[j][k] + v[j + 1][k]) / 2;
-		ends[1][k] = (v[j + 2][k] + v[(j + 3) & 3][k]) / 2;
-	}
-	n = ends[fabsf (ends[0][2]) > fabsf (ends[1][2])];	/* the near end */
-	f = ends[n == ends[0]];
+	if (put_model (rec) != M_LASER) return -1;
+	return intro_look >= 0 ? intro_look : rb (*rec + OBJ_LASER) >> 3 & 15;
+}
+static int corner (int reg, float *v)
+{
+	int k;
+	if (!readable (GetReg (reg) + 4, 12)) return 0;
+	for (k = 0; k < 3; k++) v[k] = (k == 2 ? -1.0f : 1.0f) * STMemory_ReadLong (GetReg (reg) + 4 + 4 * k);
+	return 1;
+}
+/* a laser's beam from ends[0] to ends[1]: a halo in its look's hue round a
+ * near-white core, a muzzle bloom and, on a hit, a flare (not the intro's,
+ * whose record is its scene's) */
+static int laser_beam (float ends[2][3], int j, unsigned int rec)
+{
+	const struct look *lk = &looks[j > 9 ? 9 : j];
+	float *n = ends[fabsf (ends[0][2]) > fabsf (ends[1][2])], *f = ends[n == ends[0]], t;	/* the near end, the far */
+	int i, k;
 	t = n[2] > -1.5f && f[2] < -1.5f ? (-1.5f - n[2]) / (f[2] - n[2]) : 0;	/* the muzzle, off the near plane */
 	for (k = 0; k < 3; k++) n[k] += (f[k] - n[k]) * t;
 	for (i = 0; i < NR; i++)	/* the beam's second quad this frame */
@@ -280,9 +289,34 @@ int fx_laser_quad (void)
 			return 1;
 	effect_new (n, f, T_BEAM, 0, 0, 90, 0, 0, 0)->lk = lk;
 	effect_new (n, n, T_GLOW, lk->halo / 2, 0.3f, 90, 0.6f + 0.4f * lk->rgb[0], 0.6f + 0.4f * lk->rgb[1], 0.6f + 0.4f * lk->rgb[2]);
-	if ((STMemory_ReadWord (rec + OBJ_HIT) & 0xffff) != 0xffff)
+	if (intro_look < 0 && (STMemory_ReadWord (rec + OBJ_HIT) & 0xffff) != 0xffff)
 		effect_new (f, f, T_GLOW, 25, 0.6f, 180, 1, 0.85f, 0.55f);
 	return 1;
+}
+int fx_laser_quad (void)
+{
+	float v[4][3], ends[2][3];
+	unsigned int rec;
+	int j = laser_class (&rec), i, k;
+	if (j < 0) return 0;
+	for (i = 0; i < 4; i++) if (!corner (REG_A0 + i, v[i])) return 0;
+	/* the corners go round the quad: its ends are the pair of opposite
+	 * edges, 0-1 and 2-3 or 1-2 and 3-0, farther apart in depth */
+	i = fabsf (v[0][2] + v[1][2] - v[2][2] - v[3][2]) < fabsf (v[1][2] + v[2][2] - v[3][2] - v[0][2]);
+	for (k = 0; k < 3; k++) {
+		ends[0][k] = (v[i][k] + v[i + 1][k]) / 2;
+		ends[1][k] = (v[i + 2][k] + v[(i + 3) & 3][k]) / 2;
+	}
+	return laser_beam (ends, j, rec);
+}
+/* the intro draws its beams as lines; the game's stay as they were */
+int fx_laser_line (void)
+{
+	float ends[2][3];
+	unsigned int rec;
+	int j = laser_class (&rec);
+	if (j < 0 || intro_look < 0 || !corner (REG_A0, ends[0]) || !corner (REG_A1, ends[1])) return 0;
+	return laser_beam (ends, j, rec);
 }
 
 static struct { unsigned int kind, aux, rec; } cur;	/* the tag in force */

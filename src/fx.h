@@ -13,6 +13,7 @@ extern int flat_missiles;	/* --flat-missiles: plumes only near smoke */
  * laser beam, which fx has taken (the flat quad is not drawn). */
 int fx_tag_for (unsigned int tag[3]);
 int fx_laser_quad (void);
+int fx_laser_line (void);	/* the same for a line: the intro's beams */
 void fx_frame_begin (void);
 
 /* Draw side.  fx_draw_tag reads the NU_FX op; fx_prim_done follows every

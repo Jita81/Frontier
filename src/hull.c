@@ -205,6 +205,28 @@ unsigned int hull_mix (unsigned int x)
 	return x;
 }
 
+/* The intro's effects by its parts' words (docs/hd/hulls.md, The intro's
+ * scenes): every disc of 214, 94 and 96 is a hypercloud's (blue, the orange
+ * one a ship leaves, the pale one it comes out of), 114 and 116 its
+ * fireballs, every line of 80, 92 and 132 a red pulse laser's beam. Its
+ * ships' plumes go by their hull_models[] rows (gl.c, exhaust_intro). */
+static const struct { unsigned short word; unsigned char fx, look; } intro_fx[] = {
+	{ 80, HULL_FX_LASER, 1 }, { 92, HULL_FX_LASER, 1 }, { 94, HULL_FX_CLOUD, 0 }, { 96, HULL_FX_CLOUD, 0 },
+	{ 114, HULL_FX_FIRE, 0 }, { 116, HULL_FX_FIRE, 0 }, { 132, HULL_FX_LASER, 1 }, { 214, HULL_FX_CLOUD, 0 },
+};
+
+int hull_intro_fx (unsigned int word, int *look)
+{
+	unsigned int i;
+
+	for (i = 0; i < sizeof intro_fx / sizeof intro_fx[0]; i++)
+		if (intro_fx[i].word == word) {
+			if (look) *look = intro_fx[i].look;
+			return intro_fx[i].fx;
+		}
+	return HULL_FX_NONE;
+}
+
 static float frand (unsigned int *s)
 {
 	*s = *s * 1664525u + 1013904223u;
