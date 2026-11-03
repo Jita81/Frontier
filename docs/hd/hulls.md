@@ -434,7 +434,8 @@ atmospheric port of the second start position, then a lift-off to some
 Word 96 is one model for all of it, so the class rules pick the walls:
 
 - A face that looks along the model's y axis (`HULL_DECK_AXIS`: the
-  apron, the roofs, the strips painted on the ground) stays flat.
+  apron, the pads, the strips painted on the ground) stays flat, unless
+  it is a roof (below).
 - A complex shape (more than four sides: the ground, roads, lakes, hills
   and the boards' frames) stays flat.
 - A face whose longest side is under 0.6 of a tile (some 39000 units: the
@@ -475,7 +476,7 @@ profile's own seed, never from the game (B6, slice 2):
   colour times the tile.
 
 `gl.c` (`hull_storey_fit`) lays each wall on the grid: its storeys start
-at the wall's foot (the lowest corner along the model's y; the tile's v
+at the wall's foot (the lowest corner along the port's y; the tile's v
 runs up that axis), and its panes start at one end. Across, the wall is
 stretched to a whole number of panes, by at most half a pane over its
 width (a tall sliver narrower than one pane takes one: twice over at
@@ -483,13 +484,14 @@ half a pane, more on a thinner sliver). Up, a
 wall over half a storey high is stretched to a whole number of storeys,
 by at most half a storey, so its top storey is never cut. So a wall
 never begins or ends mid-pane or mid-storey. The grounding is measured
-from the model's ground (its y = 0), not from each wall's own foot: the
+from the port's ground (the y = 0 of the port's frame, not of the part
+the wall belongs to: a part's own y = 0 can stand well over or under the
+ground, which darkened a walled town's lower storeys in slice 3), not
+from each wall's own foot: the
 lowest 0.15 of a tile above the ground (some 9800 units, about half a
 storey) darkens, by up to 0.3 at the ground, so a wall raised on or
 stacked over another, or a fascia, has no dark band mid-facade. It fades
-with distance like the tint. Roofs and the apron (deck axis) stay the
-game's flat colour, so a roof now reads against the glazed walls under
-it. The class's graze (2.30, the station's) fades a wall seen edge on to
+with distance like the tint. The class's graze (2.30, the station's) fades a wall seen edge on to
 its own colour, and the footprint fade does the same far away (the glass
 tint and the grounding fade with them), so the windows do not shimmer
 from the air.
@@ -509,6 +511,24 @@ towers' own lit windows sit one to each storey (3x crops beside the
 landed ship). At scale 1 without that fit they fell between storeys and
 read doubled; at scale 4 the low blocks took one storey too tall for
 them.
+
+Roofs and facades (B6, slice 4). A deck-axis face square to the port's
+up (|N.y| at least 0.985 of |N|, so not a dome's or an arch's facet)
+with every corner 0.15 of a tile or more over the port's ground (not the
+apron, a pad or a road) is a roof. It takes no storey tile: its colour,
+a quarter desaturated and 0.88 as bright, carries faint seams on a
+quarter-tile grid, a seeded patching of a few percent per cell, and a
+parapet at its edge (a light band, an inner shadow), all fading with
+distance and footprint so it reads as one flat tone from the air. Each
+building picks a facade from `hull_mix` of its model key and where its
+part stands on the port, in cells of two tiles (the part's origin in the
+port's frame, so landed it is exact): ribbon, punched or curtain wall;
+a pane density of 1, 3/4 or 5/4; a tone within 4 percent either way.
+No RNG, no clock, no view enters it, so a building keeps its facade
+every frame.
+Neighbours in one cell share it. Everything is the shader's: no image
+and no geometry are added, and `--flat-buildings` still draws the
+game's own colours.
 
 Seeded ground props round a port (trees, shrubs, ice spires; W11b, #81)
 were tried and removed at the operator's call: props are not terrain and
@@ -841,7 +861,9 @@ a kd-tree panel layout on a torus, from a seed.
   tone evened with distance): `--flat-buildings` and `--flat-hulls` are
   byte for byte the earlier build's on both landed tours (every view,
   title bar aside), and the pre-launch frame of the airless lift-off
-  too.
+  too. Slice 4 (roofs, facades, port-frame grounding): the same with
+  `--flat-buildings` and `--flat-hulls` on both landed tours; ships,
+  stations and the hangar unchanged on the dock and orbit tours.
 
 Known limits:
 - Bright, saturated liveries (an orange or red Krait) show little plating,
