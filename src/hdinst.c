@@ -358,8 +358,9 @@ static void mask_parts (const unsigned char *raster)
 			for (y = 14; y <= 153 && col < 0; y++)
 				for (x = 14; x <= 305 && col < 0; x++)
 					if ((col = marker_try (raster, x, y, c)) >= 0) mx = x, my = y;
-		marker_col = col;
-	}
+	} else if ((col = marker_try (raster, 160, 84, c)) >= 0)
+		mx = 160, my = 84;	/* no search: the centred one only, as before */
+	marker_col = col;
 	/* the gaps between the straight ticks clear, but for the marker's */
 	for (i = 0; c >= 0 && i < 3; i++) {
 		for (j = 32; marker_col >= 0 && j < 52 && pix (j) != gap[i][1] * ST_W + gap[i][0]; j++)
