@@ -382,11 +382,14 @@ int flat_planets = 0;
  * point where the view ray crosses the cloud deck, found from the ground
  * up (from the eye it cancels in float at orbit distance), its cloud lit
  * a little past the ground's terminator and no brighter than the ground
- * at night, and the cloud's shadow on the lit ground. */
+ * at night, and the cloud's shadow on the lit ground.  Last, near a world
+ * with air, the lit ground fades with distance into the sky's colour at
+ * the horizon (uHz, uHe: gl.c planet_haze). */
 #define PLANET_GLSL_TEXT \
 	"uniform sampler2D uZ0, uZ1, uZ2, uZ3;\n" \
 	"uniform vec4 uLo, uHi, uRim;\n" \
 	"uniform vec3 uLook, uSeed;\n" \
+	"uniform vec4 uHz, uHe;\n" \
 	"uniform float uSoft;\n" \
 	"void main () {\n" \
 	"	float c = gl_TexCoord[1].x, mu = clamp (gl_TexCoord[1].y, 0.0, 1.0);\n" \
@@ -421,6 +424,9 @@ int flat_planets = 0;
 	"	col = mix (col, mix (col, cc, lit), cl_cover (cq, 5) * smoothstep (rd, rd + CL_T, length (uClEye)));\n" \
 	"#endif\n" \
 	"	col = mix (col, uRim.rgb, uRim.a * 0.6 * pow (1.0 - mu, 4.0) * day);\n" \
+	"	if (uHz.a > 0.0)\n" \
+	"		col = mix (col, uHz.rgb, uHz.a * smoothstep (-0.1, 0.1, c)\n" \
+	"		          * (1.0 - exp (-uHe.w * length (gl_TexCoord[2].xyz - uHe.xyz))));\n" \
 	"	gl_FragColor = vec4 (col, 1.0);\n" \
 	"}\n"
 static const char planet_glsl[] = PLANET_GLSL_TEXT;
@@ -430,14 +436,14 @@ static const char planet_cl_glsl[] = "#define PF_CLOUDS\n" CLOUD_GLSL
 /* one per program, the plain planet and the planet with clouds; the
  * uniforms a program lacks are at -1, which GL ignores */
 enum { U_LO, U_HI, U_RIM, U_LOOK, U_SEED, U_SOFT, U_CL_COVER, U_CL_TINT, U_CL_ROT, U_CL_SEED,
-       U_CL_EYE, U_CL_SUN, U_N };
+       U_CL_EYE, U_CL_SUN, U_HZ, U_HE, U_N };
 static struct PlanetProg { GLuint prog; int failed; GLint u[U_N]; } pp_base, pp_cl;
 
 static struct PlanetProg *planet_prog_get (struct PlanetProg *g, const char *name, const char *src)
 {
 	static const char *zn[4] = { "uZ0", "uZ1", "uZ2", "uZ3" };
 	static const char *un[U_N] = { "uLo", "uHi", "uRim", "uLook", "uSeed", "uSoft", "uClCover",
-				       "uClTint", "uClRot", "uClSeed", "uClEye", "uClSun" };
+				       "uClTint", "uClRot", "uClSeed", "uClEye", "uClSun", "uHz", "uHe" };
 	int i;
 
 	if (g->failed) return NULL;
@@ -466,7 +472,7 @@ void procfx_planet_clouds (const float cover[4], const float tint[3], const floa
 }
 
 int procfx_planet_begin (const float lo[4], const float hi[4], float soft,
-			 const float rim[4], const float look[3], unsigned int seed)
+			 const float rim[4], const float look[3], const float hz[8], unsigned int seed)
 {
 	float cl[20];
 	struct PlanetProg *g = NULL;
@@ -490,6 +496,8 @@ int procfx_planet_begin (const float lo[4], const float hi[4], float soft,
 	glUniform3fv (g->u[U_CL_SEED], 1, cl + 11);
 	glUniform3fv (g->u[U_CL_EYE], 1, cl + 14);
 	glUniform3fv (g->u[U_CL_SUN], 1, cl + 17);
+	glUniform4fv (g->u[U_HZ], 1, hz);
+	glUniform4fv (g->u[U_HE], 1, hz + 4);
 	return 1;
 }
 

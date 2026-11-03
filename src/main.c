@@ -56,6 +56,7 @@ int flat_explosions = 0;	/* --flat-explosions: the base explosions, other HD wea
 int flat_buildings = 0;	/* --flat-buildings: a surface port's buildings unplated (hull.c) */
 int flat_lights = 0;	/* --flat-lights: no halo round the game's lights (gl.c) */
 int flat_clouds = 0;	/* --flat-clouds: no clouds on any world (procfx.c) */
+int flat_descent = 0;	/* --flat-descent: no haze on the ground near a world (gl.c) */
 int flat_sunglow = 0;	/* --flat-sunglow: no glow round the sun down in the air (procfx.c) */
 int flat_lasers = 0;	/* --flat-lasers: every laser one plain ribbon, as before bolts and hot cores */
 int flat_missiles = 0;	/* --flat-missiles: a missile's plume only near its smoke, as before */
@@ -250,6 +251,7 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --flat-rings          The game's flat planetary rings.\n"
                "  --flat-lights         The game's lights without their soft halo.\n"
                "  --flat-clouds         No clouds on the worlds.\n"
+               "  --flat-descent        No haze on the far ground near a world.\n"
                "  --pixel-text          Keep the original bitmap font (no HD text;\n"
                "                        FE2_HD_FONT=<PostScript name> picks the font).\n"
                "  --pixel-art           Keep the game's own bitmaps (no HD stills).\n"
@@ -307,6 +309,8 @@ void Main_ReadParameters(int argc, char *argv[])
 		flat_lights = 1;
 	  else if (!strcmp(argv[i], "--flat-clouds"))
 		flat_clouds = 1;
+	  else if (!strcmp(argv[i], "--flat-descent"))
+		flat_descent = 1;
 	  else if (!strcmp(argv[i], "--pixel-text"))
 		pixel_text = 1;
 	  else if (!strcmp(argv[i], "--pixel-art"))
