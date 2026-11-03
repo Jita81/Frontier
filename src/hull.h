@@ -15,7 +15,7 @@
 
 /* Material profiles. HP_GENERIC is what styles 1 to 3 give every model;
  * style 4 picks one of the four classes per model from hull_models[]. */
-enum { HP_GENERIC, HP_SMALL, HP_TRADER, HP_MILITARY, HP_STATION, HP_N };
+enum { HP_GENERIC, HP_SMALL, HP_TRADER, HP_MILITARY, HP_STATION, HP_BUILDING, HP_N };
 
 struct HullProfile {
 	const char *name;
@@ -37,13 +37,17 @@ extern const struct HullProfile hull_profiles[HP_N];
  * word (object+90) and bits 16 and 17 the model table that word indexes:
  * none for the game's own, HULL_TAB_INTRO for the intro's (its title,
  * scenes and the menu's backdrop: its words name other models than the
- * game's), HULL_TAB_OTHER for any other. HULL_KEY_MODEL is the table and
- * word together, which is what names one model. Which profile style 4
+ * game's), HULL_TAB_OTHER for any other; bit 18 the HULL_TAB_SCENE mark
+ * below. HULL_KEY_MODEL is the table, mark and word together, which is
+ * what names one model. Which profile style 4
  * gives a model (by the word's low byte, as that style always read it). */
 #define HULL_KEY_OK(k)	((unsigned int) (k) >> 31)
 #define HULL_TAB_INTRO	0x10000u
 #define HULL_TAB_OTHER	0x20000u
-#define HULL_KEY_MODEL(k)	((unsigned int) (k) & 0x3ffffu)
+/* with HULL_TAB_INTRO: a part of the intro's scenes, keyed by its own word
+ * (gl.c, hull_model_key); never set under the flags that keep the base look */
+#define HULL_TAB_SCENE	0x40000u
+#define HULL_KEY_MODEL(k)	((unsigned int) (k) & 0x7ffffu)
 int hull_profile_of_key (unsigned int key);
 
 /* Texture sets. Level 1 is plain plating (style 1), level 2 the full
@@ -83,11 +87,13 @@ unsigned int hull_mix (unsigned int x);
  * it flat.
  */
 enum { HC_GENERIC, HC_POLICE, HC_CIVIL, HC_FREIGHT, HC_ARMOUR, HC_FIGHTER,
-       HC_STATION, HC_HANGAR, HC_DECK, HC_N };
+       HC_STATION, HC_HANGAR, HC_DECK, HC_BUILDING, HC_N };
 /* HC_STATION and after are buildings and interiors: their decal hosts and
  * complex shapes (signs) stay flat. HC_DECK is no model's class: it is the
  * hangar's floor and ceiling (a hangar face that looks along the model's
- * HULL_DECK_AXIS), see hull_obj_axis. */
+ * HULL_DECK_AXIS), see hull_obj_axis. HC_BUILDING is a port's buildings
+ * (seeded storeys and windows, no tile); its faces that look along
+ * HULL_DECK_AXIS (the apron, the roofs) stay flat. */
 #define HULL_BUILDING(cls)	((cls) >= HC_STATION)
 #define HULL_DECK_AXIS	1
 
@@ -115,6 +121,10 @@ int hull_class_of_key (unsigned int key, float *scale, float off[2]);
 /* 1 if the model is listed in hull_models[] (a ship or station hull, the
  * only models plated), 0 if not */
 int hull_key_listed (unsigned int key);
+/* gl.c, at a put: in the intro's own scenes (not its title, logo, credits
+ * or start menu) the model word of the part being put, its own (hull_models'
+ * key less the table); 0 anywhere else */
+unsigned int hull_intro_part (void);
 /* 1 if the face (n corners in the model's frame) of a docking bay's model
  * lies partly out of the bay: it is the station's outside around the slot */
 int hull_bay_outside (unsigned int key, const float w[][3], int n);

@@ -52,9 +52,11 @@ typedef void (*_GLUfuncptr)();
 #include "fx.h"
 #include "hdinst.h"
 #include "procfx.h"
+#include "skies.h"
 #include "bindings.h"
 #include "hdtip.h"
 #include "hddamage.h"
+#include "shadows.h"
 /* MEM_SIZE, and the engine's variables by label address (__D<label>) */
 #include "../host.h"
 #include "../fixups.h"
@@ -1189,6 +1191,8 @@ enum NuPrimitive {
 	NU_SKYBAND,
 	NU_COMPLEX_OVAL,
 	NU_FX,		/* fx.c's tag for the primitive that follows */
+	NU_RINGS,	/* skies.c: the complex shape that follows is a ring */
+	NU_SHADOW,	/* shadows.c: a landed ship's contact shadow */
 	NU_MAX
 };
 /* the next primitive belongs to a weapon, missile, explosion...: say which (fx.c) */
@@ -1274,6 +1278,7 @@ static void *add_detached_node (struct ZNode **root, unsigned int zval, int size
 
 static bool no_znodes_kthx;
 
+static struct ZNode **shadow_tree; static unsigned int shadow_z;	/* shadows.c: the landed ship's farthest face */
 /*
  * Nested z-trees.
  *
@@ -1362,6 +1367,7 @@ void Nu_InsertZNode ()
 void Nu_3DViewInit ()
 {
 	fx_frame_begin ();
+	skies_frame_begin ();
 	queued_string_pos = 0;
 	//printf ("3dviewinit()\n");
 	znode_buf_pos = 0;
@@ -1381,6 +1387,7 @@ void Nu_3DViewInit ()
 	ztree_heads[0] = STMemory_ReadLong (__DL385d0_3dview_thing2);
 	scene_overflow = 0;
 	hull_latch ();
+	shadow_tree = NULL, shadows_begin (use_renderer == R_GL && !classic_ui && !pixel_art);
 }
 
 static void lighting_on (float light_vec[4], int rgb444_light_col, int rgb444_extra_col, int rgb444_obj_col)
@@ -1581,6 +1588,9 @@ static void hull_complex_end (void);
  * object; sky_pending when the next polygon drawn is the Milky Way */
 static int complex_sky, sky_pending, sky_active;
 static float complex_sky_m[9], sky_m[9];
+/* skies.c's rings, the same way */
+static int complex_ring, ring_pending, ring_active;
+static struct skies_ring complex_ring_r, ring_r;
 
 static void put_complex_start_4real ()
 {
@@ -1589,6 +1599,7 @@ static void put_complex_start_4real ()
 		znode_wrlong (NU_SKYBAND);
 		znode_wrblock (complex_sky_m, sizeof complex_sky_m);
 	}
+	if (complex_ring) { znode_wrlong (NU_RINGS); znode_wrblock (&complex_ring_r, sizeof complex_ring_r); }
 	put_fx ();
 	znode_wrlong (NU_COMPLEX_START);
 	znode_wrcolor (complex_col_rgb444);
@@ -1712,6 +1723,7 @@ static void flush_contour ()
 		gluTessVertex (tobj, d, d);
 	}
 	if (sky_active) procfx_sky_feather (tess_vertices + first, tess_vpos - first);
+	if (ring_active) skies_ring_contour (tess_vertices + first, tess_vpos - first);
 }
 
 void Nu_ComplexSNext ()
@@ -1751,6 +1763,13 @@ void Nu_ComplexStart ()
 	complex_st_start = STMemory_ReadLong (__DL385c8_primitives_end);
 	complex_starts++;
 	complex_sky = procfx_sky_put (complex_sky_m);
+	complex_ring = !complex_sky && skies_ring_put (&complex_ring_r);
+}
+void Nu_DrawRings (void **data)
+{
+	memcpy (&ring_r, *data, sizeof ring_r);
+	*data += sizeof ring_r;
+	ring_pending = 1;
 }
 void Nu_DrawSkyBand (void **data)
 {
@@ -1784,6 +1803,7 @@ void Nu_DrawComplexStart (void **data)
 		gluTessBeginContour (tobj);
 		contour_n = 0;
 		if (sky_pending) sky_active = procfx_sky_begin (sky_m, tessProjMatrix, tessViewport);
+		else if (ring_pending) ring_active = skies_ring_begin (&ring_r, tessProjMatrix, tessViewport);
 	} else {
 		glBegin (GL_LINE_STRIP);
 	}
@@ -1829,7 +1849,8 @@ void Nu_DrawComplexEnd (void **data)
 		glEnd ();
 	}
 	if (sky_active) procfx_sky_end ();
-	sky_pending = sky_active = 0;
+	if (ring_active) skies_ring_end ();
+	sky_pending = sky_active = ring_pending = ring_active = 0;
 }
 
 void Nu_ComplexStartInner ()
@@ -1965,6 +1986,55 @@ void Nu_DrawComplexBezier (void **data)
 }
 
 
+static unsigned int hull_model_key (void);
+extern int flat_exhaust;	/* --flat-exhaust (main.c) */
+
+/* HD engine exhaust (C5): 0 for the game's flat teardrop, else bit 31 and
+ * a flicker byte. Only ships get it: the game's own table, the model words
+ * above the missiles' ($a-$10) and below the stations' and ports' ($50 on),
+ * so chimney flares and the intro's plumes keep the base look. The flicker
+ * is seeded by the object's record and the game's clock (A6+524, which
+ * stands still while paused), so a frame draws the same in every run. */
+static unsigned int exhaust_put (void)
+{
+	unsigned int key = flat_exhaust || use_renderer != R_GL ? 0 : hull_model_key ();
+	unsigned int m = HULL_KEY_MODEL (key);
+
+	if (!HULL_KEY_OK (key) || m < 0x12 || m > 0x4e) return 0;
+	return 0x80000000u | (hull_mix (STMemory_ReadLong (GetReg (REG_A6) - 212) ^
+		hull_mix (STMemory_ReadLong (__DL5eb6_a6_base + 524) >> 12)) & 0xff);
+}
+
+#define TD_STRETCH	1.3333333333
+#define TD_BEZIER_STEPS	40
+
+/* One layer of the HD plume: the teardrop from a point on its axis, alpha a
+ * out to a ring 85% of the way to the rim and 0 at the rim, so the body
+ * keeps the game's width and only its edge is soft. */
+static void exhaust_fan (GLfloat cp[4][3], const GLfloat mid[3], float r, float g, float b, float a)
+{
+	GLdouble rim[TD_BEZIER_STEPS + 1][3], ring[TD_BEZIER_STEPS + 1][3];
+	int i, k;
+
+	for (i = 0; i <= TD_BEZIER_STEPS; i++) {
+		eval_bezier (rim[i], i * (1.0f / TD_BEZIER_STEPS), cp);
+		for (k = 0; k < 3; k++) ring[i][k] = mid[k] + 0.85 * (rim[i][k] - mid[k]);
+	}
+	glBegin (GL_TRIANGLE_FAN);
+	glColor4f (r, g, b, a);
+	glVertex3fv (mid);
+	for (i = 0; i <= TD_BEZIER_STEPS; i++) glVertex3dv (ring[i]);
+	glEnd ();
+	glBegin (GL_QUAD_STRIP);
+	for (i = 0; i <= TD_BEZIER_STEPS; i++) {
+		glColor4f (r, g, b, a);
+		glVertex3dv (ring[i]);
+		glColor4f (r, g, b, 0.0f);
+		glVertex3dv (rim[i]);
+	}
+	glEnd ();
+}
+
 /* For engines and industry chimney flares.
  *
  * fe2.s draws this teardrop in 2D (the code after the Nu_PutTeardrop
@@ -1995,6 +2065,7 @@ void Nu_PutTeardrop ()
 	znode_wrcolor (GetReg (REG_D6));
 	/* projected engine radius, ST pixels (fe2.s only gets here with > 8) */
 	znode_wrlong ((short) (GetReg (REG_D7) & 0xffff));
+	znode_wrlong (exhaust_put ());
 }
 void Nu_DrawTeardrop (void **data)
 {
@@ -2004,16 +2075,15 @@ void Nu_DrawTeardrop (void **data)
 	GLfloat eng[3], dir[3], ppd[3], sight[3];
 	GLdouble out[3];
 	int r, g, b, rad_st;
+	unsigned int hd;
 	float len_dir, len_ppd, half_w;
 
-#define TD_STRETCH	1.3333333333
-#define TD_BEZIER_STEPS	40
-	
 	if (use_renderer == R_OLD) return;
 	znode_rdvertexf (data, eng);
 	znode_rdvertexf (data, ctrlpoints[0]);
 	znode_rdcolor (data, &r, &g, &b);
 	rad_st = znode_rdlong (data);
+	hd = znode_rdlong (data);
 	
 	/* dir: tail -> engine (ctrlpoints[0] is the pointed tail) */
 	dir[0] = eng[0] - ctrlpoints[0][0];
@@ -2054,6 +2124,32 @@ void Nu_DrawTeardrop (void **data)
 		ctrlpoints[3][i] = ctrlpoints[0][i];
 	}
 
+	if (hd) {
+		/* the halo: the game's outline and colour, soft to its rim; then
+		 * a core toward white, half as wide and 80% (+-8% flicker) as
+		 * long, from the engine end: the outline scaled about the engine
+		 * (by len along the axis, by half across), so it stays inside it. */
+		GLfloat core[4][3], mid[3];
+		float c[3] = { (unsigned char) r / 255.0f, (unsigned char) g / 255.0f, (unsigned char) b / 255.0f };
+		float len = 0.8f * (1.0f + 0.08f * ((float) (hd & 0xff) / 127.5f - 1.0f));
+
+		glPushAttrib (GL_COLOR_BUFFER_BIT | GL_CURRENT_BIT | GL_LIGHTING_BIT);
+		glEnable (GL_BLEND);
+		glShadeModel (GL_SMOOTH);
+		glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		for (i = 0; i < 3; i++) mid[i] = ctrlpoints[0][i] + 0.6f * dir[i];
+		exhaust_fan (ctrlpoints, mid, c[0], c[1], c[2], 0.8f);
+		for (i = 0; i < 3; i++) {
+			core[0][i] = core[3][i] = eng[i] - len * dir[i];
+			core[1][i] = core[0][i] + TD_STRETCH * len * dir[i] + 0.5f * ppd[i];
+			core[2][i] = core[0][i] + TD_STRETCH * len * dir[i] - 0.5f * ppd[i];
+			mid[i] = eng[i] - 0.4f * len * dir[i];
+		}
+		glBlendFunc (GL_SRC_ALPHA, GL_ONE);
+		exhaust_fan (core, mid, 0.3f * c[0] + 0.7f, 0.3f * c[1] + 0.7f, 0.3f * c[2] + 0.7f, 0.9f);
+		glPopAttrib ();
+		return;
+	}
 	delta = 1.0f/TD_BEZIER_STEPS;
 	glColor3ub (r, g, b);
 	glBegin (GL_TRIANGLE_FAN);
@@ -2400,7 +2496,7 @@ static void hull_make_class (int cls, int shader)
 {
 	const struct HullClass *c = &hull_classes[cls];
 	int n = 512, i;
-	unsigned char *lum = hull_class_tile (cls, &n), *buf;
+	unsigned char *lum = c->tile ? hull_class_tile (cls, &n) : NULL, *buf;
 	int tiled = lum != NULL;
 	Uint32 t = SDL_GetTicks ();
 
@@ -2572,8 +2668,26 @@ static inline int st_readable (unsigned int addr, unsigned int len);
  * where the game's are ships. So the key is the word, the table (hull.h,
  * HULL_TAB_*) and the top bit; 0 when the state is not what that expects
  * (every read is checked: the 68k's memory has no guard).
+ *
+ * In the intro's scenes (its records 34 to 70: not its title 4, its logo
+ * 12, nor 72, the credits and the start menu) a part is keyed by its own
+ * model instead, marked HULL_TAB_SCENE: a scene draws its ships as parts
+ * (sub-objects, hull_part_word), which carry the scene's record, so the
+ * ship and the ground under it would share a key. Not with --classic-ui,
+ * --flat-hulls, --flat-fx or --pixel-*: the key is then the record's, as
+ * in the base, and no HULL_TAB_SCENE row of hull_models[] is reached. The
+ * game's own parts, and those of the menu's station, keep their object's
+ * key (a hangar's doors). hull_record_key is the record's key, always.
  */
-static unsigned int hull_model_key (void)
+static int hull_part_word (unsigned int key);
+/* the flags that keep the base look keep the intro's as it was */
+static int hull_intro_base (void)
+{
+	return classic_ui || flat_hulls || flat_fx || pixel_art || pixel_text || pixel_faces;
+}
+#define HULL_INTRO_SCENE(r)	((r) >= 34 && (r) <= 70)
+
+static unsigned int hull_record_key (void)
 {
 	unsigned int a6 = GetReg (REG_A6), rec, gd, tab;
 
@@ -2586,9 +2700,29 @@ static unsigned int hull_model_key (void)
 	return 0x80000000u | tab | STMemory_ReadWord (rec + 90);
 }
 
+static unsigned int hull_model_key (void)
+{
+	unsigned int key = hull_record_key ();
+	int w;
+
+	if ((key & HULL_TAB_INTRO) && HULL_INTRO_SCENE (key & 0xffff) && !hull_intro_base ()) {
+		key |= HULL_TAB_SCENE;
+		if ((w = hull_part_word (key)) >= 0) key = (key & ~0xffffu) | w;
+	}
+	return key;
+}
+
+/* hull.h: the model word of what an intro scene is drawing */
+unsigned int hull_intro_part (void)
+{
+	unsigned int key = hull_model_key ();
+
+	return key & HULL_TAB_SCENE ? key & 0xffff : 0;	/* 0 for the base intro */
+}
+
 static int hull_model_unit (unsigned int key);
 
-#define HULL_SEEN	64
+#define HULL_SEEN	256	/* the intro's scenes key some 70 parts, the game more */
 static void hull_log_model (unsigned int key)
 {
 	static unsigned int seen[HULL_SEEN];
@@ -2597,8 +2731,14 @@ static void hull_log_model (unsigned int key)
 
 	for (i = 0; i < nseen; i++)
 		if (seen[i] == key) return;
-	if (nseen < HULL_SEEN) seen[nseen++] = key;
-	const char *tab = key & HULL_TAB_INTRO ? " (intro's table)" : key & HULL_TAB_OTHER ? " (other table)" : "";
+	if (nseen == HULL_SEEN) return;	/* full: once a model, never a line a frame */
+	seen[nseen++] = key;
+	unsigned int a6 = GetReg (REG_A6), rec = st_readable (a6 - 212, 4) ? STMemory_ReadLong (a6 - 212) : 0;
+	unsigned int rw = st_readable (rec + 90, 2) ? STMemory_ReadWord (rec + 90) : key & 0xffff;
+	char tab[48];
+	snprintf (tab, sizeof tab, "%s%s", key & HULL_TAB_INTRO ? " (intro's table)" : key & HULL_TAB_OTHER ? " (other table)" : "",
+		  rw != (key & 0xffff) ? " a part of" : "");
+	if (rw != (key & 0xffff)) snprintf (tab + strlen (tab), sizeof tab - strlen (tab), " %u", rw);
 	if (hull_key_listed (key)) {
 		float sc, off[2];
 		fprintf (stderr, "hull: model %u%s -> class %s (style 4 profile %s), unit 2^%d\n",
@@ -2684,7 +2824,7 @@ static int hull_frame_words (unsigned int f, int V[9], int o[3], int *s)
 static int hull_model_frame (unsigned int key, double M[9], int o[3], double Mo[9], int oo[3])
 {
 	unsigned int a6 = GetReg (REG_A6), gd, mh, rec, top;
-	int V[9], Vt[9], ot[3], s, h10, j, depth;
+	int V[9], Vt[9], ot[3], s, h10, j, depth, own;
 
 	if (!HULL_KEY_OK (key) || a6 > MEM_SIZE || !st_readable (a6 - 212, 4) ||
 	    !st_readable (__DL973c_game_data, 4))
@@ -2695,10 +2835,13 @@ static int hull_model_frame (unsigned int key, double M[9], int o[3], double Mo[
 	if (!st_readable (mh + 10, 2)) return 0;
 	h10 = (short) STMemory_ReadWord (mh + 10);
 	if (!hull_frame_words (a6, V, o, &s)) return 0;
-	/* the object's own frame: up the links while they carry its record */
+	/* the object's own frame: up the links while they carry its record;
+	 * a part keyed by its own model (the intro's, hull_model_key) is one */
 	rec = STMemory_ReadLong (a6 - 212);
 	top = a6;
-	for (depth = 0; depth < 8; depth++) {
+	if (!st_readable (rec + 90, 2)) return 0;
+	own = STMemory_ReadWord (rec + 90) != (key & 0xffff);
+	for (depth = 0; depth < 8 && !own; depth++) {
 		unsigned int up;
 		if (!st_readable (top, 4)) return 0;
 		up = STMemory_ReadLong (top);
@@ -2735,7 +2878,7 @@ static int hull_model_frame (unsigned int key, double M[9], int o[3], double Mo[
  */
 static int hull_part_word (unsigned int key)
 {
-	static unsigned int kh[32];
+	static unsigned int kh[32], kg[32];
 	static int kw[32], kn;
 	unsigned int a6 = GetReg (REG_A6), gd, hdr, mh;
 	int i, w = -2;
@@ -2749,13 +2892,14 @@ static int hull_part_word (unsigned int key)
 	mh = gd + STMemory_ReadWord (gd + (key & 0xffff));
 	if (hdr == mh) return -1;
 	for (i = 0; i < kn && i < 32; i++)
-		if (kh[i] == hdr) return kw[i];
+		if (kh[i] == hdr && kg[i] == gd) return kw[i];
 	for (i = 0; i < 1024 && st_readable (gd + i, 2); i += 2)
 		if (gd + STMemory_ReadWord (gd + i) == hdr) {
 			w = i;
 			break;
 		}
 	kh[kn & 31] = hdr;
+	kg[kn & 31] = gd;
 	kw[kn & 31] = w;
 	kn++;
 	return w;
@@ -3605,6 +3749,13 @@ static int hull_paint5 (double p[][3], int n, const struct HullCtx *cx, int host
 	}
 	/* the hangar's floor and ceiling are its deck plating */
 	if (cls == HC_HANGAR && cx->wok && hull_obj_axis (cx->w, n) == HULL_DECK_AXIS) cls = HC_DECK;
+	/* a port's apron and roofs, a face too small for a storey or two (a
+	 * sign board, a kiosk) and a face with no model frame stay flat */
+	if (cls == HC_BUILDING && (!cx->wok || hull_obj_axis (cx->w, n) == HULL_DECK_AXIS ||
+				   hull_obj_span (cx->w, n) < 0.6 * hull_classes[cls].panel * sc)) {
+		hull_end ();
+		return 0;
+	}
 	if (hull_log_on () && (mark || pure || lamp || (host && !calm && cls != HC_STATION)))
 		hull_log_face (cx->key, cx->seed, rgb, mark ? "sign/marking (yellow paint), drawn flat" :
 			       pure ? "lamp, window or lit sign (pure colour), drawn flat" :
@@ -3730,6 +3881,7 @@ static int hull_complex_begin (GLdouble c[][3], int n, void **data)
 	hull_chain = calm;
 	if (!hull_cc_on || hull_style < 5 || flat_hulls || fx_tagged () || n < 3) return 0;
 	cls = hull_class_of_key (hull_cc.key, &sc, off);
+	if (cls == HC_BUILDING) return 0;	/* a port's ground, roads and hills */
 	mx = mn = c8[0];
 	for (k = 1; k < 3; k++) {
 		if (c8[k] > mx) mx = c8[k];
@@ -3842,6 +3994,7 @@ static void hull_complex_end (void)
 	hull_cdoor = NULL;
 }
 
+#define shadow_put(f, n, r) do if (shadows_put (f, n, r) && znode_cur && (!shadow_tree || znode_cur->z >= shadow_z)) shadow_z = znode_cur->z, shadow_tree = cur_ztree; while (0)
 void Nu_PutTriangle ()
 {
 	if (use_renderer == R_OLD) return;
@@ -3852,6 +4005,7 @@ void Nu_PutTriangle ()
 	znode_wrvertex (GetReg (REG_A2)+4);
 	znode_wrcolor (GetReg (REG_D6));
 	if (hull_ctx) hull_put_ctx (3);
+	shadow_put (REG_A0, 3, 0);
 }
 void Nu_DrawTriangle (void **data)
 {
@@ -3903,6 +4057,7 @@ void Nu_PutQuad ()
 	znode_wrvertex (GetReg (REG_A3)+4);
 	znode_wrcolor (GetReg (REG_D6));
 	if (hull_ctx) hull_put_ctx (4);
+	shadow_put (REG_A0, 4, 0);
 }
 void Nu_DrawQuad (void **data)
 {
@@ -3978,20 +4133,82 @@ static void draw_corona (void **data, const int v[3], float size)
 	procfx_corona_end ();
 }
 
+extern int flat_lights;	/* --flat-lights (main.c) */
+
+/* A light's halo (B4): a soft glow round the game's disc (radius r, eye
+ * units, at distance d), in the light's own hue at full saturation.  It
+ * reaches past the disc by twice the disc, kept between a glint of 1.5
+ * px_scale pixels and 2% of the view's height, and fades as the root of
+ * 2 km / d beyond 2 km (eye units are millimetres), so a far station is
+ * a sparkle of points, not a fog.  The glow is added; the core is laid
+ * over (alpha blend), so a red light over a pale wall reads red, not
+ * pink, with a small white centre (25% at the middle, none past a third
+ * of the radius).  Over black the two blends are the same.  No depth
+ * test, as everywhere in the 3D view: it is painted back to front, so
+ * whatever the game paints over the disc hides the halo as it hides the
+ * disc.  f (0 to 1) scales its alpha. */
+static float halo_k, halo_vh;	/* eye units per pixel per unit of distance; the view's height */
+
+/* halo_k and halo_vh, read from GL once a frame (the 3D view's projection
+ * and viewport hold for the whole of draw_3dview) */
+static void view_scale (void)
+{
+	static unsigned int frame = ~0u;
+	static int wide = -1;
+	GLfloat pm[16];
+	GLint vp[4];
+
+	if (frame == hull_frame_no && wide == wide_3d) return;
+	glGetFloatv (GL_PROJECTION_MATRIX, pm);
+	glGetIntegerv (GL_VIEWPORT, vp);
+	halo_k = 2 / (pm[5] * vp[3]), halo_vh = vp[3];
+	frame = hull_frame_no, wide = wide_3d;
+}
+
+static void light_halo (float r, float d, int R, int G, int B, float f)
+{
+	float c[3] = { (unsigned char) R / 255.0f, (unsigned char) G / 255.0f, (unsigned char) B / 255.0f },
+	      hi = fmaxf (c[0], fmaxf (c[1], c[2])), lo = fminf (c[0], fminf (c[1], c[2])),
+	      px, w, a = f * (d > 2e6f ? sqrtf (2e6f / d) : 1);
+	int i;
+
+	view_scale ();
+	if (hi - lo > 0.2f * hi)	/* a coloured light: its hue, HSV saturation 1 */
+		for (i = 0; i < 3; i++) c[i] = (c[i] - lo) / (hi - lo);
+	px = halo_k * d;
+	w = 2 * r / px;
+	w = w < 1.5f * px_scale () ? 1.5f * px_scale () : w > 0.02f * halo_vh ? 0.02f * halo_vh : w;
+	w = r + w * px;
+	glPushAttrib (GL_COLOR_BUFFER_BIT | GL_CURRENT_BIT | GL_LIGHTING_BIT);
+	glEnable (GL_BLEND);
+	glShadeModel (GL_SMOOTH);
+	glBlendFunc (GL_SRC_ALPHA, GL_ONE);
+	disc_strips (0, 0, 0.15f * w, w, c[0], c[1], c[2], 0.6f * a);
+	glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	disc_strips (0, 0, 0.3f * w, 0.7f * w, c[0], c[1], c[2], 0.8f * a);
+	disc_strips (0, 0, 0, w / 3, 1, 1, 1, 0.25f * a);
+	glPopAttrib ();
+}
+
 void Nu_PutTwinklyCircle ()
 {
+	unsigned int key;
+
 	if (use_renderer == R_OLD) return;
 	znode_wrlong (NU_TWINKLYCIRCLE);
 	znode_wrlong (GetReg (REG_D2));
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrcolor (GetReg (REG_D6));
 	put_star ();
+	/* a halo for a light (a station's, a port's), never for a star */
+	key = flat_lights ? 0 : hull_record_key ();	/* the record's: an intro part's word is no star */
+	znode_wrlong (key && !is_star (key & 0xffff));
 }
 void Nu_DrawTwinklyCircle (void **data)
 {
 	int v1[3];
-	unsigned int dreg2, isize;
-	float size;
+	unsigned int dreg2, isize, halo;
+	float size, disc;
 	int r, g, b;
 
 	dreg2 = znode_rdlong (data);
@@ -4003,8 +4220,9 @@ void Nu_DrawTwinklyCircle (void **data)
 	isize = (dreg2 << 16) | (dreg2 >> 16);
 	//printf ("%x (%x)\n", GetReg (2), isize);
 	
-	size = -0.002*((short)dreg2)*v1[2];
+	size = disc = -0.002*((short)dreg2)*v1[2];
 	draw_corona (data, v1, size);
+	halo = znode_rdlong (data);
 	
 	/* billboard: always face the camera, otherwise this twinkle/star
 	 * dot degenerates to an invisible line when viewed edge-on. */
@@ -4022,6 +4240,7 @@ void Nu_DrawTwinklyCircle (void **data)
 			glVertex3f (0.0f, -size, 0.0f);
 			glVertex3f (0.0f, +size, 0.0f);
 		glEnd ();
+		if (halo) light_halo (disc > 0 ? disc : 0, -v1[2], r, g, b, 1);
 	}
 	billboard_end ();
 }
@@ -5331,6 +5550,7 @@ void Nu_PutPlanet ()
 		p.light[i] = (double) STMemory_ReadWord (a1 + 2*i);
 	}
 	p.R = (double) (unsigned int) GetReg (REG_D0);
+	skies_planet_put (p.centre, p.R);
 
 	/* the object rotation matrix at -36(a6): the ST computes viewing
 	 * x as M0*x + M3*y + M6*z (L3d452_PlanetFeatureLoop) */
@@ -5417,7 +5637,9 @@ static int circle_slices (double size, double z)
 #define A6_HYPER_LEFT	722	/* long: transit time left */
 #define A6_HYPER_TOTAL	13882	/* long: the transit's time */
 #define HYPERCLOUD	0xba	/* the cloud's model word (hull_model_key) */
+#define HYPERCLOUD_INTRO	0xd6	/* the intro's, in its scenes (hull_intro_part) */
 #define BLOB_HYPER	0x80000000u	/* on a blob's colour, a circle's tag word: one of the cloud's */
+#define BLOB_SKY	0x40000000u	/* on a blob's colour: one of the background stars (procfx) */
 
 static int hyper_hd (void)
 {
@@ -5427,18 +5649,35 @@ static int hyper_hd (void)
 /* at a disc's Put: BLOB_HYPER when it is one of a hypercloud's */
 static unsigned int hyper_tag (void)
 {
-	return hyper_hd () && hull_model_key () == (0x80000000u | HYPERCLOUD) ? BLOB_HYPER : 0;
+	return hyper_hd () && (hull_model_key () == (0x80000000u | HYPERCLOUD) ||
+			       hull_intro_part () == HYPERCLOUD_INTRO) ? BLOB_HYPER : 0;
+}
+
+/* A circle's tag word: BLOB_HYPER; CIRCLE_LIGHT when it is put while a
+ * station's model ($50, $52, $54) or a surface port's ($5a to $74) of the
+ * game's own table is drawn; and the model's key (its low 18 bits) for
+ * FE2_LIGHT_LOG.  The draw halos only the small ones (circle_light). */
+#define CIRCLE_LIGHT	0x40000000u
+
+static int light_key (unsigned int key)
+{
+	unsigned int w = key & 0xffff;
+	return HULL_KEY_OK (key) && !(key & (HULL_TAB_INTRO | HULL_TAB_OTHER))
+	       && (w == 0x50 || w == 0x52 || w == 0x54 || (w >= 0x5a && w <= 0x74));
 }
 
 void Nu_PutCircle ()
 {
+	unsigned int key;
+
 	if (use_renderer == R_OLD) return;
+	key = hull_model_key ();
 	put_fx ();
 	znode_wrlong (NU_CIRCLE);
 	znode_wrlong (GetReg (REG_D2));	/* untouched: its high word is the radius's fraction */
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrcolor (GetReg (REG_D6));
-	znode_wrlong (hyper_tag ());
+	znode_wrlong (hyper_tag () | (key & 0x3ffff) | (!flat_lights && light_key (key) ? CIRCLE_LIGHT : 0));
 	put_star ();
 }
 /* The galaxy map's stars and markers: a camera-facing disc whose alpha
@@ -5577,10 +5816,21 @@ static int project (const int *v, double *xy)
 static double here_seg[64][4], here_mark[2];
 static int here_n;
 
+/* how much halo a station's or port's circle gets: a lamp is bright (a
+ * channel at $a0 or more) and small (the game's radius, d2, up to 3; it
+ * fades out by 7, so a lamp housing seen close is the game's disc alone) */
+static float circle_light (int d2, int r, int g, int b)
+{
+	if (MAX ((unsigned char) r, MAX ((unsigned char) g, (unsigned char) b)) < 0xa0) return 0;
+	return d2 <= 3 ? 1 : d2 >= 7 ? 0 : (7 - d2) / 4.0f;
+}
+
 void Nu_DrawCircle (void **data)
 {
+	static int light_log = -1;
 	int v1[3];
 	unsigned int dreg2, isize, hyper;
+	float halo;
 	float size;
 	int r, g, b;
 
@@ -5619,7 +5869,7 @@ void Nu_DrawCircle (void **data)
 		}
 		return;
 	}
-	if (hyper) {
+	if (hyper & BLOB_HYPER) {
 		hyper_glow (v1, size, (unsigned char) r / 255.0f, (unsigned char) g / 255.0f, (unsigned char) b / 255.0f);
 		return;
 	}
@@ -5628,7 +5878,14 @@ void Nu_DrawCircle (void **data)
 	 * flat shaded dot, which must always face the camera. */
 	billboard_begin (v1[0], v1[1], v1[2]);
 	gluDisk (qobj, 0.0, size, circle_slices (size, v1[2]), 1);
+	halo = (hyper & CIRCLE_LIGHT) && size > 0 ? circle_light ((short) dreg2, r, g, b) : 0;
+	if (halo > 0) light_halo (size, -v1[2], r, g, b, halo);
 	billboard_end ();
+	if (light_log < 0) light_log = getenv ("FE2_LIGHT_LOG") != NULL;
+	if (light_log && (view_scale (), 1))
+		fprintf (stderr, "light: circle model %s$%x d2 %d r %.1f px rgb %02x%02x%02x z %d halo %.2f\n",
+			 hyper & HULL_TAB_INTRO ? "intro " : hyper & HULL_TAB_OTHER ? "other " : "",
+			 hyper & 0xffff, (short) dreg2, size / (halo_k * -v1[2]), r & 255, g & 255, b & 255, -v1[2], halo);
 }
 
 /* life is so strange */
@@ -5646,6 +5903,7 @@ void Nu_PutCylinder ()
 	znode_wrlong (GetReg (REG_D1));
 	znode_wrlong (GetReg (REG_D5));
 	znode_wrlong (GetReg (REG_D4));
+	shadow_put (REG_A2, 2, MAX (GetReg (REG_D0) & 0xffff, GetReg (REG_D1) & 0xffff));
 }
 void Nu_DrawCylinder (void **data)
 {
@@ -5850,26 +6108,61 @@ void Nu_DrawOval (void **data)
 	glPopMatrix ();
 }
 
+/* A background star with its own magnitude and colour (procfx): the game's
+ * point (rad 0, or the dimmer rad 2 under some stars' core), and round the
+ * core of the brightest a soft glow out to 3 pixels at 1600x1200. */
+static void sky_star (const int *v, int rad, unsigned int c, unsigned int tag)
+{
+	float rgb[3] = { (c >> 8 & 15) / 15.0f, (c >> 4 & 15) / 15.0f, (c & 15) / 15.0f }, glow, size;
+	int k;
+
+	size = procfx_starfield_look (tag, rgb, &glow) * ((rad/2)+1) * px_scale ();
+	if (glow > 0 && rad < 2) {
+		glPushAttrib (GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_POINT_BIT);
+		glEnable (GL_BLEND);
+		glBlendFunc (GL_SRC_ALPHA, GL_ONE);
+		glEnable (GL_POINT_SMOOTH);
+		for (k = 3; k > 0; k--) {
+			glPointSize (size + 0.8f * k * px_scale ());
+			glColor4f (rgb[0], rgb[1], rgb[2], 0.35f * glow / k);
+			glBegin (GL_POINTS);
+				glVertex3iv (v);
+			glEnd ();
+		}
+		glPopAttrib ();
+	}
+	glColor3fv (rgb);
+	glPointSize (size);
+	glBegin (GL_POINTS);
+		glVertex3iv (v);
+	glEnd ();
+}
 void Nu_PutBlob ()
 {
+	unsigned int sky;
+
 	if (use_renderer == R_OLD) return;
 	put_fx ();
+	sky = procfx_starfield_put ();
 	znode_wrlong (NU_BLOB);
 	znode_wrvertex (GetReg (REG_A0)+4);
-	znode_wrlong ((GetReg (REG_D0) & ~BLOB_HYPER) | hyper_tag ());
-	znode_wrlong (GetReg (REG_D1));
+	znode_wrlong ((GetReg (REG_D0) & ~(BLOB_HYPER | BLOB_SKY)) | hyper_tag () | (sky ? BLOB_SKY : 0));
+	/* a sky star's tag in the radius word's high half (unread otherwise) */
+	znode_wrlong (sky ? (GetReg (REG_D1) & 0xffff) | (sky & 0xffff) << 16 : GetReg (REG_D1));
 }
 void Nu_DrawBlob (void **data)
 {
 	int v1[3];
-	unsigned int r, g, b, c;
+	unsigned int r, g, b, c, tag;
 	int rad;
 	int edges;
 	
 	znode_rdvertex (data, v1);
 	c = znode_rdlong (data);
 	split_rgb444i (c, &r, &g, &b);
-	rad = znode_rdlong (data) & 0xffff;
+	rad = znode_rdlong (data);
+	tag = (unsigned int) rad >> 16;
+	rad &= 0xffff;
 	edges = rad+4;
 	if (fx_blob (v1, rad, r >> 24, g >> 24, b >> 24)) return;
 	
@@ -5887,6 +6180,10 @@ void Nu_DrawBlob (void **data)
 	}
 	if ((c & BLOB_HYPER) && rad >= 3) {
 		hyper_glow (v1, -0.002f * rad * v1[2], (c >> 8 & 15) / 15.0f, (c >> 4 & 15) / 15.0f, (c & 15) / 15.0f);
+		return;
+	}
+	if (c & BLOB_SKY) {
+		sky_star (v1, rad, c, tag);
 		return;
 	}
 	glColor3ui (r, g, b);
@@ -5944,6 +6241,7 @@ void Nu_PutLine ()
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrvertex (GetReg (REG_A1)+4);
 	znode_wrcolor (GetReg (REG_D6));
+	shadow_put (REG_A0, 2, 0);
 }
 /* The 'you are here' label (the game's own stroke text) set like the HD
  * map names: scaled about its end by the marker to their cap height,
@@ -6153,7 +6451,9 @@ NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	&Nu_DrawAtmosphereFaded,
 	&Nu_DrawSkyBand,
 	&Nu_DrawComplexOval,
-	&fx_draw_tag
+	&fx_draw_tag,
+	&Nu_DrawRings,
+	&shadows_draw
 };
 
 /*
@@ -6394,6 +6694,9 @@ void Nu_DrawScreen ()
 	//printf ("Frame: %d znodes.\n", znode_buf_pos);
 	planet_ground_seen = 0;
 	galmap_update ();
+	if (shadow_tree && shadow_z + 1) { unsigned char *d = add_detached_node (shadow_tree, shadow_z + 1, 4 + SHADOW_BYTES);
+		if (d) *(int *) d = shadows_write (d + 4) ? NU_SHADOW : NU_END; }	/* NU_END: an empty node */
+	shadow_tree = NULL;
 	if (scene_overflow) {
 		/* S-6: the display lists are cut short somewhere: drop this
 		 * frame's 3D view rather than walk them */

@@ -79,7 +79,7 @@ and dropped: layer 2 already owns the planet's rim and halo.
 | 1 | **Planets (built, with 6)** | Every textured planet gets a soft terminator, a darker limb, a lit rim and a soft halo from its own atmosphere layers. | 85 + 210 in gl.c | noise, program | Low |
 | 2 | **Star corona by class (built, layer 3)** | The star becomes a glowing sun with soft streamers, not a flat disc. | ~95 + ~45 hooks | noise, program, glow square, object reader, star class | Low |
 | 3 | **Sky band (built)** | The flat blue cut-outs become soft star clouds with dust lanes, on every space screen. | 150 + 33 hooks | noise, program, object reader | Low |
-| 4 | Planet rings | Probably also a fix: rings look to be black discs today. They would become banded and see-through. | ~90 | noise, program, object reader | Medium |
+| 4 | **Planet rings (built)** | Not a fix: GL already drew them right. The flat bands become soft, see-through ringlets with gaps. | ~150 + 22 hooks | noise, program, object reader | Low |
 | 5 | Backdrop variation | Ports of the same class stop looking identical. | ~30 | identity tables | Low |
 | 6 | **Close planet detail (built, in 1)** | The ground keeps its grain when flying low. | in 1 | noise, program | Medium |
 
@@ -98,12 +98,9 @@ oracle is nil.  The risk column is about visuals and code.
   - Streamers: `pf_fbm` over the direction away from the star on the sky, seeded by the star.
   - Verify: red, yellow and white stars.
   - Switch: `--flat-stars`.
-- **Rings.**
-  - Path: L3d648_PutPlanetRings (fe2.s 17221) → L3b9aa_FilledOvalThingy (14525) → L37fb2_ProjectOvalXYZ (9464) → `Nu_PutOval`.
-  - `Nu_DrawOval` draws black, and its rotation code is commented out.
-  - Orient with the object reader, and band with `pf_fbm` seeded by the planet.
-  - First check the oval opcode's other users.
-  - Verify: needs a save in a ringed system.
+- **Rings.**  Built; see [rings.md](rings.md).
+  - Path: the gas-giant model's own complex shapes after `Nu_PutPlanet`, not the oval opcode, which only the intro logo uses.
+  - Hooks: `Nu_PutPlanet`, `Nu_ComplexStart`, `Nu_DrawComplexStart`, `flush_contour`, `Nu_DrawComplexEnd`.
   - Switch: `--flat-rings`.
 - **Backdrops.**
   - Hook: `pick` in hdback.c.
@@ -116,8 +113,7 @@ oracle is nil.  The risk column is about visuals and code.
   - Switch: `--flat-planets`, as for the limb.
 
 **Recommendation.**  The sky band, the planets (with their limb and
-close detail) and the corona are built.  Do rings once a ringed save
-exists.
+close detail), the corona and the rings are built.
 
 ## Left out, and why
 
@@ -196,6 +192,75 @@ exists.
   - A real hole contour.
   - The wireframe renderer is untouched.
 
+## Prototype notes: the background stars
+
+The game draws every background star as a plain grey point: radius 0, or
+a dimmer radius-2 point under some stars' core.  This layer gives each
+star a fixed magnitude and colour.  It is HD only and changes nothing in
+the core.
+
+- **Which blobs are stars.**  `L44200_DrawBGStars` draws the sky object
+  (model word `0xb0`).  Its stars reach the host as `Nu_PutBlob` calls
+  (gl.c:6012), about 220 a frame.  `procfx_starfield_put` (procfx.c:163)
+  checks the object's record, as `procfx_sky_put` does.  The blobs of
+  other objects are left alone.  That includes the `0x76` dust that
+  streams past the ship.
+- **Identity.**  The sky is a few dozen copies of one small star pattern,
+  each placed and turned its own way.  A star is named by two exact
+  integers:
+  - the copy: a word of the object's link frame at a6-200
+    (`FRAME_COPY`, procfx.c:154), one fixed value per copy (17 copies seen
+    in a 3900-frame flight, each with its own value, never shared);
+  - the star in the copy: its vertex slot, a0 - a4.
+  
+  A hash of the two gives two bytes.  They go in the spare high half of
+  the blob's radius word, and `BLOB_SKY` goes on its colour (gl.c:5550).
+  No RNG and no clock are involved.  Nothing computed from the star's
+  position works: while the view turns, the game's integer maths moves a
+  star up to 0.017 radian in the sky's frame from one frame to the next.
+  The first cut keyed smooth noise on that direction, and stars popped
+  during a turn.
+- **Magnitude.**  `procfx_starfield_look` (procfx.c:181) sets each star's
+  brightness:
+  - most stars are 0.72 to 0.95 of the game's grey;
+  - about 1 in 20 is brighter, up to 1.6, with a soft additive glow
+    reaching about 3 px at 1600x1200 (`sky_star`, gl.c:5986);
+  - about 1 in 100 is also drawn 1.5x larger.
+
+  `sky_star` reads the game's 4-bit grey as n/15, where the base draw
+  uses n/16 (`split_rgb444i`).  That makes it 6.7% brighter, and the
+  factors above already allow for it.  The glow is GL_POINT_SMOOTH, so its
+  exact shape depends on the driver.
+- **Colour.**  The second byte picks a warm (orange-yellow) or cool
+  (blue-white) tint.  Its strength rises from zero near the middle, so
+  most stars stay white.  The tint scales the channels at low saturation,
+  never toward green or purple.
+- **Switch.**  `--flat-starfield` (main.c:265) makes the put step return
+  0, so every blob is drawn as before.  `--flat-sky` keeps its meaning.
+- **Checked** (1600x1200, lockstep replay of a hand-written flight tape
+  with a yaw, a pitch and the rear view, against base):
+  - Turn track.  Each star's light was tracked against base over 11 yaw
+    frames (26 stars) and 7 pitch frames (29 stars).  No ratio to base
+    changed by more than 25%.  In the yaw:
+    - 15 of 18 dim stars hold their ratio within 0.3%.  The other three
+      move by 0.5%, 3% and 11%, on stars whose own base light swings by up
+      to 1.7x with sub-pixel position;
+    - each of the 4 glow stars' own light stays within 5%.  Its ratio
+      moves by up to 17%, because base's 1-pixel point moves by 14 to 21%;
+    - 4 tracks jumped to a neighbouring star, and are left out.
+
+    In the pitch, 27 stars hold their ratio within 0.4%; 2 tracks jumped
+    to a neighbouring star.
+  - Mean.  Pooled over four views (151 stars), total star light is 1.00x
+    base.  The median star is 0.85x base.
+  - `--flat-starfield` frames are byte-identical to base.
+  - Two runs give byte-identical frames.
+  - Frame time in flight, over 1463 frames: p50 9.80 ms against 9.73 ms
+    for base, and p95 12.82 ms against 12.51 ms.
+  - The oracle end line is exact.
+- **Not yet checked.**  The intro sequence, and drivers other than macOS
+  OpenGL.
+
 ## Prototype notes: the game-over backdrop
 
 - **What.**  The tombstone sequence used to sit on flat black.  It now
@@ -256,6 +321,76 @@ exists.
   front of a star (the game's draw order should cover it); frame time; a
   star near enough to take the sphere path (it would get no corona).
 
+## Lights
+
+The game marks stations, docking bays and landing pads with blinking
+lights: a small flat disc and a thin cross (`Nu_PutTwinklyCircle` /
+`Nu_DrawTwinklyCircle`, the same primitive the stars use), and with
+steady lamps drawn as plain circles (`Nu_PutCircle` / `Nu_DrawCircle`).
+The HD layer adds a soft halo round each one.
+
+- **Which twinklies.**  Every twinkly whose object is not a star.  The
+  put stores one more long after the corona's: 1 when `hull_model_key()`
+  names a model and `is_star()` is false for its word, else 0.  Seen
+  with a census over the dock, landed, orbit and traffic tours: models
+  `$20` (a pad's lights), `$2c` (the player's own ship, seen from
+  outside; earlier notes called it the bay), `$48` (intro table), `$50`
+  and `$54` (a station in flight) get a halo; `$9e` (a star) does not,
+  and keeps its corona.
+- **Which circles (the circle key).**  `Nu_DrawCircle` draws far more
+  than lamps (bodies as small discs, the galaxy map's stars, fireballs,
+  the hypercloud), so the key is narrow and is checked on both sides.
+  At the put, the circle's tag word gets `CIRCLE_LIGHT` only when the
+  model being drawn is, in the game's own table (not the intro's or the
+  other table), a station (`$50`, `$52`) or the docking bay (`$54`), or a
+  surface port (`$5a` to `$74`).  At the draw, a tagged circle gets a
+  halo only if it is a lamp: its brightest channel is `$a0` or more, and
+  it is small (the game's radius `d2` up to 3 gets the full halo, fading
+  to none at 7, so a lamp housing seen close is the game's disc alone).
+  The galaxy map, fireball and hypercloud circles return before the halo
+  code and are untouched.  The tag word also carries the model's key
+  (its low 18 bits) for the log; the draw tests only `BLOB_HYPER` and
+  `CIRCLE_LIGHT`.
+- **Size.**  Disc radius `r` is the game's (`0.002 * d2 * z`, a fixed
+  size on screen).  The halo reaches `r + 2r` (3x the disc), held between
+  a floor of `1.5 * px_scale()` pixels (about 4 px at 1600x1200, so a
+  light whose disc the game has shrunk to nothing still glints) and a
+  ceiling of 2% of the viewport height.  Pixels per eye unit come from
+  the projection matrix and the viewport, read from GL once a frame
+  (`view_scale`, keyed on `hull_frame_no` and the wide-frustum flag), not
+  once a light.
+- **Colour and intensity.**  The halo is the light's own hue at full
+  saturation (a coloured light's channels are stretched to HSV
+  saturation 1; a grey or white light keeps its colour).  Three rings in
+  `disc_strips`: the outer glow, added (alpha 0.6, out to the edge); the
+  core, laid over with the alpha blend (alpha 0.8, solid to 0.3 of the
+  edge, gone at 0.7), so a red light over a pale wall reads red, not
+  pink; and a small white centre, laid over at alpha 0.25, gone by a
+  third of the radius.  Over black, added and laid over look the same.
+  Full to 2 km, then `sqrt(2 km / d)`: 0.6 at 5.5 km, 0.2 at 58 km, so a
+  far station reads as a sparkle of points, not a fog over the hull.  A
+  circle's halo is further scaled by the size fade above.
+- **Occlusion.**  No depth test, as everything in the 3D view: the view
+  is painted far to near, the halo is drawn in the disc's own place in
+  that order, so a hull painted later hides the halo as it hides the
+  disc.  A light in its off phase is not drawn by the game, so it has no
+  halo.
+- **The cross.**  Unchanged (same lines, same width, no smoothing).
+- **Log.**  `FE2_LIGHT_LOG=1` prints one stderr line per 3D-view circle:
+  table, model word, `d2`, radius in pixels, colour, distance and the
+  halo factor (0 when none).  Seen on a station approach and launch:
+  only `$54` circles are halo'd (red lamps at `d2` 2 to 6, green arm-tip
+  lamps at 1 to 2); its dark green circles fall under the `$a0` floor;
+  `$2c` (the player's ship) and the intro's `$48` discs are outside the
+  key.
+- **Switch.**  `--flat-lights` writes 0 for every twinkly and never sets
+  `CIRCLE_LIGHT`, so the draw makes exactly the base's GL calls.
+  `--old-renderer` never puts a twinkly or circle through this path and
+  is unaffected.
+- **Not checked by capture.**  A pad's lights at night, and a surface
+  port's circles (`$5a` to `$74` are in the key but no log line from one
+  has been seen yet); a star in view (left to the put flag).
+
 ## Prototype notes: the limb glow (dropped)
 
 Dropped, superseded by #38.  The planets layer draws the lit limb rim
@@ -263,3 +398,78 @@ Dropped, superseded by #38.  The planets layer draws the lit limb rim
 (`draw_planet_halo`), both under `--flat-planets`.  The separate glow and
 its `--flat-limb` switch were removed, so planet drawing is the planets
 layer's code path unchanged.
+
+## Engine exhaust
+
+Host-side only: `Nu_PutTeardrop` / `Nu_DrawTeardrop` in `src/gl.c`, no
+shader, no new file.
+
+- **What is drawn.**  A ship's plume is two translucent fills of the
+  game's own Bezier teardrop (same control points, same 40 steps):
+  - Halo: the game's colour and outline, alpha 0.8 from a point on the
+    axis out to 85% of the way to the rim, then 0 at the rim (normal
+    blend), so the body keeps the game's width and only the edge is soft.
+  - Core: the outline scaled about the engine end, half as wide and 80% as
+    long, in the game's colour mixed 70% toward white, alpha 0.9,
+    additive.  It lies inside the halo, so nothing is drawn outside the
+    game's silhouette.
+  - Flicker: the core's length moves by up to +-8%, from a byte hashed
+    from the object's record and the game clock (A6+524 >> 12).  The same
+    frame draws the same in every run; it stands still while paused.  No
+    game RNG, no wall clock.
+  - Colour, blend, current and lighting state are pushed and popped.
+- **Which plumes.**  Decided at put time and carried as one extra znode
+  long: `hull_model_key()` must name the game's own table and a model word
+  from `$12` to `$4e` (above the missiles, below stations and ports).
+  Chimney flares and the intro's plumes keep the game's flat fill.  The
+  range is inferred from the model tables; only the player's own hull has
+  been seen to take it.
+- **Small plumes.**  The engine draws a plume whose projected radius is 8
+  or less as a 3D line (fe2.s, the branch before the `$70` hostcall), so it
+  never reaches the teardrop and keeps the game's look.
+- **Switches.**  `--flat-exhaust` puts a 0 and the draw takes the game's
+  path: frames byte-identical to the base build.  `--old-renderer` never
+  puts a teardrop, so it is unaffected.
+- **Not checked.**  Another ship's plume; an in-game chimney flare (the
+  intro's flares were checked); missiles.  The plume code does not test
+  `--flat-fx`, `--classic-ui` or `--pixel-art`; whether they should also
+  turn it off is open.
+
+## Contact shadows
+
+`src/shadows.c` (with a few hook lines in `src/gl.c`): the player's ship,
+landed, sits on a soft dark blob on the ground.
+
+- **What it keys off.**  The flight state byte (A6+704) at the 3D view's
+  init: `$60` (on a pad) or `$68` (down off the pads) only.  Launch moves
+  it to `$48` on the first frame of the lift, so the blob is gone before
+  the ship leaves the pad and never stays behind; in flight, docked, in
+  space, in the intro and on the maps it is never drawn.  No fade: none
+  comes from the same key.  Only the faces, struts and wheels put in a
+  frame whose record is the player's ship (A6+674) are measured.
+- **Shape.**  Every vertex of those parts (a wheel widened by its radius)
+  is taken along the ship's own axes, the turn at -36 and the origin at
+  -16 of its top frame.  The lowest point along the ship's up axis (model
+  y) is the ground.  An ellipse there, across the ship's beam (model x)
+  and length (model z), 1.2x the ship's extent each way, centred under
+  its middle.  The light vector at -198 moves it away from the sun by the
+  shadow of the ship's middle, at most a quarter of the longer extent;
+  with the sun at or below the horizon it is not moved.
+- **Look.**  Black, alpha 0.55 at the centre falling as `1 - q^2` to 0 at
+  the rim (six rings of 40 steps), blended `GL_ZERO, GL_ONE_MINUS_SRC_ALPHA`
+  (`dst * (1 - a)`): it only darkens what is under it, so the pad's
+  markings show through and nothing glows at night.  Lighting, texture,
+  cull and blend state are pushed and popped.
+- **Where it sorts.**  One detached znode (`NU_SHADOW`), added after the
+  frame's faces into the sub-tree of the ship's farthest measured face,
+  at that face's z + 1.  It paints after everything farther (the ground,
+  the pad and its decals) and before every face of the ship.
+- **Bounds.**  Reads ST memory, never writes it.  Every read is checked
+  against `MEM_SIZE`; a frame whose ship frame cannot be found puts no
+  node.  No game RNG, no wall clock.
+- **Switches.**  `--flat-shadows` turns it off: no node is added and the
+  frames are byte-identical to the base build.  `--old-renderer`,
+  `--classic-ui` and `--pixel-art` also turn it off.  `--flat-hulls` does
+  not.
+- **Not done.**  Other landed ships, buildings, ships in flight or docked,
+  self-shadowing, terrain or cloud shadows.

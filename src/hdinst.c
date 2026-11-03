@@ -25,8 +25,9 @@
  * over is still read; a label over the sight is moved clear of it.
  *
  * Lock boxes.  Over a 3D view in flight (the GL renderer leaves the view
- * clear in the ST screen; the scanner was drawn lately, so not a map; not
- * a station page, which hdback has a picture behind)
+ * clear in the ST screen; the scanner was drawn lately, or the game says a
+ * flight view is up, as with the missile pylons in the bay, so not a map;
+ * not a station page, which hdback has a picture behind)
  * the target's boxes are the only straight lines but the sight's and the
  * labels'.  A line runs on across a glyph's cell and across pixels another
  * layer took out, as the game drew those over it, so a corner hidden under
@@ -37,7 +38,9 @@
  * a corner, and each of a box's colour the view's edge cuts off, is taken
  * out end to end, all but the glyph ink hdtext redrew; one cut off with
  * no corner in it is drawn again as a faint accent line, the brackets'
- * weight.
+ * weight.  But a box larger than the view (the lock's acquire zoom starts
+ * large and closes in), two of its sides edge to edge, gets its corner
+ * brackets clamped just inside the view instead.
  */
 #ifdef __APPLE__
 #include <OpenGL/gl.h>
@@ -49,6 +52,7 @@
 #include "hdtext.h"
 #include "hdinst.h"
 #include "hdback.h"
+#include "bindings.h"
 
 #define ST_W		320
 #define ST_H		200
@@ -444,6 +448,49 @@ static float arm (int len)
 	return a > 7 ? 7 : a < 2 ? 2 : a;
 }
 
+/* A box larger than the view (the acquire zoom's first frames): each of
+ * its sides that runs edge to edge beside another of its colour gets, in
+ * place of a faint line, a corner bracket at each end, 2 pixels inside the
+ * view (or clear of a label there), the arm across pointing to the box's
+ * middle. */
+static void oversize (const unsigned char *cell, struct line *l, int n, int horiz,
+		      unsigned char full[][2])
+{
+	int len = horiz ? ST_W : VIEW_H, i, j, e;
+
+	for (i = 0; i < n; i++) {
+		int lo = 999, hi = -1;
+		if (l[i].used || full[l[i].col][!horiz] < 2 || l[i].ea > 1 || l[i].eb < len - 2 ||
+		    n_brackets + 2 > MAX_BRACKET)
+			continue;
+		for (j = 0; j < n; j++)
+			if (l[j].col == l[i].col && l[j].ea <= 1 && l[j].eb >= len - 2) {
+				if (l[j].at < lo) lo = l[j].at;
+				if (l[j].at > hi) hi = l[j].at;
+			}
+		l[i].used = 1;
+		for (e = 0; e < 2; e++) {
+			int end = e ? len - 3 : 2, x, y;
+			float along = (e ? -1 : 1) * arm (len), across = (2 * l[i].at < lo + hi ? 1 : -1) * arm (len);
+			/* moved in, the box's width, clear of a label on the view's
+			 * edge (the speed strip) */
+			for (;;) {
+				int k, text = 0;
+				for (k = lo; k <= hi; k++)
+					text |= cell[horiz ? k * ST_W + end : end * ST_W + k] == 1;
+				if (!text || end < 2 || end > len - 3) break;
+				end += e ? -1 : 1;
+			}
+			x = horiz ? end : l[i].at;
+			y = horiz ? l[i].at : end;
+			brackets[n_brackets].x = x + 0.5f;
+			brackets[n_brackets].y = y + 0.5f;
+			brackets[n_brackets].h = clear_of_text (cell, x, y, 1, horiz ? along : across);
+			brackets[n_brackets++].v = clear_of_text (cell, x, y, 0, horiz ? across : along);
+		}
+	}
+}
+
 static void boxes (const unsigned char *raster, unsigned char *out)
 {
 	static unsigned char cell[ST_W * VIEW_H];
@@ -452,9 +499,10 @@ static void boxes (const unsigned char *raster, unsigned char *out)
 	unsigned char boxcol[256], full[256][2];
 	int nh, nv, i, j, eh, ev, clear = 0, n_runs;
 
-	/* a flight view: the scanner drawn lately (not a map's), and no
-	 * picture behind the page (a station's) */
-	if (since > 8 || hdback_active ()) return;
+	/* a flight view: the scanner drawn lately (not a map's) or, with the
+	 * missile pylons in the bay instead, the game's own flight-view test;
+	 * and no picture behind the page (a station's) */
+	if ((since > 8 && !bindings_in_flight_view (0, 0)) || hdback_active ()) return;
 	for (i = 0; i < ST_W * VIEW_H; i++) clear += raster[i] == 255;
 	if (clear * 10 < ST_W * VIEW_H * 7) return;
 	/* the cells hdtext found glyphs in */
@@ -517,6 +565,8 @@ static void boxes (const unsigned char *raster, unsigned char *out)
 		if (h[i].ea <= 1 && h[i].eb >= ST_W - 2 && ++full[h[i].col][0] >= 2) boxcol[h[i].col] = 1;
 	for (i = 0; i < nv; i++)
 		if (v[i].ea <= 1 && v[i].eb >= VIEW_H - 2 && ++full[v[i].col][1] >= 2) boxcol[v[i].col] = 1;
+	oversize (cell, h, nh, 1, full);
+	oversize (cell, v, nv, 0, full);
 
 	/* the boxes' lines go, and the ones of the boxes' colour cut off by
 	 * the edge of the view */
