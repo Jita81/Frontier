@@ -1,0 +1,68 @@
+# p2-jettison.drv - Phase 2 tour: one unit of cargo jettisoned, seen close.
+#
+# Verifies: B10 the jettisoned canister (model 184, docs/hd/hulls.md).
+# Run:  tools/p2shots --routes jettison --base BASE --branch BRANCH
+# Expect: 01 the external view (own ship from behind) about 1.5 s after the
+#         jettison, paused: the canister, in its target box, close to the
+#         ship; 02 the same view half a second of game time later. Where
+#         it flies off to (above, below, in front) varies per run.
+# Start 3 (docked), new game; buys one unit from the market's first page.
+wait 6000
+key space
+wait 2000
+key 3
+wait 11000
+mouse 57 193
+wait 300
+click 200
+wait 2500
+mouse 271 146
+wait 300
+click 200
+wait 2500
+mouse 129 33
+wait 300
+click 200
+wait 1500
+mouse 57 193
+wait 300
+click 200
+wait 2500
+mouse 171 57
+wait 300
+click 200
+wait 3000
+wait 30000
+sdlkey f1
+wait 1500
+mouse 39 193
+wait 300
+click 200
+wait 2000
+sdlkey f3
+wait 1500
+sdlkey f3
+wait 1500
+mouse 11 38
+wait 300
+click 200
+wait 100
+sdlkey f1
+wait 300
+mouse 8 193
+wait 200
+click 200
+wait 300
+mouse 2 120
+wait 600
+sdlkey esc
+wait 500
+shot 01-external
+sdlkey f1 shift
+wait 500
+sdlkey esc
+wait 500
+shot 02-external-half-s
+sdlkey f1 shift
+wait 300
+quit

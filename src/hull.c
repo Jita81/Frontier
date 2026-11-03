@@ -31,6 +31,9 @@ const struct HullProfile hull_profiles[HP_N] = {
 	{ "military",	0x4004,	0.07, 0.28, 0.80, 0.16, 0.20, 0.08, 0.02, 0.15, 0.12, 0.03, 1.25, 0.60, 60,  0.50, 0.00 },
 	{ "station",	0x5005,	0.08, 0.32, 1.00, 0.16, 0.16, 0.26, 0.12, 0.45, 0.60, 0.07, 1.10, 0.25, 14,  0.45, 0.30 },
 	{ "building",	0x6006,	0.25, 0.75, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.15, 0.08, 0.60, 0.25, 16,  0.35, 0.50 },
+	/* B10: big plates; the canister banded, the capsule hatched and grimy */
+	{ "cargo",	0x7007,	0.30, 0.50, 0.50, 0.00, 0.05, 0.05, 0.75, 0.50, 0.45, 0.06, 1.00, 0.30, 20,  0.40, 0.30 },
+	{ "capsule",	0x8008,	0.28, 0.50, 0.90, 0.60, 0.10, 0.05, 0.00, 0.40, 0.80, 0.10, 1.20, 0.25, 16,  0.55, 0.20 },
 };
 
 /*
@@ -48,6 +51,10 @@ const struct HullClass hull_classes[HC_N] = {
 	{ "freighter",	"hull/freighter.png",	HP_TRADER,	12288,	0.18, 0.18, 0.70, 0.40, 1.20, 0.25, 16, 0.40, 0.40, 0 },
 	{ "armour",	"hull/armour.png",	HP_MILITARY,	8192,	0.14, 0.22, 0.25, 0.10, 1.20, 0.50, 40, 0.45, 0.05, 0 },
 	{ "fighter",	"hull/fighter.png",	HP_SMALL,	6144,	0.16, 0.20, 0.10, 0.00, 0.70, 0.65, 64, 0.30, 0.00, 0 },
+	/* B10: no tile, the seeded plating of their own profiles,
+	 * in the enum's order (hull.h) */
+	{ "cargo",	NULL,			HP_CARGO,	2048,	0, 0, 0, 0,	1.00, 0.30, 20, 0.40, 0.30, 0 },
+	{ "capsule",	NULL,			HP_CAPSULE,	2048,	0, 0, 0, 0,	1.20, 0.25, 16, 0.55, 0.20, 0 },
 	{ "station",	"hull/station.png",	HP_STATION,	131072,	0.10, 0.18, 0.25, 0.15, 1.00, 0.25, 14, 0.40, 0.10, 2.30 },
 	{ "hangar",	"hull/hangar.png",	HP_STATION,	49152,	0.12, 0.16, 0.30, 0.05, 0.80, 0.20, 12, 0.40, 0.35, 0 },
 	{ "deck",	"hull/deck.png",	HP_STATION,	32768,	0.12, 0.16, 0.40, 0.10, 0.80, 0.30, 16, 0.40, 0.35, 0 },
@@ -137,6 +144,9 @@ static const struct {
 	{ 290, HC_HANGAR,	1.0f },	/* hangar interior part */
 	{ 294, HC_HANGAR,	1.0f },	/* hangar interior part */
 	{ 96,  HC_BUILDING,	1.0f },	/* surface port: its buildings, apron and sign boards */
+	/* B10: small objects, two to three plates across the biggest face */
+	{ 18,  HC_CAPSULE,	1.0f },	/* escape capsule */
+	{ 184, HC_CARGO,	1.0f },	/* jettisoned cargo canister */
 };
 #define HULL_NMODELS	(int) (sizeof hull_models / sizeof hull_models[0])
 

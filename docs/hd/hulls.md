@@ -254,6 +254,8 @@ Models (`hull_models[]`, by the whole type word and its table;
 | 88 | large cross-armed orbital station, its slot tunnel too | station |
 | 288, 290, 294 | hangar interior and its parts | hangar |
 | 96 | a surface port: its buildings, apron, roads and signs | building (walls only, see below) |
+| 18 | escape capsule | capsule (see Small objects) |
+| 184 | jettisoned cargo canister | cargo (see Small objects) |
 
 A ship's panel scale puts one to one and a half tiles across its biggest
 face, measured in the shipyard's view (the Viper's biggest face is some
@@ -519,6 +521,43 @@ from ship to ship and stay put on the hull.
   frames are those of the build before the wear (the landed route, which
   repeats bit for bit, gave identical frames). `--flat-hulls` draws no
   plating at all, so no wear either (identical frames too).
+
+## Small objects (B10, slice 1)
+
+The escape capsule (word 18) and the jettisoned cargo canister (word 184)
+are listed in `hull_models[]` at scale x1, each with a class of its own:
+`cargo` and `capsule`.
+
+- **Why two new classes.** The ships' tiles are sized for faces 40 to 110
+  m across. The canister wants hazard bands and the capsule a hatch and a
+  darker, grimier hull, and a class has one profile, so each gets a class
+  and a seeded profile (`HP_CARGO`, `HP_CAPSULE` in `hull_profiles[]`).
+  Neither has a tile; each bakes its profile's plating in code, as the
+  building class does. The two sit before `HC_STATION` in the enum, so
+  `HULL_BUILDING` does not treat them as buildings, and their rows in
+  `hull_classes[]` sit in the same place (the array is positional).
+- **The looks.** `cargo`: big panels (0.30 to 0.50 of the tile), hazard
+  stripes on most panels (0.75), no hatches. `capsule`: big panels,
+  hatches on most panels big enough for one (0.60), deep grooves, heavy wear, less sheen.
+  "Darker" is grooves, grime and less gloss only: the plating keeps a
+  face's mean brightness at the game's colour, as on every class.
+- **The scale.** A panel of 2048 units, meant to put two to three plates
+  across a canister. It is an estimate, not measured: the log gives the
+  canister's model unit as 2^0, against 2^9 to 2^10 for ships.
+- **What it reaches, measured.** Close up, the canister's body is not a
+  polygon: the game draws it as a cylinder (`Nu_PutCylinder`,
+  `Nu_DrawCylinder` in `gl.c`: two discs and a tube, fixed-function lit),
+  which takes no hull context. With `FE2_HULL_DBG=1`, the canister seen
+  close in the external view (`p2-jettison.drv`) kept its own dark colour, not the
+  debug paint. The only hull put logged for word 184 (`FE2_HULL_LOG=1`)
+  came from far off, where it is a few pixels. So this slice changes
+  nothing visible on the canister yet; plating its body needs the
+  cylinder draw to carry the class (a change in `gl.c`). The capsule was
+  not seen in any run.
+- **Seed.** The one canister logged carried wear seed 0, so canisters
+  would wear alike.
+- **Off.** `--flat-hulls` draws no plating at all, these classes
+  included.
 
 ## Switches
 
