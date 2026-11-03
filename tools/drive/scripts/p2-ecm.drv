@@ -90,7 +90,10 @@ log ECM-PAUSE
 key e
 wait 700
 sdlkey esc
-wait 3000
+wait 500
+# Paused, the shell holds still, so the shot is the same frame however long it takes.
+shot 02-ecm-paused
+wait 2500
 log ECM-RESUME
 sdlkey f1 shift
 wait 4000
