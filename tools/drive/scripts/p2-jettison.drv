@@ -1,0 +1,90 @@
+# p2-jettison.drv - Phase 2 tour: one unit of cargo jettisoned, seen close.
+#
+# Verifies: B10 the jettisoned canister (model 184, docs/hd/hulls.md).
+# Run:  tools/p2shots --routes jettison --base BASE --branch BRANCH
+# Expect: 01 the external view, paused about 0.15 s after the jettison,
+#         turned to look up at the ship's underside and zoomed in one step:
+#         the canister side-on near the middle, in front of the hull, some
+#         20 to 25 m from the eye (about 230 px tall at 1600x1200); 02 the
+#         same view half a second of game time later. The game picks the
+#         canister's drift, so it sits a little elsewhere each run.
+# Start 3 (docked), new game; buys one unit from the market's first page.
+wait 6000
+key space
+wait 2000
+key 3
+wait 11000
+mouse 57 193
+wait 300
+click 200
+wait 2500
+mouse 271 146
+wait 300
+click 200
+wait 2500
+mouse 129 33
+wait 300
+click 200
+wait 1500
+mouse 57 193
+wait 300
+click 200
+wait 2500
+mouse 171 57
+wait 300
+click 200
+wait 3000
+wait 30000
+sdlkey f1
+wait 1500
+mouse 39 193
+wait 300
+click 200
+wait 2000
+sdlkey f3
+wait 1500
+sdlkey f3
+wait 1500
+mouse 11 38
+wait 300
+click 200
+# pause at once, so the canister is still by the ship
+wait 150
+sdlkey esc
+wait 400
+# paused: the flight view, then the view button: the ship from outside
+sdlkey f1
+wait 600
+mouse 8 193
+wait 200
+click 200
+wait 600
+mouse 2 120
+wait 300
+# still paused: turn the view to look up at the underside, zoom in a step
+# (three short turns: a long hold turns faster as it goes)
+keydown down
+wait 1000
+keyup down
+wait 300
+keydown down
+wait 1000
+keyup down
+wait 300
+keydown down
+wait 1000
+keyup down
+wait 300
+keydown kp_minus
+wait 150
+keyup kp_minus
+wait 500
+shot 01-canister
+sdlkey f1 shift
+wait 500
+sdlkey esc
+wait 500
+shot 02-canister-half-s
+sdlkey f1 shift
+wait 300
+quit
