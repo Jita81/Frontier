@@ -54,6 +54,7 @@ int flat_biomes = 0;	/* --flat-biomes: flat seas and land, no coasts or biomes (
 int flat_explosions = 0;	/* --flat-explosions: the base explosions, other HD weapon effects kept */
 int flat_buildings = 0;	/* --flat-buildings: a surface port's buildings unplated (hull.c) */
 int flat_lights = 0;	/* --flat-lights: no halo round the game's lights (gl.c) */
+int flat_clouds = 0;	/* --flat-clouds: no clouds on any world (procfx.c) */
 int flat_lasers = 0;	/* --flat-lasers: every laser one plain ribbon, as before bolts and hot cores */
 int flat_missiles = 0;	/* --flat-missiles: a missile's plume only near its smoke, as before */
 int flat_hud_hits = 0;	/* --flat-hud-hits: one red hit flash, no critical tint (hddamage.c) */
@@ -62,6 +63,7 @@ int flat_sight = 0;	/* --flat-sight: the thin HD gun sight and brackets, as befo
 int flat_exhaust = 0;	/* --flat-exhaust: the game's flat engine plumes (gl.c) */
 int flat_starfield = 0;	/* --flat-starfield: the game's plain background stars (procfx.c) */
 int flat_shadows = 0;	/* --flat-shadows: no contact shadow under a landed ship (shadows.c) */
+int props_opt_in = 0, flat_props = 0;	/* --props, --flat-props: scenery round a surface port (props.c) */
 
 /*-----------------------------------------------------------------------*/
 /*
@@ -242,6 +244,7 @@ void Main_ReadParameters(int argc, char *argv[])
                "                        and windows.\n"
                "  --flat-rings          The game's flat planetary rings.\n"
                "  --flat-lights         The game's lights without their soft halo.\n"
+               "  --flat-clouds         No clouds on the worlds.\n"
                "  --pixel-text          Keep the original bitmap font (no HD text;\n"
                "                        FE2_HD_FONT=<PostScript name> picks the font).\n"
                "  --pixel-art           Keep the game's own bitmaps (no HD stills).\n"
@@ -255,6 +258,7 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --flat-sight          The thin HD gun sight, its ticks found as one (as before).\n"
                "  --flat-exhaust        The game's flat engine plumes (no HD exhaust).\n"
                "  --flat-shadows        No soft shadow under a landed ship.\n"
+               "  --props               Trees, shrubs or ice spires round a surface port.\n  --flat-props          None (wins over --props).\n"
                "  --hull-style N        Hull look, 0 plating, 1 big texture, 2 panels,\n"
                "                        3 bump and weathering, 4 per model, 5 a material\n"
                "                        per class of ship (default).\n"
@@ -292,6 +296,8 @@ void Main_ReadParameters(int argc, char *argv[])
 		flat_rings = 1;
 	  else if (!strcmp(argv[i], "--flat-lights"))
 		flat_lights = 1;
+	  else if (!strcmp(argv[i], "--flat-clouds"))
+		flat_clouds = 1;
 	  else if (!strcmp(argv[i], "--pixel-text"))
 		pixel_text = 1;
 	  else if (!strcmp(argv[i], "--pixel-art"))
@@ -316,6 +322,8 @@ void Main_ReadParameters(int argc, char *argv[])
 		flat_exhaust = 1;
 	  else if (!strcmp(argv[i], "--flat-shadows"))
 		flat_shadows = 1;
+	  else if (!strcmp(argv[i], "--props")) props_opt_in = 1;
+	  else if (!strcmp(argv[i], "--flat-props")) flat_props = 1;
 	  else if (!strcmp(argv[i], "--hull-style") && i + 1 < argc) {
 		hull_style = atoi (argv[++i]);
 		if (hull_style < 0 || hull_style > 5) hull_style = 5;
