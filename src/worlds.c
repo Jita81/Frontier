@@ -17,6 +17,11 @@
  *
  * W12 slice 1: an airless body takes a fine seeded regolith speckle and
  * soft bright rays from its own craters, as albedo on every light zone.
+ *
+ * W4 slice 1: an airless body takes relief in the same gain: each
+ * crater a darker floor and a lighter rim just outside it, and the ground
+ * between a seeded ridged noise. It is a tone, not lighting, the same on
+ * every light zone. Off: --flat-relief.
  * Off, all of these: --flat-biomes.
  * See docs/hd/planet-classes.md.
  */
@@ -41,6 +46,14 @@
 #define W_RAYS		8	/* rays a crater, at most */
 #define W_CRATERS	64
 #define W_RBRIGHT	0.2	/* a ray's brightening at the rim */
+#define W_GF0		9.0	/* ground relief: ridged octaves, cells a radian (the second is W_RF2) */
+#define W_GAMP		0.12	/* ground relief: share of a texel's brightness */
+#define W_RIDGE		0.305	/* the mean of |2 x noise - 1|, so the ridges are zero-mean */
+#define W_RIM		0.16	/* a crater's rim, lighter */
+#define W_FLOOR		0.12	/* its floor, darker */
+#define W_GAIN		0.25	/* speckle, rays and relief together, at most a side */
+#define W_TEX0		2e-5	/* the relief faded out at this patch texel (radians) and finer, */
+#define W_TEX1		2e-3	/* whole at this one and coarser: log-linear between */
 
 /* the most a channel moves, as a share of the texel's brightest channel */
 static const float shallow_k[3] = { -0.08f, 0.25f, 0.12f };
@@ -66,12 +79,16 @@ static float hash3 (int x, int y, int z, unsigned int seed)
 	return (h & 0xffff) / 65535.0f;
 }
 
-/* value noise, 0..1, on the unit direction d scaled by f */
-static float vnoise (const double d[3], double f, unsigned int seed)
+/* value noise, 0..1, on the unit direction d scaled by f; k, if not NULL,
+ * keeps the last lattice cell's corner hashes, for a low octave sampled
+ * many times a cell (W4) */
+struct VCell { int ok, i[3]; unsigned int seed; float h[8]; };
+
+static float vnoise_k (const double d[3], double f, unsigned int seed, struct VCell *c)
 {
 	double p[3], w[3];
 	int i[3], k;
-	float v = 0.0f;
+	float v = 0.0f, h[8];
 
 	for (k = 0; k < 3; k++) {
 		p[k] = d[k] * f;
@@ -79,10 +96,20 @@ static float vnoise (const double d[3], double f, unsigned int seed)
 		w[k] = p[k] - i[k];
 		w[k] = w[k] * w[k] * (3.0 - 2.0 * w[k]);
 	}
+	if (c && c->ok && c->seed == seed && !memcmp (c->i, i, sizeof (i)))
+		memcpy (h, c->h, sizeof (h));
+	else {
+		for (k = 0; k < 8; k++) h[k] = hash3 (i[0] + (k & 1), i[1] + !!(k & 2), i[2] + !!(k & 4), seed);
+		if (c) c->ok = 1, memcpy (c->i, i, sizeof (i)), c->seed = seed, memcpy (c->h, h, sizeof (h));
+	}
 	for (k = 0; k < 8; k++)
-		v += (k & 1 ? w[0] : 1 - w[0]) * (k & 2 ? w[1] : 1 - w[1]) * (k & 4 ? w[2] : 1 - w[2])
-			* hash3 (i[0] + (k & 1), i[1] + !!(k & 2), i[2] + !!(k & 4), seed);
+		v += (k & 1 ? w[0] : 1 - w[0]) * (k & 2 ? w[1] : 1 - w[1]) * (k & 4 ? w[2] : 1 - w[2]) * h[k];
 	return v;
+}
+
+static float vnoise (const double d[3], double f, unsigned int seed)
+{
+	return vnoise_k (d, f, seed, NULL);
 }
 
 static double smooth (double e0, double e1, double x)
@@ -373,12 +400,25 @@ static double biome_at (const double d[3], int temp, unsigned int seed)
 
 /* W12: the crater circles in reach of a patch, each with a tangent frame
  * and a few seeded rays: direction, and length 2 to 4 crater radii. */
-static struct Crater { double c[3], u[3], w[3], r, reach2, ray[W_RAYS][3]; int nr; } cr[W_CRATERS];
+static struct Crater { double c[3], u[3], w[3], r, reach2, bowl2, rim, flo, ray[W_RAYS][3]; int nr; } cr[W_CRATERS];
 static int ncr;
+
+/* W4: how much of the relief a patch of texel tex (radians) takes: none
+ * at W_TEX0 and finer, all at W_TEX1 and coarser, log-linear between */
+static double relief (double tex)
+{
+	return flat_relief ? 0.0 : smooth (0.0, 1.0, log (tex / W_TEX0) / log (W_TEX1 / W_TEX0));
+}
+
+/* texels between the regolith's gain samples: as close as the speckle needs */
+static int regolith_step (double tex)
+{
+	return (int) fmin (32.0, fmax (2.0, 0.75 / (W_RF1 * tex)));
+}
 
 static void gather_craters (struct PSurf *s, const struct PPatch *pt, unsigned int seed)
 {
-	double c4[W_CRATERS][4], l;
+	double c4[W_CRATERS][4], l, tex = 2.0 * pt->half / pt->n, rel = relief (tex), gs = regolith_step (tex) * tex;
 	int i, j, k, n = psurf_craters (s, c4, W_CRATERS);
 
 	for (ncr = i = 0; i < n; i++) {
@@ -387,6 +427,11 @@ static void gather_craters (struct PSurf *s, const struct PPatch *pt, unsigned i
 		memcpy (c->c, c4[i], sizeof (c->c));
 		c->r = c4[i][3];
 		c->reach2 = 16.0 * c->r * c->r;
+		/* W4: the bowl's floor and rim, each faded as the gain samples'
+		 * spacing gs nears its width, so neither aliases */
+		c->bowl2 = rel > 0.0 ? 1.45 * 1.45 * c->r * c->r : 0.0;
+		c->rim = rel * W_RIM * (1.0 - smooth (0.35, 0.7, 2.5 * gs / c->r));
+		c->flo = rel * W_FLOOR * (1.0 - smooth (0.35, 0.7, gs / c->r));
 		k = fabs (c->c[0]) < 0.6 ? 0 : fabs (c->c[1]) < 0.6 ? 1 : 2;
 		for (j = 0; j < 3; j++) c->u[j] = (j == k) - c->c[j] * c->c[k];
 		l = sqrt (wdot (c->u, c->u));
@@ -405,17 +450,37 @@ static void gather_craters (struct PSurf *s, const struct PPatch *pt, unsigned i
 /* W12: the gain byte of an airless surface at d, 128 + 256 x (speckle +
  * rays): two octaves of noise, each faded out where the patch's texel tex
  * (radians) is too coarse for it, and the rays of the gathered craters,
- * tapering and fading with distance. */
+ * tapering and fading with distance.
+ * W4: plus relief: two zero-mean ridged octaves on the ground and each
+ * crater's floor and rim, faded the same way, and all of it by relief (tex). */
 static double regolith_at (const double d[3], double tex, unsigned int seed)
 {
-	double v = W_RAMP * ((1.0 - smooth (0.35, 0.7, W_RF1 * tex)) * (vnoise (d, W_RF1, seed ^ 0x2e60u) - 0.5)
-		+ 0.75 * (1.0 - smooth (0.35, 0.7, W_RF2 * tex)) * (vnoise (d, W_RF2, seed ^ 0x7b1du) - 0.5));
+	static double ltex = -1.0, k1, k2, g0, g2, rl;
+	static struct VCell lo;
+	float n2 = vnoise (d, W_RF2, seed ^ 0x7b1du);
+	double v;
 	int i, j;
 
+	if (tex != ltex) {	/* the fades are the patch's: work them out once */
+		double rel = rl = relief (tex);
+		ltex = tex;
+		k1 = 1.0 - smooth (0.35, 0.7, W_RF1 * tex);
+		k2 = 1.0 - smooth (0.35, 0.7, W_RF2 * tex);
+		g0 = rel * W_GAMP * (1.0 - smooth (0.35, 0.7, W_GF0 * tex));
+		g2 = rel * W_GAMP * 0.6 * k2;
+	}
+	v = W_RAMP * (k1 * (vnoise (d, W_RF1, seed ^ 0x2e60u) - 0.5) + 0.75 * k2 * (n2 - 0.5));
+	if (g0 > 0.0) v += g0 * (W_RIDGE - fabs (2.0 * vnoise_k (d, W_GF0, seed ^ 0x51e7u, &lo) - 1.0));
+	if (g2 > 0.0) v += g2 * (W_RIDGE - fabs (2.0 * n2 - 1.0));
 	for (i = 0; i < ncr; i++) {
 		const struct Crater *c = &cr[i];
-		double p[3] = { d[0] - c->c[0], d[1] - c->c[1], d[2] - c->c[2] }, pu, pw;
-		if (wdot (p, p) > c->reach2) continue;
+		double p[3] = { d[0] - c->c[0], d[1] - c->c[1], d[2] - c->c[2] }, pu, pw, p2 = wdot (p, p);
+		if (p2 > c->reach2) continue;
+		if (p2 < c->bowl2) {
+			/* a rim about 0.4 of the radius wide, a floor about the radius */
+			double s = sqrt (p2) / c->r;
+			v += c->rim * smooth (0.85, 1.05, s) * (1.0 - smooth (1.05, 1.45, s)) - c->flo * (1.0 - smooth (0.5, 0.95, s));
+		}
 		pu = wdot (p, c->u); pw = wdot (p, c->w);
 		for (j = 0; j < c->nr; j++) {
 			double s = (c->ray[j][0] * pu + c->ray[j][1] * pw - c->r) / (c->ray[j][2] - c->r);
@@ -423,6 +488,7 @@ static double regolith_at (const double d[3], double tex, unsigned int seed)
 			if (s > 0.0 && s < 1.0 && lat < 1.0) v += W_RBRIGHT * (1.0 - lat * lat) * (1.0 - s) * (1.0 - s);
 		}
 	}
+	if (rl > 0.0) v = fmax (-W_GAIN, fmin (W_GAIN, v));	/* landed (no relief): W12's own, unclamped */
 	return fmax (0.0, fmin (255.0, 128.0 + 256.0 * v));
 }
 
@@ -436,8 +502,7 @@ static const unsigned char *biome_map (const struct PPatch *pt, unsigned int see
 	float lo = 1e9f, hi = -1e9f;
 	struct BMap *e = NULL;
 	double tex = 2.0 * pt->half / pt->n;
-	int n = pt->n, gn = n / (temp != W_AIRLESS ? W_BSTEP
-		: (int) fmin (32.0, fmax (2.0, 0.75 / (W_RF1 * tex)))) + 1, i, k, x, y;
+	int n = pt->n, gn = n / (temp != W_AIRLESS ? W_BSTEP : regolith_step (tex)) + 1, i, k, x, y;
 	double sc = (n - 1.0) / (gn - 1.0);
 
 	for (i = 0; i < W_SLOTS; i++) {
@@ -464,16 +529,26 @@ static const unsigned char *biome_map (const struct PPatch *pt, unsigned int see
 	e->seed = seed; e->temp = temp; e->p = *pt; e->lru = ++clock_;
 	e->one = (int) ((lo + hi) * 0.5f + 0.5f);
 	/* two steps of a byte are a fraction of a colour level: one byte */
-	if (hi - lo > 2.0f && (e->b = malloc ((size_t) n * n)))
-		for (y = 0; y < n; y++)
+	if (hi - lo > 2.0f && n <= 1024 && (e->b = malloc ((size_t) n * n))) {
+		static float fxs[1024];
+		static int x0s[1024];
+		for (x = 0; x < n; x++) {	/* each column's cell and weight, once (W4) */
+			float fx = x / sc;
+			x0s[x] = fx >= gn - 1 ? gn - 2 : (int) fx;
+			fxs[x] = fx - x0s[x];
+		}
+		for (y = 0; y < n; y++) {
+			float fy = y / sc;
+			int y0 = fy >= gn - 1 ? gn - 2 : (int) fy;
+			const float *r = g + y0 * gn;
+			fy -= y0;
 			for (x = 0; x < n; x++) {
-				float fx = x / sc, fy = y / sc, v;
-				int x0 = fx >= gn - 1 ? gn - 2 : (int) fx, y0 = fy >= gn - 1 ? gn - 2 : (int) fy;
-				const float *q = g + y0 * gn + x0;
-				fx -= x0; fy -= y0;
-				v = (q[0] * (1 - fx) + q[1] * fx) * (1 - fy) + (q[gn] * (1 - fx) + q[gn+1] * fx) * fy;
+				const float *q = r + x0s[x];
+				float fx = fxs[x], v = (q[0] * (1 - fx) + q[1] * fx) * (1 - fy) + (q[gn] * (1 - fx) + q[gn+1] * fx) * fy;
 				e->b[y*n + x] = (unsigned char) (v + 0.5f);
 			}
+		}
+	}
 	*one = e->one;
 	return e->b;
 }
