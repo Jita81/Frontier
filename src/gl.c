@@ -4971,16 +4971,22 @@ static void cloud_look (int model_word, int air, int rim, unsigned int seed,
 /* Hand procfx the eye and the sun in model space, the eye in units of R. */
 static void cloud_stage (const struct PlanetPrim *p, double d, const double sun[3])
 {
-	double up[3], e[3], s[3];
+	double up[3], e[3], s[3], le, ls;
 	float eye[3], fs[3];
 	int i;
 
+	/* the ST's matrix is not quite orthonormal (lengths off by up to a
+	 * percent), which from orbit is nothing but near the ground is the
+	 * whole height of the deck: so normalise, and let d/R alone say how
+	 * high the eye is */
 	for (i = 0; i < 3; i++) up[i] = -p->centre[i] / d;
 	to_model (p, up, e);
 	to_model (p, sun, s);
+	le = sqrt (pdot (e, e));
+	ls = sqrt (pdot (s, s));
 	for (i = 0; i < 3; i++) {
-		eye[i] = e[i] * d / p->R;
-		fs[i] = s[i];
+		eye[i] = le > 0.0 ? e[i] / le * d / p->R : 0.0;
+		fs[i] = ls > 0.0 ? s[i] / ls : 0.0;
 	}
 	procfx_planet_clouds (p->cl_cover, p->cl_tint, p->cl_rot, p->cl_seed, eye, fs);
 }
@@ -5128,15 +5134,14 @@ static void draw_planet_sphere (struct PlanetTex *t, const struct PlanetPrim *p,
  * Host constant, not ST data (docs/09 §3). */
 #define GROUND_DOME_RADIUS	1.0e6
 
-static void draw_horizon_cap (struct PlanetTex *t, const struct PlanetPrim *p, double d,
-			      const double sun[3], const struct LightZone *zones, int nzones, double soft)
+/* 'up' from the planet centre towards the camera (origin), and two axes
+ * across it */
+static void planet_up_frame (const struct PlanetPrim *p, double d, double up[3], double e1[3],
+			     double e2[3])
 {
-	static struct PVert v[HORIZON_CAP_RINGS+1][HORIZON_CAP_SLICES+1];
-	double up[3], e1[3], e2[3];
-	double theta_max, dot, len;
-	int i, j, k, z;
+	double dot, len;
+	int k;
 
-	/* 'up' points from the planet centre towards the camera (origin) */
 	up[0] = -p->centre[0]/d;
 	up[1] = -p->centre[1]/d;
 	up[2] = -p->centre[2]/d;
@@ -5156,6 +5161,17 @@ static void draw_horizon_cap (struct PlanetTex *t, const struct PlanetPrim *p, d
 	e2[0] = up[1]*e1[2] - up[2]*e1[1];
 	e2[1] = up[2]*e1[0] - up[0]*e1[2];
 	e2[2] = up[0]*e1[1] - up[1]*e1[0];
+}
+
+static void draw_horizon_cap (struct PlanetTex *t, const struct PlanetPrim *p, double d,
+			      const double sun[3], const struct LightZone *zones, int nzones, double soft)
+{
+	static struct PVert v[HORIZON_CAP_RINGS+1][HORIZON_CAP_SLICES+1];
+	double up[3], e1[3], e2[3];
+	double theta_max;
+	int i, j, k, z;
+
+	planet_up_frame (p, d, up, e1, e2);
 
 	/* Half-angle of the cone of directions that actually hit the surface.
 	 *
@@ -5237,6 +5253,60 @@ static void draw_horizon_cap (struct PlanetTex *t, const struct PlanetPrim *p, d
 			for (j = 0; j < HORIZON_CAP_SLICES; j++)
 				emit_zone_quad (&zones[z], &v[i][j], &v[i][j+1], &v[i+1][j+1], &v[i+1][j]);
 	}
+}
+
+/* The sky deck (docs/hd/clouds.md): below PLANET_CAP_RATIO, a dome over
+ * every direction the cap leaves, from up to pi - asin(R/d), each vertex
+ * carrying its model direction; procfx finds the clouds along it.  It
+ * needs nothing of the ground's shader, so --flat-planets keeps it: the
+ * deck is cloud, not ground. */
+#define DECK_RINGS	32
+#define DECK_SEGS	64
+
+static void deck_vertex (const struct PlanetPrim *p, const double up[3], const double e1[3],
+			 const double e2[3], double th, double a)
+{
+	double dir[3], m[3];
+	int k;
+
+	for (k = 0; k < 3; k++)
+		dir[k] = up[k]*cos (th) + (e1[k]*cos (a) + e2[k]*sin (a))*sin (th);
+	to_model (p, dir, m);
+	glTexCoord3dv (m);
+	planet_vertex ((double[3]) { GROUND_DOME_RADIUS * dir[0], GROUND_DOME_RADIUS * dir[1],
+				     GROUND_DOME_RADIUS * dir[2] });
+}
+
+static void draw_cloud_deck (const struct PlanetPrim *p, double d, const double sun[3], double soft)
+{
+	double up[3], e1[3], e2[3], top = M_PI - asin (p->R/d > 1.0 ? 1.0 : p->R/d);
+	float air[4] = { p->cl_tint[0], p->cl_tint[1], p->cl_tint[2], planet_aloft (p, d) };
+	int i, j, r, g, b;
+
+	if (p->rim >= 0) {
+		split_rgb444b (p->rim, &r, &g, &b);
+		air[0] = r / 255.0f; air[1] = g / 255.0f; air[2] = b / 255.0f;
+	}
+	cloud_stage (p, d, sun);
+	if (!procfx_deck_begin (air, soft > 0.0 ? soft : 0.1)) return;
+	planet_up_frame (p, d, up, e1, e2);
+	glPushAttrib (GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_CURRENT_BIT);
+	glDisable (GL_TEXTURE_2D);
+	glEnable (GL_BLEND);
+	glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	for (i = 0; i < DECK_RINGS; i++) {
+		/* denser towards the horizon, like the cap */
+		double f0 = 1.0 - (double) i / DECK_RINGS, f1 = 1.0 - (double) (i+1) / DECK_RINGS;
+		glBegin (GL_QUAD_STRIP);
+		for (j = 0; j <= DECK_SEGS; j++) {
+			double a = 2.0*M_PI*(double) j / DECK_SEGS;
+			deck_vertex (p, up, e1, e2, top * (1.0 - f0*f0), a);
+			deck_vertex (p, up, e1, e2, top * (1.0 - f1*f1), a);
+		}
+		glEnd ();
+	}
+	glPopAttrib ();
+	procfx_deck_end ();
 }
 
 /*
@@ -5620,6 +5690,8 @@ void Nu_DrawPlanet (void **data)
 	}
 
 	if (smooth) procfx_planet_end ();
+	if (d < p.R * PLANET_CAP_RATIO && p.cl_cover[3] > 0.0f && !flat_clouds)
+		draw_cloud_deck (&p, d, sun, soft);
 	glDisable (GL_TEXTURE_2D);
 }
 /* ==== PLANET END ==== */
@@ -5789,8 +5861,11 @@ void Nu_PutPlanet ()
 	 * not by natm, the layers drawn at this size (none from most orbits) */
 	air = -1;
 	if (model) {
-		unsigned int q = model + 8 + (p.flags & 0x10 ? 58 : p.flags & 0x40 ? 0 : 8);
-		if (STMemory_ReadWord (q) && STMemory_ReadWord (q + 2))
+		unsigned int q = model + 8 + (p.flags & 0x10 ? 58 : p.flags & 0x40 ? 0 : 8), e = q + 2;
+		/* the same layout check as planet_read_atmosphere: the
+		 * features follow the layers, or no word here is air */
+		for (i = 0; i < 8 && STMemory_ReadWord (e); i++) e += 4;
+		if (STMemory_ReadWord (q) && STMemory_ReadWord (q + 2) && e + 2 == feat)
 			air = STMemory_ReadWord (q + 4) & 0xfff;
 	}
 	cloud_look (mw, air >= 0, air, p.seed, p.cl_cover, p.cl_tint);

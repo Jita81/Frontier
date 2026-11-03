@@ -1,0 +1,129 @@
+# p2-ascent.drv - Phase 2 tour: lift off from an atmospheric surface port
+# under an overcast and climb through the cloud deck into space.
+#
+# Verifies: clouds2 (W5b) the sky deck seen from the pad and from below,
+# the whitening inside it, the deck from above, and that the deck hands
+# over to the orbit view of the clouds (procfx PF_CLOUDS) at 1.25R.
+# Run:  tools/p2shots --routes ascent --base BASE --branch BRANCH
+# The sky over this port is clear on the first afternoon, so the route
+# first runs the clock at 10000x to midnight (the port's midnight message
+# drops it to 1x, which fixes the start), then 65 s at 1000x to about
+# 18:00 on the second day, when the port is under an overcast.
+# Expect: 01 the pad (external view) under the overcast, 02 the front view
+#         just after lift-off with the nose a little up (the deck overhead,
+#         the horizon in view), 03 climbing (d/R about 1.001), 04 in the
+#         deck (about 1.002: the view whitened), 05 the rear view just above
+#         it (about 1.003), 06 high (about 1.03, at 10x), 07 space (past the
+#         1.25R hand-over).  The front view keeps the horizon in frame: with
+#         the nose far up the game draws no planet, and so no deck.
+# The d/R figures were read with a debug print; the clock steps are
+# 1000x wall time, so a busy machine moves them a little.
+# Each shot pauses the game (Esc) and resumes it at 1x (Shift+F1); the
+# pointer is parked off the controls so no hover tip is drawn.
+# Log markers: padtime..padend (landed, for frame timing), climb..climbend.
+
+wait 6000
+key space
+wait 2000
+key 2             # start position 2: landed at a surface port with an atmosphere
+wait 11000
+mouse 2 120
+wait 300
+sdlkey f5 shift   # 10000x: on to the midnight message (1x)
+wait 15000
+sdlkey f4 shift   # 1000x: to about 18:00 on the second day
+wait 65000
+sdlkey f1 shift   # 1x
+mouse 8 193       # the view icon twice: the external view
+wait 300
+click 200
+wait 1200
+mouse 8 193
+wait 300
+click 200
+wait 1200
+mouse 2 120
+log padtime
+wait 15000
+log padend
+sdlkey esc
+wait 600
+shot 01-pad
+sdlkey f1 shift
+mouse 8 193       # the view icon again: the front view
+wait 300
+click 200
+wait 1200
+mouse 57 193      # comms: ask for launch clearance
+wait 300
+click 200
+wait 2500
+mouse 171 57
+wait 300
+click 200
+wait 3000
+mouse 263 193     # lift off
+wait 300
+click 200
+wait 2000
+mouse 2 120
+wait 7000
+press right       # five small pulls: the nose a little above the horizon
+move 0 8 1 20
+release right
+wait 300
+press right
+move 0 8 1 20
+release right
+wait 300
+press right
+move 0 8 1 20
+release right
+wait 300
+press right
+move 0 8 1 20
+release right
+wait 300
+press right
+move 0 8 1 20
+release right
+wait 300
+sdlkey esc
+wait 600
+shot 02-low
+sdlkey f1 shift
+log climb
+keydown return    # full thrust
+wait 6000
+sdlkey esc
+wait 600
+shot 03-climb
+sdlkey f1 shift
+wait 9000
+sdlkey esc
+wait 600
+shot 04-deck
+sdlkey f1 shift
+mouse 8 193       # the view icon: the rear view
+wait 300
+click 200
+wait 1200
+mouse 2 120
+wait 4000
+sdlkey esc
+wait 600
+shot 05-above
+sdlkey f1 shift
+sdlkey f2 shift   # 10x
+wait 12000
+sdlkey esc
+wait 600
+shot 06-high
+sdlkey f1 shift
+sdlkey f2 shift
+wait 9000
+sdlkey esc
+wait 600
+shot 07-space
+log climbend
+quit

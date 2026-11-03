@@ -84,6 +84,13 @@ void procfx_planet_bind (int unit, unsigned int tex);
 /* before each vertex: cos(sun), view cosine, model direction there */
 void procfx_planet_attr (double c, double mu, const double m[3]);
 void procfx_planet_end (void);
+/* The sky deck, under the cap ratio: after procfx_planet_clouds, with the
+ * air's colour (alpha: the rim's weight) and the terminator's softness.
+ * Then the dome of directions, each with its model direction as texture
+ * coordinate 0, then procfx_deck_end.  0, nothing bound, with no clouds,
+ * under --flat-clouds, or when the shader is not available. */
+int procfx_deck_begin (const float air[4], float soft);
+void procfx_deck_end (void);
 
 /* The game-over backdrop, a dark nebula filling the current
  * viewport under the tombstone (see endcard_frame in hdcontrols.c), faded

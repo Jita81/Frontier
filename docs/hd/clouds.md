@@ -71,6 +71,22 @@ captures (`tools/p2shots --routes orbit`), the cover of the lit disc of
 the first terran world, measured against a capture with full cover, was
 41% at shot 02, 32% at 03 and 31% at 05.
 
+The detail octaves move the cover very little.  The same replica, 40
+seeds, with the three detail octaves off and on (mean, then the range
+over seeds, then the largest change of any one seed):
+
+| Class, threshold | Detail off | Detail on | Largest change |
+|---|---|---|---|
+| terran 0.582 | 28.25% (24.2-33.4) | 28.27% (24.1-33.4) | 0.11 points |
+| terran 0.559 | 34.57% (30.1-38.7) | 34.59% (30.2-38.6) | 0.17 points |
+| ice 0.685 | 9.44% (6.9-11.6) | 9.46% (6.9-11.7) | 0.12 points |
+| ice 0.653 | 14.19% (11.0-18.0) | 14.21% (11.0-18.0) | 0.11 points |
+| rocky 0.729 | 4.99% (3.1-6.6) | 5.01% (3.2-6.7) | 0.08 points |
+| rocky 0.6845 | 10.01% (7.5-12.6) | 10.03% (7.6-12.7) | 0.11 points |
+
+The detail changes the shape of the cloud edges, not how much sky is
+covered.
+
 **Cost.**  Per planet fragment the cloud program reads the noise eight
 times: five octaves for the cover (two of `pf_fbm`, three of detail) and
 three for the shadow.  If a slow machine needs it, cut the shadow to two
@@ -78,7 +94,72 @@ octaves first, then the cover to four.
 
 ## Sky deck
 
-Not built yet.
+Below `PLANET_CAP_RATIO` (1.25R) the horizon cap only covers the
+directions that hit the ground.  `draw_cloud_deck` in `gl.c` draws a dome
+over all the other directions, from straight up to the horizon
+(pi - asin(R/d) from up), 32 rings by 64 segments, packed towards the
+horizon like the cap.  Each vertex carries its direction in model space.
+The deck shader (`deck_glsl`, `procfx_deck_begin`/`_end`) follows that
+direction from the eye to the deck sphere and reads `cl_cover` there.
+These are the clouds the orbit view draws: the same sphere, seed, drift
+and clock, and the same uniforms (`cloud_stage`).  The dome is drawn
+after the ground, with alpha blending, in the planet's own znode.  So the
+game's sun, moons and stars, drawn before it, are covered by cloud, and
+anything the game draws later (ships, the port) is not.
+
+**From below.**  The ray leaves the deck sphere overhead.  The cover
+there is `cl_cover`, as from orbit.  Wherever there is cloud, a
+finer noise (3 octaves, 1500 cells per planet radius, on the same drift)
+moves the cloud edge, so an overcast breaks into separate clouds with
+gaps, and the same noise darkens their bases (down to half the lit colour
+where the cloud is thick).  The fine noise fades out as its cells get
+smaller than a pixel, which leaves the orbit cover.  Toward the horizon
+the deck thins into the air's colour (the innermost atmosphere layer, as
+the cap's rim uses).  It is half mixed and fully transparent by a path
+length of 0.06R.  So the deck reads as cloud overhead and haze at the
+horizon, never as a hard ceiling.  At night the clouds go to the same dim
+neutral as from orbit (`CL_NIGHT`): dark shapes that hide the stars.
+
+**From above** (the eye over R(1 + H)).  Only the band between the
+horizon and the deck's own edge is drawn: the deck seen edge-on, with the
+cap's rim colour at grazing angles.  The ground below already shows the
+clouds through `PF_CLOUDS`.  The band fades out from 1.05R to 1.2R, so
+at the 1.25R hand-over to the sphere there is no deck left to pop.
+
+**Inside a cloud.**  `cl_inside` is the cover at the eye, times a tent
+that is 1 at the deck height and 0 at `CLOUD_DECK_T` (H/4) above and
+below it.  Both the deck and the `PF_CLOUDS` ground mix towards the lit
+cloud colour by it, so flying up through a cloud whitens the view and
+flying up through a gap does not.  Inside the same band the deck's own
+alpha falls to 0 at the deck height, so the switch from below to above
+happens under the whitening, with no step.  With `--flat-planets` the
+ground has no `PF_CLOUDS` shader, so only the deck whitens.
+
+**The eye.**  The ST's object matrix is not quite orthonormal: the length
+of a unit vector taken into model space runs from 0.992 to 0.994 with the
+ship's attitude (measured on the landed route and while steering).  From
+orbit that is nothing.  At the deck it is a third of the deck's height,
+so `cloud_stage` normalises the eye and sun directions and takes the
+height from d/R alone.  d itself still carries the same scale error: d/R
+moves by up to 0.0007 as the ship turns in place.
+
+**Limits.**  The deck is drawn only on frames where the game draws the
+planet, and the game draws it only when the ground is in view.  With the
+nose well above the horizon at low altitude there is no planet, so there
+is no deck in that view (the sky is the game's plain sky colour).  Every
+view with ground or horizon in it has the deck.  Models the game draws
+after the planet (ships, the port, and hills and buildings on the
+ground) are drawn over the deck, so from just above it they show through.
+`--flat-clouds` turns the deck off; `--flat-planets` keeps it (it uses
+nothing of the ground's shader).  The cloud cells are sized for the orbit
+view: one cell is hundreds of kilometres across.  The finer noise breaks
+the sky up inside a cell, but whether a base sees overcast, broken cloud
+or clear sky still follows the orbit cover over it.  At the start
+position with air the sky over the port is clear through the first
+afternoon and evening; it clouds over on the second day (`p2-ascent` speeds the clock up to reach it).
+
+**Cost.**  One fragment of the dome reads the noise twice for the cover
+in clear sky and five times under cloud.  Within H/4 of the deck, `cl_inside` adds its own reads.
 
 ## The game's own clouds and the intro
 
