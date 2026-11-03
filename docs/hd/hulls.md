@@ -433,6 +433,59 @@ The class's graze (2.30, the station's) fades a wall seen edge on to its
 own colour, and the footprint fade does the same far away, so the
 windows do not shimmer from the air.
 
+## Wear: each ship its own (B12, slice 1)
+
+Two ships of one model used to carry the same plating to the texel. Style
+5 now lays a broad, low-frequency wear over each object: patches of warm
+grime and of paler, sun-faded plating, a few plates across, that differ
+from ship to ship and stay put on the hull.
+
+- **The key.** The object record's long at `+118` (the same per-object
+  seed `procfx.c` and `planet.c` read as `OBJ_SEED`). At put time
+  `hull_obj_seed` (`gl.c`) reads the record through `a6-212`, as the model
+  key does, and puts the seed into the znode stream as one more long after
+  the face's context (`hull_put_ctx`, `hull_put_cctx` for complex shapes).
+  A part drawn for a ship carries the ship's record, so the whole ship
+  shares one seed. Confirmed with `FE2_HULL_LOG=1`, which logs each new
+  record and seed once (`hull: wear record ... model ... seed ...`): in the
+  traffic route three ships of one model came from three records with
+  three different seeds, and each logged once in about a minute of frames,
+  so the seed holds for the object's life. The player's ship has its own.
+  The station and its hangar and deck share one record's seed (one object),
+  and one small object type was seen to set its seed once, as it was made.
+  Reads are bounds-checked; an unreadable record gives seed 0.
+- **The noise.** Two octaves of the procedural library's value noise
+  (`pf_fbm`, the same "hash without sine" as the skies), in the model's
+  own frame: the face's corners as the bays and decals use them
+  (`w = M(v - o)`), divided by 0.9 of the class's tile (`panel`), which is
+  some 4 to 6 plates, plus an offset hashed from the seed. It is passed as
+  a fifth texture coordinate (`hull_wear_at`), so the wear rides with the
+  hull, runs on across face edges with no seam and does not move as the
+  ship or the view turns. No game RNG and no clock.
+- **The bounds.** `ws = clamp(6 fbm - 2.6, -1, 1)` times the face's
+  weathering (`uQ.z`: half on a decal's host, 40% on a painted face, and it
+  fades with the plating far away). The colour is scaled by `1 + 0.11 ws`;
+  grime (`ws < 0`) also takes a slight warm tint (1.04, 1, 0.92) and fade
+  (`ws > 0`) loses up to 30% of its saturation. So a pixel moves at most
+  11% either way, and the bias leans the mean paler: on the player's ship
+  in the external view, plated pixels went +0.7% to +1.0% in mean
+  luminance, with the 5th to 95th percentile of the per-pixel ratio 0.93
+  to 1.09; the station's body moved -0.3%, inside the flight route's own
+  run-to-run noise.
+- **Where.** Style 5 with its shader only: every plated class (ships,
+  stations, hangar, deck, buildings). A face with no model frame gets
+  none. Styles 0 to 4, and style 5 in fixed function, have no object frame
+  to hold a seam-free pattern, so they get no wear.
+- **The intro.** Its scene objects take wear like any other, but every
+  scene record logged carried the same seed, so the intro's ships are worn
+  the same way each time it plays, and two of one model there would look
+  alike.
+- **Off.** `--flat-wear` puts nothing extra in the stream, sends no fifth
+  coordinate and compiles the shader from its original single source, so
+  frames are those of the build before the wear (the landed route, which
+  repeats bit for bit, gave identical frames). `--flat-hulls` draws no
+  plating at all, so no wear either (identical frames too).
+
 ## Switches
 
 | switch | effect |
@@ -440,6 +493,7 @@ windows do not shimmer from the air.
 | `--hull-style 5` | the per-class material (default) |
 | `--hull-style 0..4` | the earlier looks, unchanged pixel for pixel: 0 fixed-function plating (`art/hull/plating.lum`), 1 big seeded texture, 2 panels, 3 bump and weathering, 4 a seeded profile per model (its own table, by the low byte of the word, as it always was) |
 | `--flat-hulls` | no plating at all: the game's flat faces exactly (buildings too) |
+| `--flat-wear` | every ship of a model plated alike: no per-object wear, the frames before the wear exactly |
 | `--flat-buildings` | a surface port's buildings flat, everything else as it is: the frames before the building class, exactly |
 | Ctrl+Shift+H | steps 5, off, 0, 1, 2, 3, 4, 5 |
 | `FE2_HULL_TILE=path` | every class takes this raw square grey tile (64 to 2048 a side, a power of two, 128 = x1.0), to try a tile without a rebuild; set but empty, every class bakes its seeded plating |
