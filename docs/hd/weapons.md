@@ -32,8 +32,8 @@ and the draw side replaces that primitive. Tagged polygons are not
 hull-plated. The oracle is unchanged.
 
 Effects that outlive their frame (a beam, its muzzle bloom, a hit flare) are
-aged on game time, which stops while the time rate, 10428(a6), is 0. Pause
-holds them. Any change of screen or view (front, rear or external) clears
+aged on the game's clock (see Combat FX lab), so pause holds them and a
+replay draws them the same. Any change of screen or view (front, rear or external) clears
 them. No depth test is used, so a glow can show through a hull in front of
 it.
 
@@ -215,6 +215,61 @@ did. A frame with no flight view and no explosion is not touched at all.
 `--flat-explosions` stops the tagging of model 188, so the base circles are
 drawn and the lasers, plumes and smoke stay HD. `--flat-fx` still turns
 everything off.
+
+## Combat FX lab
+
+**The clock.** `fx_frame_begin` reads the game's day, 528(a6), and its time
+of day, 524(a6) (a whole day is 2^32), as milliseconds, and the effects ring
+ages by that clock's step each frame, at most 50 ms. Probed on replay tapes:
+it steps 20 ms a game frame at 1x (994 time-of-day units), the same as base's
+wall step at 50 frames a second, so every effect lasts as long as before; it
+does not move while paused; it runs 10x and up under time acceleration; and
+a replay gives the same value on the same frame. The 50 ms cap is base's:
+at 10x a frame is 200 ms of game time, more than a 90 ms beam lives, so an
+uncapped beam would be gone before it was drawn twice. Under acceleration an
+effect therefore ages 2.5 times faster per frame than at 1x; smoke and the
+fireball age on their own game counters and follow the rate fully. A load
+(the clock steps back) or a jump counts as one 50 ms step. The intro keeps
+its own frame clock. Two side effects: the clock stops for about 20 s in the
+player's death camera (the game holds its time there), so the smoke spin
+stops while the puffs still fade; and below about 11 frames a second a 90 ms
+beam shows for one frame only.
+
+**The route.** `tools/drive/scripts/p2-fx-lab.drv` starts a new game,
+launches, turns to face the station, stops about 1.5 km off and fires the
+front laser at it in short pulses; its ships come out and are destroyed
+close ahead (by eye about 1 to 1.5 km; not measured), with the front view
+held on the fight. Record it with
+the game's `--pace` (unpaced, the waits run ahead of the game and the route
+misses the station) and a timeout of 300 s or more:
+
+    SDL_AUDIODRIVER=dummy python3 tools/drive/drive.py --lib LIB --bin ./frontier \
+      --script tools/drive/scripts/p2-fx-lab.drv --out DIR --timeout 400 --quiet \
+      "--args=--size 1600 1200 --pace --oracle-record TAPE --oracle-out TAPE.rec.txt"
+
+The recorded tape is game data: it lives outside git, at
+`~/Frontier-ops/oracle/tapes/fxlab-1.fe2rep` (its line in the README there
+gives the end line). Replaying it with `--oracle-replay` gives the same game
+on every build, since the host never writes ST memory. At 50 frames a
+second, frame N is N/50 s into it: laser shots at frames 6388, 7040 and
+7540 (about 128, 141 and 151 s); fireballs at 6240, 6690, 7140 and 7640;
+explosions with debris, hit flares and beams at 6740, 7190 and 7690; smoke
+after each, at 6340, 6790, 7240 to 7340 and 7740.
+
+**Frames.** Frame dumps need a scratch debug build with the dbgshot hook,
+never committed: `~/Frontier-ops/cicd/p2fxcheck/tools/setup.sh` builds one
+(`hook.py` pastes `dbgshot.c.txt` into `src/gl.c`), then
+
+    FE2_SHOT_DIR=OUT FE2_SHOT_RANGE=6240-7790:50 SDL_AUDIODRIVER=dummy \
+      ./frontier --size 1600 1200 --oracle-replay fxlab-1.fe2rep --oracle-out OUT.orc
+
+dumps `OUT/f%06d.bmp` for every 50th frame from 6240 to 7790 (`rp.sh` in the
+same folder wraps it). Checked this way at 1600x1200: two replays give
+byte-identical frames (32 of 32, HD and `--flat-fx`), where two base
+replays differ in 29 of 32; `--flat-fx` is byte-identical to base; a laser
+bolt shows on the same three frames as base at 1x; paused frames 2.6 s
+apart are identical; at 10x the bolt shows on the frames after each shot,
+as on base.
 
 ## Base look kept (fallback)
 

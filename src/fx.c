@@ -238,8 +238,8 @@ static void missile_rot (unsigned int rec)
 }
 void fx_frame_begin (void)
 {
-	/* the game's clock in ms: it stands still while paused and runs 10x at
-	 * 10x; a replay sees the same clock on the same frame */
+	/* the game's clock in ms: it stands still while paused, runs faster under
+	 * time acceleration, and a replay sees the same clock on the same frame */
 	unsigned long long now = (unsigned int) STMemory_ReadLong (A6 + A6_DAY) * 86400000ull +
 		((unsigned int) STMemory_ReadLong (A6 + A6_TOD) * 86400000ull >> 32), d = now - game_was;
 	game_was = now, n_frames++;
@@ -250,9 +250,9 @@ void fx_frame_begin (void)
 	 * (also bit 5; its state 0x58); the game data pointer is the game's here */
 	intro_on = !flat_fx && (rb (A6 + A6_START_FLAGS) & 0x20) && rb (A6 + A6_STATE) != 0x58;
 	check_scene ();
-	/* a step back (a game loaded) or over 1 s (a jump, or 100x and up) is 1 s:
-	 * longer than any effect lives, and fx_ms stays small enough for floats */
-	fx_game += d > 1000 ? 1000 : d;
+	/* at most 50 ms a frame, base's cap: at 10x a 90 ms beam would pass
+	 * between two frames unseen; a step back (a load) or a jump counts 50 */
+	fx_game += d > 50 ? 50 : d;
 	/* the intro's time is its frames', so its replays draw the same */
 	intro_n = intro_on ? intro_n + 1 : 0;
 	fx_ms = intro_on ? STEP * intro_n : fx_game;
