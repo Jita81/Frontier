@@ -1,0 +1,65 @@
+# p2-giant.drv - Phase 2 tour: a gas giant in the sky (W7 fine bands).
+#
+# Verifies: W7 a ringed gas giant (model word $94) seen from its moon's port.
+# Run:  tools/p2shots --routes giant --base BASE --branch BRANCH
+# Expect: 01 the ship from outside on the pad, the giant's disc and rings at
+#         the top right; 02 the same view 0.5 s later (no swimming); 03 the
+#         system map zoomed in on the giant (the HD map draws the planet).
+# Start 1 (landed), new game only. Each shot pauses the game (Esc); the
+# pointer is parked off the controls so no hover tip is drawn.
+
+wait 6000
+key space
+wait 2000
+key 1             # start position 1: landed, a gas giant in the sky
+wait 11000
+# The view button twice: the rear view, then the ship from outside.
+mouse 8 193
+wait 300
+click 200
+wait 2500
+mouse 8 193
+wait 300
+click 200
+wait 3000
+mouse 2 120
+wait 300
+sdlkey esc
+wait 500
+shot 01-giant
+sdlkey f1 shift
+wait 500
+sdlkey esc
+wait 500
+shot 02-giant-0.5s
+sdlkey f1 shift
+wait 300
+# F2, F2: the system map; pick the giant, then zoom in six times (F7).
+sdlkey f2
+wait 2500
+sdlkey f2
+wait 2500
+mouse 148 65
+wait 300
+click 200
+wait 1500
+sdlkey f7
+wait 1500
+sdlkey f7
+wait 1500
+sdlkey f7
+wait 1500
+sdlkey f7
+wait 1500
+sdlkey f7
+wait 1500
+sdlkey f7
+wait 1500
+mouse 2 120
+wait 300
+sdlkey esc
+wait 500
+shot 03-map
+sdlkey f1 shift
+wait 300
+quit
