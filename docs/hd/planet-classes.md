@@ -314,3 +314,45 @@ reuse the map. The grid array is static (1 MB) instead of on the stack.
 
 `--flat-biomes` turns all of this off: `worlds_bake` expands the codes
 with the plain palette, as for the biomes.
+
+## What is drawn: gas giant fine bands
+
+`src/worlds.c` (W7, slice 1) gives a gas giant, seen from orbit, many
+fine latitude bands with soft, wavy edges, over the model's own coarse
+bands.
+
+- **What keys it.** The body kind from the model word: `$92`, `$94` or
+  `$96` (`psurf_gas_giant` in `src/planet.c`). Every other body is drawn
+  as before, byte for byte. The codes stay the base layer: each texel
+  keeps its code's colour and only moves by its band's step.
+- **The band rule.** A texel's band coordinate is its latitude (the poles
+  sit on the model's y axis) times 12 bands a radian, about 38 pole to
+  pole, waved by two octaves of the coasts' value noise (cells of 1/3 and
+  1/11 radian, ±0.42 and ±0.15 of a band), seeded by the planet's own
+  seed (`psurf_seed`): the same giant always draws the same bands, two
+  giants differ. Each band gets a seeded step of its brightness, darker
+  and lighter in turn (2% to 5% a side), and a seeded pull of up to 30%
+  toward the hue, at the same brightness, of one of the giant's own
+  sixteen code colours: no new hues. The two together are clamped to ±8%
+  of the colour's brightest channel, so the change is zero mean and a
+  bounded share of every light zone's colour (night stays dark). The last
+  45% of each band blends into the next with a smoothstep.
+- **No seams, no swimming.** The bands are a function of the texel's unit
+  direction on the body, so faces and the ground patch agree at their
+  edges and the bands turn with the body. They fade out (smoothstep from
+  0.35 to 0.7 bands a texel) where a raster is too coarse to hold them.
+
+Measured on the harness's three giant test bodies (a 600 px disc with
+the day palette, then the night one): mean day-disc luminance 155.56, 65.15,
+177.27 before; 155.64, 64.99, 177.12 after (+0.05%, −0.24%, −0.09%).
+Night: 38.61, 15.89, 43.83 before; 38.59, 15.83, 43.78 after (−0.04%,
+−0.40%, −0.10%).
+
+Cost: the band coordinate is sampled on a grid of 8 texels and
+interpolated, and each texel looks its colour up in a table by band,
+code and step of the edge (64 × 16 × 32). First bake of a giant face,
+raster included, went from about 0.13 ms (a plain palette copy) to about
+0.45 ms, under any other class's face (an airless face takes about 7 ms).
+
+`--flat-biomes` turns it off: `worlds_bake` expands the codes with the
+plain palette, as for the biomes.
