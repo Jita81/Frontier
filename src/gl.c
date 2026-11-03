@@ -57,7 +57,6 @@ typedef void (*_GLUfuncptr)();
 #include "hdtip.h"
 #include "hddamage.h"
 #include "shadows.h"
-#include "props.h"
 /* MEM_SIZE, and the engine's variables by label address (__D<label>) */
 #include "../host.h"
 #include "../fixups.h"
@@ -1194,7 +1193,6 @@ enum NuPrimitive {
 	NU_FX,		/* fx.c's tag for the primitive that follows */
 	NU_RINGS,	/* skies.c: the complex shape that follows is a ring */
 	NU_SHADOW,	/* shadows.c: a landed ship's contact shadow */
-	NU_PROPS,	/* props.c: scenery round a surface port */
 	NU_MAX
 };
 /* the next primitive belongs to a weapon, missile, explosion...: say which (fx.c) */
@@ -1306,7 +1304,6 @@ static int num_subtrees;
 /* the tree Nu_InsertZNode sorts into */
 static struct ZNode **cur_ztree = &znode_start;
 static struct ZNode **ztree_stack[MAX_ZTREE_DEPTH];
-#define prop_put(f, n, s) props_put (f, n, s, (void *) cur_ztree)	/* props.c */
 static int ztree_depth;
 /* the engine's head for each level; ztree_heads[ztree_depth] is the current */
 static unsigned int ztree_heads[MAX_ZTREE_DEPTH + 1];
@@ -1391,7 +1388,6 @@ void Nu_3DViewInit ()
 	scene_overflow = 0;
 	hull_latch ();
 	shadow_tree = NULL, shadows_begin (use_renderer == R_GL && !classic_ui && !pixel_art);
-	props_begin (use_renderer == R_GL && !classic_ui && !pixel_art && !flat_hulls);
 }
 
 static void lighting_on (float light_vec[4], int rgb444_light_col, int rgb444_extra_col, int rgb444_obj_col)
@@ -1735,7 +1731,6 @@ void Nu_ComplexSNext ()
 	if (use_renderer == R_OLD) return;
 	complex_check_abort ();
 	if (complex_aborted) return;
-	prop_put (REG_A0, 1, 0);
 	if (do_start_complex) { put_complex_start_4real (); do_start_complex = FALSE; }
 	znode_wrlong (NU_COMPLEX_SNEXT);
 	znode_wrvertex (GetReg (REG_A0)+4);
@@ -1763,7 +1758,6 @@ void Nu_ComplexStart ()
 	if (use_renderer == R_OLD) return;
 	do_start_complex = TRUE;
 	complex_col_rgb444 = GetReg (REG_D6);
-	props_shape (GetReg (REG_D6));
 	complex_data_start = -1;
 	complex_aborted = FALSE;
 	complex_st_start = STMemory_ReadLong (__DL385c8_primitives_end);
@@ -1916,7 +1910,6 @@ void Nu_ComplexBezier ()
 	if (use_renderer == R_OLD) return;
 	complex_check_abort ();
 	if (complex_aborted) return;
-	prop_put (REG_A0, 4, 0);
 	if (do_start_complex) { put_complex_start_4real (); do_start_complex = FALSE; }
 	znode_wrlong (NU_COMPLEX_BEZIER);
 	znode_wrvertex (GetReg (REG_A0)+4);
@@ -4179,7 +4172,6 @@ void Nu_PutTriangle ()
 	znode_wrcolor (GetReg (REG_D6));
 	if (hull_ctx) hull_put_ctx (3);
 	shadow_put (REG_A0, 3, 0);
-	prop_put (REG_A0, 3, 1);
 }
 void Nu_DrawTriangle (void **data)
 {
@@ -4232,7 +4224,6 @@ void Nu_PutQuad ()
 	znode_wrcolor (GetReg (REG_D6));
 	if (hull_ctx) hull_put_ctx (4);
 	shadow_put (REG_A0, 4, 0);
-	prop_put (REG_A0, 4, 1);
 }
 void Nu_DrawQuad (void **data)
 {
@@ -6738,8 +6729,7 @@ NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	&Nu_DrawComplexOval,
 	&fx_draw_tag,
 	&Nu_DrawRings,
-	&shadows_draw,
-	&props_draw
+	&shadows_draw
 };
 
 /*
@@ -6983,9 +6973,6 @@ void Nu_DrawScreen ()
 	if (shadow_tree && shadow_z + 1) { unsigned char *d = add_detached_node (shadow_tree, shadow_z + 1, 4 + SHADOW_BYTES);
 		if (d) *(int *) d = shadows_write (d + 4) ? NU_SHADOW : NU_END; }	/* NU_END: an empty node */
 	shadow_tree = NULL;
-	{ int m = props_write (), k; void *t; unsigned int z;	/* props.c: a node a prop */
-	  for (k = 0; k < m; k++) if (props_node (k, &t, &z)) { unsigned char *d = add_detached_node (t, z, 4 + PROPS_BYTES);
-		if (d) *(int *) d = NU_PROPS, *(int *) (d + 4) = k; } }
 	if (scene_overflow) {
 		/* S-6: the display lists are cut short somewhere: drop this
 		 * frame's 3D view rather than walk them */

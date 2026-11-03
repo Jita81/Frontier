@@ -484,6 +484,10 @@ polygons and low blocks with coloured roofs. It is not listed and stays
 flat: plated at scale 1 the towers' windows doubled with the game's, and
 at scale 4 the low blocks took storeys too tall for them.
 
+Seeded ground props round a port (trees, shrubs, ice spires; W11b, #81)
+were tried and removed at the operator's call: props are not terrain and
+make no sense in a base. The effort on a port goes into its buildings.
+
 ## Wear: each ship its own (B12, slice 1)
 
 Two ships of one model used to carry the same plating to the texel. Style

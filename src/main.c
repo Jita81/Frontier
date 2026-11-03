@@ -63,7 +63,6 @@ int flat_sight = 0;	/* --flat-sight: the thin HD gun sight and brackets, as befo
 int flat_exhaust = 0;	/* --flat-exhaust: the game's flat engine plumes (gl.c) */
 int flat_starfield = 0;	/* --flat-starfield: the game's plain background stars (procfx.c) */
 int flat_shadows = 0;	/* --flat-shadows: no contact shadow under a landed ship (shadows.c) */
-int props_opt_in = 0, flat_props = 0;	/* --props, --flat-props: scenery round a surface port (props.c) */
 
 /*-----------------------------------------------------------------------*/
 /*
@@ -258,7 +257,6 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --flat-sight          The thin HD gun sight, its ticks found as one (as before).\n"
                "  --flat-exhaust        The game's flat engine plumes (no HD exhaust).\n"
                "  --flat-shadows        No soft shadow under a landed ship.\n"
-               "  --props               Trees, shrubs or ice spires round a surface port.\n  --flat-props          None (wins over --props).\n"
                "  --hull-style N        Hull look, 0 plating, 1 big texture, 2 panels,\n"
                "                        3 bump and weathering, 4 per model, 5 a material\n"
                "                        per class of ship (default).\n"
@@ -322,8 +320,6 @@ void Main_ReadParameters(int argc, char *argv[])
 		flat_exhaust = 1;
 	  else if (!strcmp(argv[i], "--flat-shadows"))
 		flat_shadows = 1;
-	  else if (!strcmp(argv[i], "--props")) props_opt_in = 1;
-	  else if (!strcmp(argv[i], "--flat-props")) flat_props = 1;
 	  else if (!strcmp(argv[i], "--hull-style") && i + 1 < argc) {
 		hull_style = atoi (argv[++i]);
 		if (hull_style < 0 || hull_style > 5) hull_style = 5;
