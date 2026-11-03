@@ -97,7 +97,7 @@ static float vnoise (float x, float y)
 	return a + (b - a) * v;
 }
 
-enum { T_GLOW, T_PUFF, T_BALL, T_SHELL, T_N, T_BEAM = -1 };	/* T_BEAM: a ring entry drawn as a beam */
+enum { T_GLOW, T_PUFF, T_BALL, T_SHELL, T_FILL, T_N, T_BEAM = -1 };	/* T_BEAM: a ring entry drawn as a beam */
 static GLuint tex[T_N];
 static void make_textures (void)
 {
@@ -111,6 +111,7 @@ static void make_textures (void)
 			float r = sqrtf (u * u + v * v), a = t == T_GLOW ? 0.55f * expf (-4 * r * r) + 0.45f * expf (-28 * r * r)
 				: t == T_PUFF ? (r < 1 ? powf (1 - r, 1.2f) * (0.3f + 1.1f * n) : 0)
 				: t == T_SHELL ? (expf (-250 * (r - 0.82f) * (r - 0.82f)) + (r < 0.82f ? 0.12f * r : 0)) * (0.6f + 0.8f * n)	/* a rim round a faint inside */
+				: t == T_FILL ? (r < 0.9f ? (0.1f + 0.9f * r * r) * (0.4f + 1.2f * n) * fminf (10 * (0.9f - r), 1) : 0)	/* mottled, densest at its edge */
 				: (0.9f - r + 0.2f * (n - 0.5f)) / 0.25f;	/* two gaussians; noise in a soft disc; a full disc, ragged */
 			px[2 * i] = t == T_GLOW ? 255 : 255 * (t == T_PUFF ? 0.65f + 0.35f * n : 0.8f + 0.2f * n);
 			px[2 * i + 1] = a > 1 ? 255 : a < 0 ? 0 : 255 * a;
@@ -143,12 +144,10 @@ static void blend (int additive, int t)
 	glTexEnvi (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 }
 static void blend_end (void) { glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); glDisable (GL_BLEND); glDisable (GL_TEXTURE_2D); }
-/* a square of the bound texture facing the eye, never over half the view */
-static void sprite (const float *p, float r, float rot)
+/* a square of the bound texture facing the eye, r across from its centre */
+static void quad3 (const float *p, float r, float rot)
 {
 	float c = cosf (rot), s = sinf (rot); int k;
-	if (p[2] > -1) return;
-	r = fminf (r, 0.5f * vp_h * px_world (p[2]));
 	glBegin (GL_QUADS);
 	for (k = 0; k < 4; k++) {
 		float x = k == 1 || k == 2 ? 1 : -1, y = k < 2 ? -1 : 1;
@@ -156,6 +155,12 @@ static void sprite (const float *p, float r, float rot)
 		glVertex3f (p[0] + (x * c - y * s) * r, p[1] + (x * s + y * c) * r, p[2]);
 	}
 	glEnd ();
+}
+/* the same, never over half the view */
+static void sprite (const float *p, float r, float rot)
+{
+	if (p[2] > -1) return;
+	quad3 (p, fminf (r, 0.5f * vp_h * px_world (p[2])), rot);
 }
 
 /* a strip of glow from a to b, wa and wb pixels wide at its ends; texture q is
@@ -563,12 +568,14 @@ static void death_bursts (const float *v, float R, float k, float g, unsigned in
 
 /* A shield hit (fe2.s L4452a): on its next drawn frame the game puts the hit
  * ship as model 192, one flat circle round its centre the size of the ship's
- * model, in place of the ship; one frame a hit, so a beam held on it keeps it
- * up.  fx draws a bubble there instead, on those frames only, one a ship
- * (keyed by its record, at most 4): t0 is its run's first frame on the game's
- * clock, so a pause holds it and a replay draws it the same. */
-static struct bubble { unsigned int rec, seen, t0; float c[3], R; } bubbles[4];
-static int shield_hit (const float *v, float R)
+ * model, in place of the ship, in a colour the game picks by the shields
+ * left (pale, then orange, then dark red: the circle's colour argument); one
+ * frame a hit, so a beam held on it keeps it up.  fx draws a bubble there
+ * instead, on those frames only, one a ship (keyed by its record, at most 4):
+ * t0 is its run's first frame on the game's clock, so a pause holds it and a
+ * replay draws it the same. */
+static struct bubble { unsigned int rec, seen, t0; float c[3], R, rgb[3]; } bubbles[4];
+static int shield_hit (const float *v, float R, int r, int g, int b)
 {
 	struct bubble *s = bubbles;
 	int i;
@@ -577,7 +584,7 @@ static int shield_hit (const float *v, float R)
 		else if (bubbles[i].seen < s->seen) s = &bubbles[i];
 	if (i < 4) s = &bubbles[i];
 	else s->rec = cur.rec, s->t0 = fx_ms;	/* a new run */
-	s->seen = n_frames, s->R = R;
+	s->seen = n_frames, s->R = R, s->rgb[0] = c8 (r), s->rgb[1] = c8 (g), s->rgb[2] = c8 (b);
 	memcpy (s->c, v, sizeof s->c);
 	return 1;
 }
@@ -589,7 +596,7 @@ int fx_circle (const int *iv, unsigned int d2, int r, int g, int b)
 	unsigned int seed;
 	struct ball *o;
 	int fl, mis, i, n = 0, l;
-	if (cur.kind == M_SHIELD) return shield_hit (v, R);
+	if (cur.kind == M_SHIELD) return shield_hit (v, R, r, g, b);
 	if (cur.kind != M_EXPL) return 0;
 	for (i = 0; i < n_balls; i++)	/* an inner ring of a blob of this record drawn already */
 		if (balls[i].rec == cur.rec && (n++, R <= balls[i].R && dist2 (balls[i].v, v) < 0.25f * balls[i].R * balls[i].R))
@@ -781,25 +788,40 @@ static void draw_shell (const struct shell *s)
 	if (s->bomb) col (1, 0.92f, 0.75f, 0.6f * a), d < g * s->R ? screen_quad (0, 0, 0.95f * h) : sprite (s->c, 0.95f * R, -spin);
 }
 
-/* The bubble: the shell's rim round a faint mottled haze (the game draws no
- * ship on these frames), soft blue-cyan, its rim just inside the flat
- * circle's edge, with a ripple running out from the centre every 240 ms (its
- * phase seeded by the slot); brightest on a run's first frame, settling to
- * half in about 150 ms.  Eased under 0.6 of the view's height, and faded out
- * as the eye nears it: no whiteout at point-blank range. */
+/* The bubble: the flat circle's place, size and colour as a lit shell.  A
+ * mottled fill in the circle's colour, densest toward its edge (the game
+ * draws no ship on these frames), the view behind still showing through; a
+ * rim in that colour lifted toward white, brighter and whiter the brighter
+ * the colour, so a drained shield's dark red rim is dim, failing; a ripple
+ * running out from the centre every 240 ms (its phase seeded by the slot).
+ * Brightest on a run's first frame, settling to half in about 150 ms.  Drawn
+ * at the circle's depth and never eased, so the rim is at 0.9 of its radius
+ * at any range (sprite's half-view cap would shrink it); with the eye inside
+ * or within 1.2 radii, a tint over the whole view in the same colour, the
+ * rim round the view's edge, as the shell's: no whiteout. */
+static void bubble_quad (const struct bubble *s, int in, float h, float rot)
+{
+	if (in) screen_quad (0, 0, 2 * h);
+	else quad3 (s->c, h * s->R, rot);
+}
 static void draw_bubble (const struct bubble *s, int slot)
 {
-	float t = fx_ms - s->t0, d = sqrtf (dist2 (s->c, (float [3]) { 0, 0, 0 })), raw = s->R / px_world (s->c[2]), S = 0.6f * vp_h;
+	const float *c = s->rgb;
+	float m = fmaxf (c[0], fmaxf (c[1], c[2])), k = fminf (1.8f * m * m, 1), w = 0.35f * k;	/* a dim colour: a dim rim, barely lifted */
+	float t = fx_ms - s->t0, a = k * GLOW_CAP * (0.5f + 0.5f * expf (-t / 150));
 	float u = fmodf (t / 240 + hashf (s->rec, slot), 1), spin = 6.283f * hashf (s->rec, M_SHIELD) + 0.002f * t;
-	float a = GLOW_CAP * (0.5f + 0.5f * expf (-t / 150)) * fminf (fmaxf (d / s->R - 1, 0), 1), R = raw * S / (raw + S) * px_world (s->c[2]);
-	blend (1, T_PUFF);
-	col (0.3f, 0.6f, 1, 0.3f * a);
-	sprite (s->c, 0.85f * R, spin);
-	blend (1, T_SHELL);
-	col (0.45f, 0.8f, 1, a);
-	sprite (s->c, R, spin);
-	col (0.6f, 0.9f, 1, 0.6f * a * (1 - u));
-	sprite (s->c, R * (0.3f + 0.7f * u), -spin);	/* the ripple */
+	int in = s->c[2] > -1 || dist2 (s->c, (float [3]) { 0, 0, 0 }) < 1.44f * s->R * s->R;
+	blend (0, T_FILL);
+	col (c[0], c[1], c[2], 0.6f);
+	bubble_quad (s, in, 1, spin);
+	blend (0, T_SHELL);
+	col (c[0], c[1], c[2], 1);
+	bubble_quad (s, in, 1.1f, spin);
+	blend (1, T_SHELL);	/* the rim, lifted */
+	col (c[0] + (1 - c[0]) * w, c[1] + (1 - c[1]) * w, c[2] + (1 - c[2]) * w, a);
+	bubble_quad (s, in, 1.1f, spin);
+	col (c[0] + (1 - c[0]) * 1.5f * w, c[1] + (1 - c[1]) * 1.5f * w, c[2] + (1 - c[2]) * 1.5f * w, 0.6f * a * (1 - u));
+	bubble_quad (s, in, 1.1f * (0.3f + 0.7f * u), -spin);	/* the ripple */
 }
 
 void fx_frame_end (void)
