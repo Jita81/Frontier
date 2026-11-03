@@ -310,6 +310,36 @@ void procfx_sky_end (void)
 
 int flat_planets = 0;
 
+#define PF_STR2(x)	#x
+#define PF_STR(x)	PF_STR2 (x)
+
+/* The cloud model, the one every view of the clouds uses (docs/hd/clouds.md):
+ * cl_cover (q, oct) is the cover, 0..1, over the model direction q.  Its
+ * base is two fixed octaves of pf_fbm: never more or fewer with distance,
+ * since pf_fbm renormalizes and the cover would move.  Finer octaves up to
+ * oct, too weak to move the cover, only fray the edges, each fading out
+ * once its cells shrink to a pixel.  The deck turns about the spin axis,
+ * model y (measured: the object matrix turns about it, frame to frame, in
+ * orbit), and slowly evolves, both on the game clock (uClRot). */
+#define CLOUD_GLSL \
+	"uniform vec3 uClSeed;\n" \
+	"uniform vec4 uClRot, uClCover;\n" \
+	"const float CL_K = 6.0, CL_H = " PF_STR (CLOUD_DECK_H) ", CL_T = " PF_STR (CLOUD_DECK_T) ";\n" \
+	"float cl_cover (vec3 q, int oct) {\n" \
+	"	q = normalize (q);\n" \
+	"	q.xz = vec2 (uClRot.x * q.x - uClRot.y * q.z, uClRot.y * q.x + uClRot.x * q.z);\n" \
+	"	vec3 p = q * CL_K + uClSeed + vec3 (uClRot.zw, 0.0);\n" \
+	"	float n = pf_fbm (p, 2), px = length (fwidth (p)) * 4.1209, a = 0.03;\n" \
+	"	p = (p * 2.03 + vec3 (1.7, 9.2, 3.1)) * 2.03 + vec3 (1.7, 9.2, 3.1);\n" \
+	"	for (int k = 3; k < 6; k++) {\n" \
+	"		if (k > oct || px >= 0.4) break;\n" \
+	"		n += a * (1.0 - smoothstep (0.1, 0.4, px)) * (pf_noise (p) - 0.5);\n" \
+	"		p = p * 2.03 + vec3 (1.7, 9.2, 3.1); px *= 2.03; a *= 0.5;\n" \
+	"	}\n" \
+	"	return max (smoothstep (uClCover.x - uClCover.y, uClCover.x + uClCover.y, n), uClCover.z)\n" \
+	"	       * uClCover.w;\n" \
+	"}\n"
+
 /* gl.c binds the textures of up to four light zones, each baked by
  * planet.c from the body's own features and colours, on units 0-3, and
  * gives every vertex: gl_TexCoord[0] the texture position, [1] cos(sun)
@@ -322,65 +352,115 @@ int flat_planets = 0;
  * fades in octave by octave only once that octave's cells span several
  * pixels, and not at grazing angles, so a far planet stays clean and
  * nothing shimmers; with an atmosphere the lit limb turns towards the
- * innermost layer's colour. */
-static const char planet_glsl[] =
-	"uniform sampler2D uZ0, uZ1, uZ2, uZ3;\n"
-	"uniform vec4 uLo, uHi, uRim;\n"
-	"uniform vec3 uLook, uSeed;\n"
-	"uniform float uSoft;\n"
-	"void main () {\n"
-	"	float c = gl_TexCoord[1].x, mu = clamp (gl_TexCoord[1].y, 0.0, 1.0);\n"
-	"	vec4 w = smoothstep (uLo - uSoft, uLo + uSoft, vec4 (c))\n"
-	"	       - smoothstep (uHi - uSoft, uHi + uSoft, vec4 (c));\n"
-	"	vec2 st = gl_TexCoord[0].st;\n"
-	"	vec3 col = w.x * texture2D (uZ0, st).rgb + w.y * texture2D (uZ1, st).rgb\n"
-	"	         + w.z * texture2D (uZ2, st).rgb + w.w * texture2D (uZ3, st).rgb;\n"
-	"	float day = mix (1.0, smoothstep (-uSoft, uSoft, c), uLook.x);\n"
-	"	col *= mix (1.0, 0.8 + 0.2 * smoothstep (0.0, 0.7, c), day * uLook.x);\n"
-	"	col *= mix (1.0 - uLook.y, 1.0, sqrt (mu));\n"
-	"	vec3 p = gl_TexCoord[2].xyz * 256.0 + uSeed;\n"
-	"	float px = length (fwidth (p)), n = 0.0, a = 1.0;\n"
-	"	for (int k = 0; k < 3; k++) {\n"
-	"		float f = 1.0 - smoothstep (0.1, 0.4, px);\n"
-	"		if (f <= 0.0) break;\n"
-	"		n += a * f * (2.0 * pf_noise (p) - 1.0);\n"
-	"		p = p * 2.03 + vec3 (1.7, 9.2, 3.1); px *= 2.03; a *= 0.5;\n"
-	"	}\n"
-	"	col *= 1.0 + uLook.z * smoothstep (0.05, 0.3, mu) * n;\n"
-	"	col = mix (col, uRim.rgb, uRim.a * 0.6 * pow (1.0 - mu, 4.0) * day);\n"
-	"	gl_FragColor = vec4 (col, 1.0);\n"
-	"}\n";
+ * innermost layer's colour.  With PF_CLOUDS (docs/hd/clouds.md): the
+ * point where the view ray crosses the cloud deck, found from the ground
+ * up (from the eye it cancels in float at orbit distance), its cloud lit
+ * a little past the ground's terminator and no brighter than the ground
+ * at night, and the cloud's shadow on the lit ground. */
+#define PLANET_GLSL_TEXT \
+	"uniform sampler2D uZ0, uZ1, uZ2, uZ3;\n" \
+	"uniform vec4 uLo, uHi, uRim;\n" \
+	"uniform vec3 uLook, uSeed;\n" \
+	"uniform float uSoft;\n" \
+	"void main () {\n" \
+	"	float c = gl_TexCoord[1].x, mu = clamp (gl_TexCoord[1].y, 0.0, 1.0);\n" \
+	"	vec4 w = smoothstep (uLo - uSoft, uLo + uSoft, vec4 (c))\n" \
+	"	       - smoothstep (uHi - uSoft, uHi + uSoft, vec4 (c));\n" \
+	"	vec2 st = gl_TexCoord[0].st;\n" \
+	"	vec3 col = w.x * texture2D (uZ0, st).rgb + w.y * texture2D (uZ1, st).rgb\n" \
+	"	         + w.z * texture2D (uZ2, st).rgb + w.w * texture2D (uZ3, st).rgb;\n" \
+	"	float day = mix (1.0, smoothstep (-uSoft, uSoft, c), uLook.x);\n" \
+	"	col *= mix (1.0, 0.8 + 0.2 * smoothstep (0.0, 0.7, c), day * uLook.x);\n" \
+	"	col *= mix (1.0 - uLook.y, 1.0, sqrt (mu));\n" \
+	"	vec3 p = gl_TexCoord[2].xyz * 256.0 + uSeed;\n" \
+	"	float px = length (fwidth (p)), n = 0.0, a = 1.0;\n" \
+	"	for (int k = 0; k < 3; k++) {\n" \
+	"		float f = 1.0 - smoothstep (0.1, 0.4, px);\n" \
+	"		if (f <= 0.0) break;\n" \
+	"		n += a * f * (2.0 * pf_noise (p) - 1.0);\n" \
+	"		p = p * 2.03 + vec3 (1.7, 9.2, 3.1); px *= 2.03; a *= 0.5;\n" \
+	"	}\n" \
+	"	col *= 1.0 + uLook.z * smoothstep (0.05, 0.3, mu) * n;\n" \
+	"#ifdef PF_CLOUDS\n" \
+	"	vec3 cm = normalize (gl_TexCoord[2].xyz), cv = normalize (cm - uClEye);\n" \
+	"	float rd = 1.0 + CL_H, ck = max (-dot (cv, cm), 0.0);\n" \
+	"	vec3 cq = normalize (cm - cv * (rd*rd - 1.0) / (ck + sqrt (ck*ck + rd*rd - 1.0)));\n" \
+	"	float cd = dot (cq, uClSun), lit = smoothstep (-uSoft, uSoft, cd + sqrt (2.0 * CL_H));\n" \
+	"	vec3 cs = normalize (cm + uClSun * CL_H / max (dot (cm, uClSun), 0.1));\n" \
+	"	col *= 1.0 - 0.35 * cl_cover (cs, 3) * smoothstep (-uSoft, uSoft, c);\n" \
+	"	vec3 cc = uClTint * mix (0.6, 0.95, smoothstep (0.0, 0.6, cd)) * mix (1.0 - uLook.y, 1.0, sqrt (mu));\n" \
+	"	col = mix (col, mix (col, cc, lit), cl_cover (cq, 5) * smoothstep (rd, rd + CL_T, length (uClEye)));\n" \
+	"#endif\n" \
+	"	col = mix (col, uRim.rgb, uRim.a * 0.6 * pow (1.0 - mu, 4.0) * day);\n" \
+	"	gl_FragColor = vec4 (col, 1.0);\n" \
+	"}\n"
+static const char planet_glsl[] = PLANET_GLSL_TEXT;
+static const char planet_cl_glsl[] = "#define PF_CLOUDS\n" CLOUD_GLSL
+	"uniform vec3 uClTint, uClEye, uClSun;\n" PLANET_GLSL_TEXT;
 
-static GLuint planet_prog;
-static int planet_failed;
-static GLint u_lo, u_hi, u_rim, u_look, u_seed, u_soft;
+/* one per program, the plain planet and the planet with clouds; the
+ * uniforms a program lacks are at -1, which GL ignores */
+enum { U_LO, U_HI, U_RIM, U_LOOK, U_SEED, U_SOFT, U_CL_COVER, U_CL_TINT, U_CL_ROT, U_CL_SEED,
+       U_CL_EYE, U_CL_SUN, U_N };
+static struct PlanetProg { GLuint prog; int failed; GLint u[U_N]; } pp_base, pp_cl;
+
+static struct PlanetProg *planet_prog_get (struct PlanetProg *g, const char *name, const char *src)
+{
+	static const char *zn[4] = { "uZ0", "uZ1", "uZ2", "uZ3" };
+	static const char *un[U_N] = { "uLo", "uHi", "uRim", "uLook", "uSeed", "uSoft", "uClCover",
+				       "uClTint", "uClRot", "uClSeed", "uClEye", "uClSun" };
+	int i;
+
+	if (g->failed) return NULL;
+	if (!g->prog) {
+		g->prog = procfx_program (name, src);
+		if (!g->prog) { g->failed = 1; return NULL; }
+		glUseProgram (g->prog);
+		for (i = 0; i < 4; i++) glUniform1i (glGetUniformLocation (g->prog, zn[i]), i);
+		for (i = 0; i < U_N; i++) g->u[i] = glGetUniformLocation (g->prog, un[i]);
+	}
+	return g;
+}
+
+/* cover, tint, rot, seed, eye, sun: procfx_planet_clouds */
+static float cl_stage[20];
+
+void procfx_planet_clouds (const float cover[4], const float tint[3], const float rot[4],
+			   const float seed[3], const float eye[3], const float sun[3])
+{
+	memcpy (cl_stage, cover, 4 * sizeof (float));
+	memcpy (cl_stage + 4, tint, 3 * sizeof (float));
+	memcpy (cl_stage + 7, rot, 4 * sizeof (float));
+	memcpy (cl_stage + 11, seed, 3 * sizeof (float));
+	memcpy (cl_stage + 14, eye, 3 * sizeof (float));
+	memcpy (cl_stage + 17, sun, 3 * sizeof (float));
+}
 
 int procfx_planet_begin (const float lo[4], const float hi[4], float soft,
 			 const float rim[4], const float look[3], unsigned int seed)
 {
-	static const char *zn[4] = { "uZ0", "uZ1", "uZ2", "uZ3" };
-	int i;
+	float cl[20];
+	struct PlanetProg *g = NULL;
 
-	if (flat_planets || planet_failed) return 0;
-	if (!planet_prog) {
-		planet_prog = procfx_program ("planet", planet_glsl);
-		if (!planet_prog) { planet_failed = 1; return 0; }
-		glUseProgram (planet_prog);
-		for (i = 0; i < 4; i++) glUniform1i (glGetUniformLocation (planet_prog, zn[i]), i);
-		u_lo = glGetUniformLocation (planet_prog, "uLo");
-		u_hi = glGetUniformLocation (planet_prog, "uHi");
-		u_rim = glGetUniformLocation (planet_prog, "uRim");
-		u_look = glGetUniformLocation (planet_prog, "uLook");
-		u_seed = glGetUniformLocation (planet_prog, "uSeed");
-		u_soft = glGetUniformLocation (planet_prog, "uSoft");
-	}
-	glUseProgram (planet_prog);
-	glUniform4fv (u_lo, 1, lo);
-	glUniform4fv (u_hi, 1, hi);
-	glUniform4fv (u_rim, 1, rim);
-	glUniform3fv (u_look, 1, look);
-	glUniform3f (u_seed, seed & 0xff, (seed >> 8) & 0xff, (seed >> 16) & 0xff);
-	glUniform1f (u_soft, soft);
+	memcpy (cl, cl_stage, sizeof cl);
+	memset (cl_stage, 0, sizeof cl_stage);
+	if (flat_planets || pp_base.failed) return 0;
+	if (cl[3] > 0.0f && !flat_clouds)
+		g = planet_prog_get (&pp_cl, "planet clouds", planet_cl_glsl);
+	if (!g && !(g = planet_prog_get (&pp_base, "planet", planet_glsl))) return 0;
+	glUseProgram (g->prog);
+	glUniform4fv (g->u[U_LO], 1, lo);
+	glUniform4fv (g->u[U_HI], 1, hi);
+	glUniform4fv (g->u[U_RIM], 1, rim);
+	glUniform3fv (g->u[U_LOOK], 1, look);
+	glUniform3f (g->u[U_SEED], seed & 0xff, (seed >> 8) & 0xff, (seed >> 16) & 0xff);
+	glUniform1f (g->u[U_SOFT], soft);
+	glUniform4fv (g->u[U_CL_COVER], 1, cl);
+	glUniform3fv (g->u[U_CL_TINT], 1, cl + 4);
+	glUniform4fv (g->u[U_CL_ROT], 1, cl + 7);
+	glUniform3fv (g->u[U_CL_SEED], 1, cl + 11);
+	glUniform3fv (g->u[U_CL_EYE], 1, cl + 14);
+	glUniform3fv (g->u[U_CL_SUN], 1, cl + 17);
 	return 1;
 }
 
@@ -580,9 +660,12 @@ void procfx_corona_end (void)
 void procfx_forget (void)
 {
 	if (sky_prog) glDeleteProgram (sky_prog);
-	if (planet_prog) glDeleteProgram (planet_prog);
+	if (pp_base.prog) glDeleteProgram (pp_base.prog);
+	if (pp_cl.prog) glDeleteProgram (pp_cl.prog);
 	if (end_prog) glDeleteProgram (end_prog);
 	if (corona_prog) glDeleteProgram (corona_prog);
-	sky_prog = planet_prog = end_prog = corona_prog = 0;
-	sky_failed = planet_failed = end_failed = corona_failed = 0;
+	sky_prog = end_prog = corona_prog = 0;
+	sky_failed = end_failed = corona_failed = 0;
+	memset (&pp_base, 0, sizeof pp_base);
+	memset (&pp_cl, 0, sizeof pp_cl);
 }
