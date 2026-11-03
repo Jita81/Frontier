@@ -5640,8 +5640,6 @@ static int circle_slices (double size, double z)
 #define HYPERCLOUD_INTRO	0xd6	/* the intro's, in its scenes (hull_intro_part) */
 #define BLOB_HYPER	0x80000000u	/* on a blob's colour, a circle's tag word: one of the cloud's */
 #define BLOB_SKY	0x40000000u	/* on a blob's colour: one of the background stars (procfx) */
-#define HYPER_MAX_D2	0x3f0	/* the original skips a disc this big or bigger (its diameter
-				 * in ST pixels, the word both draws read); so does HD */
 
 static int hyper_hd (void)
 {
@@ -5718,6 +5716,9 @@ static void soft_ring (const int *v, float s, float r, float g, float b)
 	soft_disc (v, 0, 0, 0.7f * s, 0.8f * s, r, g, b, 0.12f);
 	soft_disc (v, 0.68f * s, 0.76f * s, 0.86f * s, 0.94f * s, r, g, b, 1);
 }
+
+#define HYPER_MAX_D2	0x3f0	/* the original skips a disc this big or bigger (its diameter
+				 * in ST pixels, the word both draws read); so does HD */
 
 /* a disc of a hypercloud (radius s) as a glow in four steps, outer
  * first: together they cover 0.6 to 0.55 s, 0.44 to 0.8 s, 0.3 to s and
