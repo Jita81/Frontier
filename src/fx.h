@@ -21,6 +21,7 @@ void fx_frame_begin (void);
  * hooks return 1 when they drew the tagged primitive themselves. */
 void fx_draw_tag (void **data);
 int fx_tagged (void);	/* a tagged primitive is next: no hull plating */
+int fx_shell (void);	/* an ECM or bomb patch is next: fx draws its shell instead */
 void fx_prim_done (int complex_mark);
 int fx_tri (const float *a, const float *b, const float *c);
 int fx_blob (const int *v, int rad, int r, int g, int b);

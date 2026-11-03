@@ -1745,6 +1745,7 @@ void Nu_DrawComplexSNext (void **data)
 	} else {
 		GLdouble v[3];
 		znode_rdvertexd (data, v);
+		if (fx_shell ()) return;	/* an ECM or bomb patch: fx draws its shell */
 		push_contour_vertex (v);
 	}
 }
@@ -1990,39 +1991,46 @@ static unsigned int hull_model_key (void);
 extern int flat_exhaust;	/* --flat-exhaust (main.c) */
 
 /* HD engine exhaust (C5): 0 for the game's flat teardrop, else bit 31 and
- * a flicker byte. Only ships get it: the game's own table, the model words
+ * the flicker. Only ships get it: the game's own table, the model words
  * above the missiles' ($a-$10) and below the stations' and ports' ($50 on),
  * so chimney flares keep the base look; in the intro (exhaust_intro) the
  * parts with a hull_models[] row that is not a building's, or an EXHAUST
- * row of hull_intro_fx. The flicker is seeded by the object's record and
- * the game's clock (A6+524, which stands still while paused; it runs in
- * the intro too), so a frame draws the same in every run; in the intro by
- * the part and its plume's place in the frame as well, as a scene's ships
- * share its record. */
+ * row of hull_intro_fx. --flat-exhaust and --flat-fx keep the flat fill.
+ * The flicker (exhaust_hd) is two bytes hashed from the object's record,
+ * the plume's place among its record's plumes this frame (twin engines;
+ * a scene's ships in the intro, with the part's word w) and two ticks of
+ * the game's clock (A6+524 >> 12, about 4 frames at 1x; it stands still
+ * while paused), now's and the next, and the way between them (bits 4-11):
+ * a frame draws the same in every run. */
 static unsigned int hull_frame_no;	/* the engine's frames, for hull_anim_bind and the plumes */
+static unsigned int exhaust_hd (unsigned int w)
+{
+	static unsigned int frame, rec, order;
+	unsigned int r = STMemory_ReadLong (GetReg (REG_A6) - 212), t = STMemory_ReadLong (__DL5eb6_a6_base + 524) >> 4;
+
+	if (frame != hull_frame_no || rec != r) frame = hull_frame_no, rec = r, order = 0;
+	r ^= hull_mix (w ^ ++order << 16);
+	return 0x80000000u | (t & 0xff) << 16 | (hull_mix (r ^ hull_mix ((t >> 8) + 1)) & 0xff) << 8 |
+		(hull_mix (r ^ hull_mix (t >> 8)) & 0xff);
+}
 static unsigned int exhaust_intro (void)
 {
-	static unsigned int frame, order;
 	unsigned int w = hull_intro_fx_part (), k = 0x80000000u | HULL_TAB_INTRO | HULL_TAB_SCENE | w;
 	float sc, off[2];
 
 	if (!w || (hull_intro_fx (w, NULL) != HULL_FX_EXHAUST &&
 		   (!hull_key_listed (k) || HULL_BUILDING (hull_class_of_key (k, &sc, off)))))
 		return 0;
-	if (frame != hull_frame_no) frame = hull_frame_no, order = 0;
-	order++;
-	return 0x80000000u | (hull_mix (STMemory_ReadLong (GetReg (REG_A6) - 212) ^
-		hull_mix (w ^ order << 16 ^ STMemory_ReadLong (__DL5eb6_a6_base + 524) >> 12)) & 0xff);
+	return exhaust_hd (w);
 }
 static unsigned int exhaust_put (void)
 {
-	unsigned int key = flat_exhaust || use_renderer != R_GL ? 0 : hull_model_key ();
+	unsigned int key = flat_exhaust || flat_fx || use_renderer != R_GL ? 0 : hull_model_key ();
 	unsigned int m = HULL_KEY_MODEL (key);
 
 	if (HULL_KEY_OK (key) && (key & HULL_TAB_INTRO)) return exhaust_intro ();
 	if (!HULL_KEY_OK (key) || m < 0x12 || m > 0x4e) return 0;
-	return 0x80000000u | (hull_mix (STMemory_ReadLong (GetReg (REG_A6) - 212) ^
-		hull_mix (STMemory_ReadLong (__DL5eb6_a6_base + 524) >> 12)) & 0xff);
+	return exhaust_hd (0);
 }
 
 #define TD_STRETCH	1.3333333333
@@ -2030,26 +2038,34 @@ static unsigned int exhaust_put (void)
 
 /* One layer of the HD plume: the teardrop from a point on its axis, alpha a
  * out to a ring 85% of the way to the rim and 0 at the rim, so the body
- * keeps the game's width and only its edge is soft. */
-static void exhaust_fan (GLfloat cp[4][3], const GLfloat mid[3], float r, float g, float b, float a)
+ * keeps the game's width and only its edge is soft; the ring's alpha falls
+ * by the fraction tail of a toward the pointed tail (4t(1-t) runs from 0
+ * at the tail to 1 at the engine). */
+static void exhaust_fan (GLfloat cp[4][3], const GLfloat mid[3], const float *c, float a, float tail)
 {
 	GLdouble rim[TD_BEZIER_STEPS + 1][3], ring[TD_BEZIER_STEPS + 1][3];
+	float ra[TD_BEZIER_STEPS + 1], t;
 	int i, k;
 
 	for (i = 0; i <= TD_BEZIER_STEPS; i++) {
-		eval_bezier (rim[i], i * (1.0f / TD_BEZIER_STEPS), cp);
+		t = i * (1.0f / TD_BEZIER_STEPS);
+		eval_bezier (rim[i], t, cp);
 		for (k = 0; k < 3; k++) ring[i][k] = mid[k] + 0.85 * (rim[i][k] - mid[k]);
+		ra[i] = a * (1.0f - tail * (1.0f - 4.0f * t * (1.0f - t)));
 	}
 	glBegin (GL_TRIANGLE_FAN);
-	glColor4f (r, g, b, a);
+	glColor4f (c[0], c[1], c[2], a);
 	glVertex3fv (mid);
-	for (i = 0; i <= TD_BEZIER_STEPS; i++) glVertex3dv (ring[i]);
+	for (i = 0; i <= TD_BEZIER_STEPS; i++) {
+		glColor4f (c[0], c[1], c[2], ra[i]);
+		glVertex3dv (ring[i]);
+	}
 	glEnd ();
 	glBegin (GL_QUAD_STRIP);
 	for (i = 0; i <= TD_BEZIER_STEPS; i++) {
-		glColor4f (r, g, b, a);
+		glColor4f (c[0], c[1], c[2], ra[i]);
 		glVertex3dv (ring[i]);
-		glColor4f (r, g, b, 0.0f);
+		glColor4f (c[0], c[1], c[2], 0.0f);
 		glVertex3dv (rim[i]);
 	}
 	glEnd ();
@@ -2145,28 +2161,43 @@ void Nu_DrawTeardrop (void **data)
 	}
 
 	if (hd) {
-		/* the halo: the game's outline and colour, soft to its rim; then
-		 * a core toward white, half as wide and 80% (+-8% flicker) as
-		 * long, from the engine end: the outline scaled about the engine
-		 * (by len along the axis, by half across), so it stays inside it. */
-		GLfloat core[4][3], mid[3];
-		float c[3] = { (unsigned char) r / 255.0f, (unsigned char) g / 255.0f, (unsigned char) b / 255.0f };
-		float len = 0.8f * (1.0f + 0.08f * ((float) (hd & 0xff) / 127.5f - 1.0f));
+		/* Four soft layers, each the game's outline scaled about the
+		 * engine end by s along the axis and w across (w <= sqrt (s)
+		 * keeps it inside): the fringe, the whole outline in the colour
+		 * deepened, fading to the tail; the body in the game's colour;
+		 * then, added, the core toward white and a warm nozzle spot.
+		 * Thrust th, 0 idle to 1 full burn, from the plume's length over
+		 * its half-width (about 1 idle, 8 full: the game's own proxy)
+		 * sets the core's length and the flicker's depth (exhaust_hd). */
+		GLfloat lay[4][3], mid[3];
+		float col[4][3], th = log2f (len_dir / half_w) / 3.0f, f = (hd >> 16 & 0xff) / 256.0f;
+		float fl = ((hd & 0xff) * (1.0f - f) + (hd >> 8 & 0xff) * f) / 127.5f - 1.0f;
+		float s[4] = { 1.0f, 0.8f, 0.0f, 0.2f }, w[4] = { 1.0f, 0.75f, 0.45f, 0.4f };
+		float a[4] = { 0.75f, 0.8f, 0.9f, 0.0f }, tail[4] = { 0.45f, 0.35f, 0.2f, 0.0f };
 
+		th = th > 0.0f ? (th < 1.0f ? th : 1.0f) : 0.0f;
+		s[2] = (0.45f + 0.35f * th) * (1.0f + (0.03f + 0.09f * th) * fl);
+		a[3] = 0.5f + 0.4f * th;
+		for (i = 0; i < 3; i++) {
+			col[1][i] = (unsigned char) (i == 0 ? r : i == 1 ? g : b) / 255.0f;
+			col[0][i] = 0.75f * col[1][i] * col[1][i];
+			col[2][i] = 0.3f * col[1][i] + 0.7f;
+			col[3][i] = 1.0f - 0.1f * i;
+		}
 		glPushAttrib (GL_COLOR_BUFFER_BIT | GL_CURRENT_BIT | GL_LIGHTING_BIT);
 		glEnable (GL_BLEND);
 		glShadeModel (GL_SMOOTH);
 		glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-		for (i = 0; i < 3; i++) mid[i] = ctrlpoints[0][i] + 0.6f * dir[i];
-		exhaust_fan (ctrlpoints, mid, c[0], c[1], c[2], 0.8f);
-		for (i = 0; i < 3; i++) {
-			core[0][i] = core[3][i] = eng[i] - len * dir[i];
-			core[1][i] = core[0][i] + TD_STRETCH * len * dir[i] + 0.5f * ppd[i];
-			core[2][i] = core[0][i] + TD_STRETCH * len * dir[i] - 0.5f * ppd[i];
-			mid[i] = eng[i] - 0.4f * len * dir[i];
+		for (k = 0; k < 4; k++) {
+			for (i = 0; i < 3; i++) {
+				lay[0][i] = lay[3][i] = eng[i] - s[k] * dir[i];
+				lay[1][i] = lay[0][i] + TD_STRETCH * s[k] * dir[i] + w[k] * ppd[i];
+				lay[2][i] = lay[0][i] + TD_STRETCH * s[k] * dir[i] - w[k] * ppd[i];
+				mid[i] = eng[i] - 0.4f * s[k] * dir[i];
+			}
+			if (k == 2) glBlendFunc (GL_SRC_ALPHA, GL_ONE);
+			exhaust_fan (lay, mid, col[k], a[k], tail[k]);
 		}
-		glBlendFunc (GL_SRC_ALPHA, GL_ONE);
-		exhaust_fan (core, mid, 0.3f * c[0] + 0.7f, 0.3f * c[1] + 0.7f, 0.3f * c[2] + 0.7f, 0.9f);
 		glPopAttrib ();
 		return;
 	}
@@ -3064,7 +3095,7 @@ static void hull_put_ctx (int n)
 	if (HULL_KEY_OK (key) && hull_log_on ()) hull_log_model (key);
 	znode_wrlong (key);
 	znode_wrlong (seed);
-	if (!flat_wear) znode_wrlong (hull_obj_seed (key));
+	if (hull_ctx == 2 && !flat_wear) znode_wrlong (hull_obj_seed (key));
 	for (k = 0; k < 3; k++) znode_wrword (lt[k]);
 	if (hull_ctx == 2) {
 		unsigned int va[4] = { a0, a1, a2, a3 };
@@ -3081,7 +3112,7 @@ static void hull_rdctx (void **data, struct HullCtx *cx, int n)
 
 	cx->key = znode_rdlong (data);
 	cx->seed = znode_rdlong (data);
-	cx->oseed = flat_wear ? 0 : znode_rdlong (data);
+	cx->oseed = hull_ctx == 2 && !flat_wear ? znode_rdlong (data) : 0;
 	for (k = 0; k < 3; k++) cx->light[k] = znode_rdword (data);
 	cx->wok = 0;
 	if (hull_ctx == 2) {
@@ -3265,10 +3296,12 @@ static const char hull_fs[] =
  * on a face that is bright already.
  * Wear (hull_wear_face, not with --flat-wear): each object's own broad
  * patches of grime and of paler, sun-faded plating, from two octaves of
- * value noise in the model's frame (vOb: a cell is 0.9 of a tile, some 4
- * to 6 plates, offset by the object's seed), so it rides with the hull,
- * runs on across its faces and differs from ship to ship; +-11% at most,
- * leaning paler (the -2.6) so a hull is never darker on average.
+ * value noise in the model's frame (vOb: a cell is 0.9 of the model's
+ * tile, some 4 to 6 plates, offset by the object's seed), so it rides with
+ * the hull, runs on across its faces and differs from ship to ship; the
+ * smoothstep gives the patches firm edges, grime -16% and fade +20% at
+ * most, leaning paler (centre 0.44) so a hull is not darker on average.
+ * Only bare metal fades toward grey; a painted face keeps its colour.
  */
 static const char hull_fs5[] =
 	"#version 120\n"
@@ -3306,10 +3339,10 @@ static const char hull_fs5[] =
 	"	col *= mix (vec3 (1.0), vec3 (1.10, 0.97, 0.82), uQ.x * g);\n"
 	"	col = mix (col, vec3 (lum * 1.15 * tone * ratio * ao), 0.75 * b.a * uQ.w * w);\n"
 	"#ifdef WEAR\n"
-	"	float ws = clamp (6.0 * pf_fbm (vOb.xyz, 2) - 2.6, -1.0, 1.0) * vOb.w * w;\n"
-	"	col *= 1.0 + 0.11 * ws;\n"
+	"	float ws = (2.0 * smoothstep (0.3, 0.58, pf_fbm (vOb.xyz, 2)) - 1.0) * vOb.w * w;\n"
+	"	col *= 1.0 + ws * (ws < 0.0 ? 0.16 : 0.2);\n"
 	"	col *= mix (vec3 (1.0), vec3 (1.04, 1.0, 0.92), max (-ws, 0.0));\n"
-	"	col = mix (col, vec3 (dot (col, vec3 (0.3, 0.59, 0.11))), 0.3 * max (ws, 0.0));\n"
+	"	col = mix (col, vec3 (dot (col, vec3 (0.3, 0.59, 0.11))), 0.3 * paint * max (ws, 0.0));\n"
 	"#endif\n"
 	"	if (uB.w > 0.0) {\n"
 	"		float gm = clamp (2.5 * b.r, 0.0, 1.0), sl = dot (uB.rgb, vec3 (0.3, 0.59, 0.11));\n"
@@ -3868,6 +3901,7 @@ static int hull_paint5 (double p[][3], int n, const struct HullCtx *cx, int host
 {
 	float sc, off[2];
 	int cls = hull_class_of_key (cx->key, &sc, off), i;
+	double wpanel = hull_classes[cls].panel * sc;	/* the model's, for the wear */
 	int mx = rgb[0] > rgb[1] ? rgb[0] : rgb[1], mn = rgb[0] < rgb[1] ? rgb[0] : rgb[1];
 	int calm = host && !HULL_BUILDING (cls);
 	int lamp, pure, mark = HULL_BUILDING (cls) && hull_marking (rgb);
@@ -3934,7 +3968,7 @@ static int hull_paint5 (double p[][3], int n, const struct HullCtx *cx, int host
 	if (cls == HC_BUILDING) hull_storey_fit (hf, n, cx->w, hull_classes[cls].panel * sc);
 #ifdef HULL_SHADERS
 	if (hull_program5 () && hull_begin5 (cls, calm)) {
-		hull_wear_face (cx, n, hull_classes[cls].panel * sc);
+		if (!flat_wear) hull_wear_face (cx, n, wpanel);
 		return 2;
 	}
 #endif
@@ -3996,7 +4030,7 @@ static int hull_paint (double p[][3], int n, int have_ctx, const struct HullCtx 
  * grey signs) and an unlisted model's stay flat.
  */
 static struct HullPlane hull_cplane;
-static double hull_cpanel;	/* its class's panel, for the wear */
+static double hull_cpanel;	/* its model's panel, for the wear */
 static int hull_cmode;		/* 2 shader, 1 fixed function */
 static GLdouble (*hull_cdoor)[3];	/* a door's contour, for its edge */
 static int hull_cdoor_n;
@@ -4057,6 +4091,7 @@ static int hull_complex_begin (GLdouble c[][3], int n, void **data)
 	if (!hull_cc_on || hull_style < 5 || flat_hulls || fx_tagged () || n < 3) return 0;
 	cls = hull_class_of_key (hull_cc.key, &sc, off);
 	if (cls == HC_BUILDING) return 0;	/* a port's ground, roads and hills */
+	hull_cpanel = hull_classes[cls].panel * sc;	/* the model's, as hull_paint5 */
 	mx = mn = c8[0];
 	for (k = 1; k < 3; k++) {
 		if (c8[k] > mx) mx = c8[k];
@@ -4090,7 +4125,6 @@ static int hull_complex_begin (GLdouble c[][3], int n, void **data)
 	}
 	for (k = 0; k < 9; k++) M[k] = hull_cc.M[k];
 	for (k = 0; k < 3; k++) light[k] = hull_cc.light[k];
-	hull_cpanel = hull_classes[cls].panel * sc;
 	if (!hull_plane_obj ((const double (*)[3]) c, n, M, hull_cc.o, light,
 			     hull_classes[cls].panel * sc, off, &hull_cplane))
 		return 0;

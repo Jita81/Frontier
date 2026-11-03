@@ -1,0 +1,112 @@
+# p2-ecm.drv - C7 slice 1: the ECM pulse, seen from outside the ship.
+#
+# Verifies: C7 (b)-(c) the ECM shell: one translucent shell round the ship
+#         that grows and fades over the pulse's countdown; it holds still
+#         while paused and runs faster under time acceleration.
+# Run:  record once with --pace in --args and --timeout 400 (docs/hd/weapons.md,
+#       ECM and energy bomb), then replay the tape to capture frames; the
+#       tape lives outside git.  Unpaced, the waits run ahead of the pulses.
+# Expect: the ship on its pad in the external view; three pulses round it:
+#         one at 1x, one paused part-way for 3 s, one at 10x.
+# Start 2 (landed), new game only: remove the beam laser for the cash,
+# fit the ECM system, back to the views.
+wait 6000
+key space
+wait 2000
+key 2
+wait 11000
+# Comms, shipyard, upgrades; More to the last page; remove the beam laser.
+mouse 57 193
+click 200
+wait 2000
+mouse 270 52
+click 200
+wait 2000
+mouse 170 58
+click 200
+wait 2000
+mouse 298 160
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+click 150
+wait 400
+mouse 141 102
+click 200
+wait 1500
+# Go back, upgrades: fit the ECM system (first page).
+mouse 151 161
+click 200
+wait 1500
+mouse 170 58
+click 200
+wait 2000
+mouse 129 136
+click 200
+wait 1500
+# The views: front, then the view icon twice for the external view.
+key f1
+wait 2000
+mouse 8 193
+wait 300
+click 200
+wait 2000
+mouse 8 193
+wait 300
+click 200
+wait 2000
+mouse 2 120
+wait 300
+shot 01-ext
+# A pulse at 1x.
+log ECM-1X
+key e
+wait 4000
+# A pulse paused part-way for 3 s, then on at 1x.
+log ECM-PAUSE
+key e
+wait 700
+sdlkey esc
+wait 500
+# Paused, the shell holds still, so the shot is the same frame however long it takes.
+shot 02-ecm-paused
+wait 2500
+log ECM-RESUME
+sdlkey f1 shift
+wait 4000
+# A pulse at 10x (the time control), then back to 1x.
+mouse 25 182
+wait 300
+click 200
+wait 300
+mouse 2 120
+wait 300
+log ECM-10X
+key e
+wait 1500
+sdlkey f1 shift
+wait 1000
+quit
