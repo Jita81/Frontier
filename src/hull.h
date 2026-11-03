@@ -15,7 +15,7 @@
 
 /* Material profiles. HP_GENERIC is what styles 1 to 3 give every model;
  * style 4 picks one of the four classes per model from hull_models[]. */
-enum { HP_GENERIC, HP_SMALL, HP_TRADER, HP_MILITARY, HP_STATION, HP_BUILDING, HP_N };
+enum { HP_GENERIC, HP_SMALL, HP_TRADER, HP_MILITARY, HP_STATION, HP_BUILDING, HP_CARGO, HP_CAPSULE, HP_N };
 
 struct HullProfile {
 	const char *name;
@@ -87,6 +87,7 @@ unsigned int hull_mix (unsigned int x);
  * it flat.
  */
 enum { HC_GENERIC, HC_POLICE, HC_CIVIL, HC_FREIGHT, HC_ARMOUR, HC_FIGHTER,
+       HC_CARGO, HC_CAPSULE,	/* B10: small objects, before HC_STATION: not buildings */
        HC_STATION, HC_HANGAR, HC_DECK, HC_BUILDING, HC_N };
 /* HC_STATION and after are buildings and interiors: their decal hosts and
  * complex shapes (signs) stay flat. HC_DECK is no model's class: it is the
