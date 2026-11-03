@@ -1864,7 +1864,7 @@ void Nu_DrawComplexEnd (void **data)
 		flush_contour ();
 		/* a low cloud's: shaded inside the game's own fill, or flat */
 		if (puff_open && (plated || !puff_shape ((const double (*)[3]) puff_e, puff_en,
-				(const double (*)[3]) tess_vertices, tess_vpos, tessViewport)))
+				tessModelMatrix, tessProjMatrix, tessViewport)))
 			puff_end ();
 		gluTessEndContour (tobj);
 		gluTessEndPolygon (tobj);
@@ -7298,7 +7298,7 @@ void Nu_DrawScreen ()
 		if (t) hull_log_frame (t);
 	}
 	hull_end ();
-	puff_end ();
+	puff_frame ();
 	fx_frame_end ();	/* beams and flashes that outlive the frame they were put in */
 	if (hangar_faces) hull_hangar_grade ();
 	//fprintf (stderr, "\n");

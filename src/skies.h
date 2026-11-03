@@ -38,14 +38,15 @@ void skies_ring_end (void);
  * the model's space), towards the sun in GL eye space and the object's
  * seed.  Draw side: puff_next before every primitive outside a shape,
  * puff_shape just before a tagged shape is tessellated, puff_face and
- * puff_corner around a tagged face, puff_end at the end of the frame.
+ * puff_corner around a tagged face, puff_frame at the end of the frame.
  */
 struct puff_tag { int kind; unsigned int seed; float M[9], L[3]; int o[3]; };
 int puff_on (void);
 void puff_draw_tag (void **data);
 int puff_next (int kind);
 void puff_end (void);
-int puff_shape (const double (*e)[3], int n, const double (*win)[3], int np, const int vp[4]);
+void puff_frame (void);
+int puff_shape (const double (*e)[3], int n, const double mv[16], const double pj[16], const int vp[4]);
 int puff_face (const double (*p)[3], int n);
 void puff_corner (int i);
 
