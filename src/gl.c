@@ -3184,6 +3184,10 @@ static int hull_decal_host (void **data)
 	return *(int *) *data == NU_COMPLEX_START;
 }
 
+/* a port's wall: each corner's height over the wall's foot, in tiles (0
+ * for anything else), for the shader's darkening toward the ground */
+static float hull_gnd[4];
+
 #ifdef HULL_SHADERS
 
 static const char hull_vs[] =
@@ -3276,7 +3280,7 @@ static const char hull_fs[] =
 static const char hull_fs5[] =
 	"#version 120\n"
 	"uniform sampler2D tA, tB;\n"
-	"uniform vec4 uP, uQ;\n"
+	"uniform vec4 uP, uQ, uB;\n"
 	"uniform float uG;\n"
 	"varying vec4 vUV, vEd, vVT, vLT, vCol;\n"
 	"#ifdef WEAR\n"
@@ -3314,6 +3318,12 @@ static const char hull_fs5[] =
 	"	col *= mix (vec3 (1.0), vec3 (1.04, 1.0, 0.92), max (-ws, 0.0));\n"
 	"	col = mix (col, vec3 (dot (col, vec3 (0.3, 0.59, 0.11))), 0.3 * max (ws, 0.0));\n"
 	"#endif\n"
+	"	if (uB.w > 0.0) {\n"
+	"		float ga = b.r * fd * (0.6 + 0.4 * (1.0 - abs (V.z)));\n"
+	"		float y = dot (col, vec3 (0.3, 0.59, 0.11)), sl = max (dot (uB.rgb, vec3 (0.3, 0.59, 0.11)), 0.05);\n"
+	"		col = mix (col, y * uB.rgb / sl, 0.55 * ga);\n"
+	"		col *= 1.0 - 0.3 * (1.0 - smoothstep (0.0, 0.15, vLT.w));\n"
+	"	}\n"
 	"	float top = max (max (col.r, col.g), col.b);\n"
 	"	if (top > 0.85) col *= (0.85 + 0.15 * (1.0 - exp ((0.85 - top) / 0.15))) / top;\n"
 	"	vec3 H = normalize (L + V);\n"
@@ -3401,7 +3411,7 @@ static GLuint hull_program (void)
 }
 
 static GLuint hull_prog5;
-static GLint hull_uloc5[3];	/* uP, uQ, uG */
+static GLint hull_uloc5[4];	/* uP, uQ, uG, uB */
 static int hull_prog5_failed;
 
 /* style 5's shader, 0 if it is not there (or FE2_HULL_FIXED is set): then
@@ -3433,6 +3443,7 @@ static GLuint hull_program5 (void)
 	hull_uloc5[0] = glGetUniformLocation (hull_prog5, "uP");
 	hull_uloc5[1] = glGetUniformLocation (hull_prog5, "uQ");
 	hull_uloc5[2] = glGetUniformLocation (hull_prog5, "uG");
+	hull_uloc5[3] = glGetUniformLocation (hull_prog5, "uB");
 	return hull_prog5;
 }
 
@@ -3540,6 +3551,10 @@ static int hull_begin5 (int cls, int calm)
 	glUniform4f (hull_uloc5[0], c->bump * (calm ? 0.7f : 1.0f), c->gloss, c->shine, c->ao);
 	glUniform4f (hull_uloc5[1], c->tint, hull_cls[cls].grime, calm ? 0.5f : 1.0f, calm ? 0.0f : 1.0f);
 	glUniform1f (hull_uloc5[2], c->graze);
+	if (cls == HC_BUILDING) {	/* the sky the glass takes, the game's own */
+		unsigned int sk = MainRGBPalette[fe2_bgcol];
+		glUniform4f (hull_uloc5[3], (sk & 255) / 255.0f, (sk >> 8 & 255) / 255.0f, (sk >> 16 & 255) / 255.0f, 1);
+	} else glUniform4f (hull_uloc5[3], 0, 0, 0, 0);
 	hull_on = 2;
 	hull_cur = cur;
 	return 1;
@@ -3577,7 +3592,7 @@ static void hull_attr (const struct HullFrame *f, int i)
 		glMultiTexCoord4f (GL_TEXTURE0, f->uv[i][0], f->uv[i][1], f->seed[0], f->seed[1]);
 	glMultiTexCoord4f (GL_TEXTURE1, f->ed[i][0], f->ed[i][1], f->ed[i][2], f->ed[i][3]);
 	glMultiTexCoord4f (GL_TEXTURE2, f->vt[i][0], f->vt[i][1], f->vt[i][2], f->inr);
-	glMultiTexCoord4f (GL_TEXTURE3, f->lt[0], f->lt[1], f->lt[2], 0);
+	glMultiTexCoord4f (GL_TEXTURE3, f->lt[0], f->lt[1], f->lt[2], hull_gnd[i]);
 }
 
 /* Shader for this polygon: 1 with hf filled in, 0 to draw it flat */
@@ -3820,6 +3835,31 @@ static int hull_marking (const int rgb[3])
 	return hi >= 64 && rgb[2] < 0.3 * lo && lo >= 0.6 * hi;
 }
 
+/* a port's wall takes its storeys (hull.c, paint_storeys) from its foot,
+ * the lowest of its corners in the model's frame (v runs up the model's y,
+ * as hull_obj_tan lays it), and its panes from a column at its one end, a
+ * whole number of panes (a sixteenth of a tile) across it, stretched by at
+ * most a thirty-second of a tile over its width; so no pane is cut at
+ * either end */
+static void hull_storey_fit (struct HullFrame *f, int n)
+{
+	float lo[2] = { 1e30f, 1e30f }, hi[2] = { -1e30f, -1e30f }, k;
+	int i, j;
+
+	for (i = 0; i < n; i++)
+		for (j = 0; j < 2; j++) {
+			if (f->uv[i][j] < lo[j]) lo[j] = f->uv[i][j];
+			if (f->uv[i][j] > hi[j]) hi[j] = f->uv[i][j];
+		}
+	k = hi[0] - lo[0];
+	k = k > 0 ? (floorf (k * 16 + 0.5f) > 1 ? floorf (k * 16 + 0.5f) : 1) / (16 * k) : 1;
+	for (i = 0; i < n; i++) {
+		f->uv[i][0] = (f->uv[i][0] - lo[0]) * k;
+		f->uv[i][1] -= lo[1];
+		hull_gnd[i] = f->uv[i][1];
+	}
+}
+
 static int hull_paint5 (double p[][3], int n, const struct HullCtx *cx, int host,
 			const int rgb[3], float st[][2], struct HullFrame *hf)
 {
@@ -3888,6 +3928,7 @@ static int hull_paint5 (double p[][3], int n, const struct HullCtx *cx, int host
 		hull_end ();
 		return 0;
 	}
+	if (cls == HC_BUILDING) hull_storey_fit (hf, n);
 #ifdef HULL_SHADERS
 	if (hull_program5 () && hull_begin5 (cls, calm)) {
 		hull_wear_face (cx, n, hull_classes[cls].panel * sc);
@@ -3913,6 +3954,7 @@ static int hull_paint (double p[][3], int n, int have_ctx, const struct HullCtx 
 {
 	hull_chain = host;
 	hull_glow = 0;
+	hull_gnd[0] = hull_gnd[1] = hull_gnd[2] = hull_gnd[3] = 0;
 	/* the plating belongs to the ships and stations listed in
 	 * hull_models[]: anything else (the intro's titles and banners,
 	 * text, planets, buildings, missiles, debris, cargo) is drawn flat,
