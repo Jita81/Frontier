@@ -29,7 +29,12 @@ across the unit sphere, plus up to three octaves of fine detail.  The
 detail fades out by screen size (`fwidth`) the same way the ground detail
 does, and changes the cover by less than 0.003.  The cover goes through a
 soft threshold (edge 0.04), is raised to a haze floor, and is scaled by an
-opacity.  `CL_K` = 6 and not a coarser 2.5: at 2.5 a few big cells decide
+opacity.  The second octave is read a little east or west of its place,
+by up to 0.75 of its own cell, in proportion to the first octave (no extra
+read).  The spread of the cover does not change, but where the first octave
+changes fastest, at the cloud margins, the cells shear into streaks and
+wisps along the latitudes, as cloud does in a wind, instead of round blobs.
+`CL_K` = 6 and not a coarser 2.5: at 2.5 a few big cells decide
 the whole planet, and the cover ran from 22% to 48% between seeds.  At 6
 it runs from 24% to 39%.
 
@@ -43,13 +48,25 @@ and + 528, the day), never the wall clock.  So pausing stops them, time
 acceleration speeds them up, and the same date gives the same clouds.
 
 **Light.**  The cloud tops take the sun from `planet_sun`, put into model
-space.  The terminator of the clouds sits sqrt(2H) later than the ground's
-(the deck sees the sun a little longer).  Past it, the clouds take the
-ground's own colour, so the night side shows what the game drew there.
-Lit clouds go from 0.6 to 0.95 of their tint, from the terminator to high
-sun, and get the same limb darkening as the ground.  On the lit ground,
-each cloud casts a soft shadow (35%, three octaves), read where the sun
-line from the ground meets the deck.
+space.  The object matrix scales it by about 0.993, so the shader
+normalizes it.  The terminator of the clouds sits sqrt(2H) later than the
+ground's (the deck sees the sun a little longer).  Past it, the clouds
+take the ground's own colour, so the night side shows what the game drew
+there and no cloud turns into a dark patch over the night ground.  On the
+lit side and through the terminator each cloud is lit as a mass
+(`cl_light`, in `CLOUD_GLSL` so every view of the clouds can call it): the
+two-octave base is read at the deck point and 0.02 away along two tangents
+of the deck, and its gradient tilts the cloud's normal.  A flank that
+faces the sun goes to 0.97 of the tint; one turned away goes to a cool
+grey (0.5, 0.55, 0.65 of it).  With the sun high nearly every flank faces
+it, so the relief is strongest towards the terminator, as with real
+cloud.  Thick cloud (the base up to 0.12 above the threshold) is white;
+thin margins take a little of a cool sky tint (0.84, 0.9, 1.0) and, through
+the soft threshold, stay translucent.  The tilt fades out when the second
+octave's cells shrink under a few pixels, so a far planet does not
+sparkle.  Clouds get the same limb darkening as the ground.  On the lit
+ground, each cloud casts a soft shadow (35%, three octaves), read where
+the sun line from the ground meets the deck.
 
 **Which worlds.**  The class comes from the model word (the same ranges
 `hdback.c` and `planet.c` use).  A world gets clouds only if its model has
@@ -71,15 +88,62 @@ captures (`tools/p2shots --routes orbit`), the cover of the lit disc of
 the first terran world, measured against a capture with full cover, was
 41% at shot 02, 32% at 03 and 31% at 05.
 
-**Cost.**  Per planet fragment the cloud program reads the noise eight
-times: five octaves for the cover (two of `pf_fbm`, three of detail) and
-three for the shadow.  If a slow machine needs it, cut the shadow to two
-octaves first, then the cover to four.
+**Cost.**  Per planet fragment the cloud program reads the noise fourteen
+times: five octaves for the cover (two of the base, three of detail),
+three for the shadow and six for the relief (the two-octave base at three
+points; the driver may share the centre one with the cover's).  If a slow
+machine needs it, cut the shadow to two octaves first, then the cover to
+four.
+
+The global cover above was re-measured on the warped base with the same
+float32 replica (detail octaves at full weight, the mean of the soft
+threshold before the haze floor and opacity).  Old and new:
+
+| Class | 3 seeds x 100k, old | new | 40 seeds x 20k, old | new |
+|---|---|---|---|---|
+| terran, ocean | 32.3-35.7% | 32.2-35.6% | 24.1-37.6% (mean 30.6) | 24.1-37.8% (mean 30.6) |
+| ice | 11.5-15.0% | 11.6-14.8% | 7.3-17.1% (mean 11.4) | 7.1-17.2% (mean 11.4) |
+| rocky | 6.6-9.9% | 6.7-9.7% | 3.7-11.3% (mean 6.8) | 3.6-11.5% (mean 6.8) |
+
+(The 3 seeds are not the ones the table above used, so the 3-seed ranges
+differ from it; old and new are the same seeds.)
 
 ## Sky deck
 
-Not built yet.
+Not built yet (parked).  When it comes back it calls `cl_cover` for its
+cover and `cl_light` for its relief, so it shows the same clouds lit the
+same way.
 
 ## The game's own clouds and the intro
 
-Not built yet.
+The intro is not part of this slice.
+
+The game draws its own low clouds as model 198.  A census (a scratch build
+that logged every model-198 primitive with `FE2_HULL_LOG=1`; nothing of it
+is committed) on the landed route and on a climb from the pad to space:
+
+| Route, phase | Complex shapes (start / inner / Bezier / point) | Quads | Triangles | Colours |
+|---|---|---|---|---|
+| landed, on the pad | 100 / 100 / 418 / 13 per frame (up to 110 / 461) | 4 (up to 11) | 6 (up to 13) | white shapes and quads, grey triangles |
+| climb, under the deck | 150 / 150 / 660 at most, falling to 22 / 95 | 3 to 36, then 79 and 123 | 4 to 38, then 93 and 128 | the same |
+| climb, at and above the deck | none | 14 | 16 | the same |
+
+So model 198 is the low-flight clouds too.  As the ship climbs into them
+the outlines give way to quads and triangles, so far away a cloud looks to
+be a flat white outline of Bezier curves and close by a few white quads and
+grey triangles (read from the counts, not traced per cloud).  The object
+frame resolved on every logged primitive.
+
+**Lit puffs: the next slice, not this one.**  The triangles and quads
+already carry their object-frame corners to Draw, but they are a few per
+frame.  The bulk of the clouds are the complex shapes, and those carry no
+object frame for an unlisted model (the complex context's frame is written
+only for listed models), and are drawn from their outline.  A lit puff
+with one radial measure per cloud needs, per shape, the frame (twelve
+values) plus the cloud's centre and radius in its own space, written at Put
+time by the complex path, which is outside the model-198 branch.  The
+plan for that slice: admit model 198 to the complex context, take the
+radius from the model, and in the 198 branch shade each fragment from
+`cl_cover` over the object-space position, feathered over the outer 15%,
+lit from the context's light and seeded from the object seed, with no
+clock.

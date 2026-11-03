@@ -315,22 +315,35 @@ int flat_planets = 0;
 
 /* The cloud model, the one every view of the clouds uses (docs/hd/clouds.md):
  * cl_cover (q, oct) is the cover, 0..1, over the model direction q.  Its
- * base is two fixed octaves of pf_fbm: never more or fewer with distance,
- * since pf_fbm renormalizes and the cover would move.  Finer octaves up to
- * oct, too weak to move the cover, only fray the edges, each fading out
- * once its cells shrink to a pixel.  The deck turns about the spin axis,
- * model y (measured: the object matrix turns about it, frame to frame, in
- * orbit), and slowly evolves, both on the game clock (uClRot). */
+ * base is two fixed octaves (cl_base): never more or fewer with distance,
+ * since the sum is renormalized and the cover would move.  The second
+ * octave is pushed east-west by the first (no extra read): the cells keep
+ * their spread, but the margins, where the first octave changes fastest,
+ * shear into streaks.  Finer octaves up to oct, too weak to move the
+ * cover, only fray the edges, each fading out once its cells shrink to a
+ * pixel.  The deck turns about the spin axis, model y (measured: the
+ * object matrix turns about it, frame to frame, in orbit), and slowly
+ * evolves, both on the game clock (uClRot).  cl_light (q, s) is the
+ * relief: a normal tilted by the gradient of the base along two tangents,
+ * lit from the sun s, and how thick the cloud is there. */
 #define CLOUD_GLSL \
 	"uniform vec3 uClSeed;\n" \
 	"uniform vec4 uClRot, uClCover;\n" \
 	"const float CL_K = 6.0, CL_H = " PF_STR (CLOUD_DECK_H) ", CL_T = " PF_STR (CLOUD_DECK_T) ";\n" \
-	"float cl_cover (vec3 q, int oct) {\n" \
+	"const float CL_W = 1.5, CL_E = 0.02, CL_B = 0.1;\n" \
+	"float cl_base (vec3 q, out vec3 p) {\n" \
 	"	q = normalize (q);\n" \
 	"	q.xz = vec2 (uClRot.x * q.x - uClRot.y * q.z, uClRot.y * q.x + uClRot.x * q.z);\n" \
-	"	vec3 p = q * CL_K + uClSeed + vec3 (uClRot.zw, 0.0);\n" \
-	"	float n = pf_fbm (p, 2), px = length (fwidth (p)) * 4.1209, a = 0.03;\n" \
-	"	p = (p * 2.03 + vec3 (1.7, 9.2, 3.1)) * 2.03 + vec3 (1.7, 9.2, 3.1);\n" \
+	"	p = q * CL_K + uClSeed + vec3 (uClRot.zw, 0.0);\n" \
+	"	float a = pf_noise (p);\n" \
+	"	p = p * 2.03 + vec3 (1.7, 9.2, 3.1) + (a - 0.5) * CL_W * vec3 (q.z, 0.3, -q.x);\n" \
+	"	float n = (2.0 * a + pf_noise (p)) / 3.0;\n" \
+	"	p = p * 2.03 + vec3 (1.7, 9.2, 3.1);\n" \
+	"	return n;\n" \
+	"}\n" \
+	"float cl_cover (vec3 q, int oct) {\n" \
+	"	vec3 p;\n" \
+	"	float n = cl_base (q, p), px = length (fwidth (p)), a = 0.03;\n" \
 	"	for (int k = 3; k < 6; k++) {\n" \
 	"		if (k > oct || px >= 0.4) break;\n" \
 	"		n += a * (1.0 - smoothstep (0.1, 0.4, px)) * (pf_noise (p) - 0.5);\n" \
@@ -338,6 +351,15 @@ int flat_planets = 0;
 	"	}\n" \
 	"	return max (smoothstep (uClCover.x - uClCover.y, uClCover.x + uClCover.y, n), uClCover.z)\n" \
 	"	       * uClCover.w;\n" \
+	"}\n" \
+	"vec2 cl_light (vec3 q, vec3 s) {\n" \
+	"	q = normalize (q);\n" \
+	"	vec3 t = normalize (cross (q, abs (q.y) < 0.9 ? vec3 (0.0, 1.0, 0.0) : vec3 (1.0, 0.0, 0.0)));\n" \
+	"	vec3 b = cross (q, t), p;\n" \
+	"	float d = cl_base (q, p), f = 1.0 - smoothstep (0.15, 0.5, length (fwidth (q)) * CL_K * 2.03);\n" \
+	"	vec2 g = vec2 (cl_base (q + CL_E * t, p), cl_base (q + CL_E * b, p)) - d;\n" \
+	"	vec3 nn = normalize (q - f * CL_B / CL_E * (g.x * t + g.y * b));\n" \
+	"	return vec2 (dot (nn, normalize (s)), smoothstep (uClCover.x, uClCover.x + 0.12, d));\n" \
 	"}\n"
 
 /* gl.c binds the textures of up to four light zones, each baked by
@@ -385,10 +407,13 @@ int flat_planets = 0;
 	"	vec3 cm = normalize (gl_TexCoord[2].xyz), cv = normalize (cm - uClEye);\n" \
 	"	float rd = 1.0 + CL_H, ck = max (-dot (cv, cm), 0.0);\n" \
 	"	vec3 cq = normalize (cm - cv * (rd*rd - 1.0) / (ck + sqrt (ck*ck + rd*rd - 1.0)));\n" \
-	"	float cd = dot (cq, uClSun), lit = smoothstep (-uSoft, uSoft, cd + sqrt (2.0 * CL_H));\n" \
-	"	vec3 cs = normalize (cm + uClSun * CL_H / max (dot (cm, uClSun), 0.1));\n" \
+	"	vec3 sn = normalize (uClSun);\n" \
+	"	float cd = dot (cq, sn), lit = smoothstep (-uSoft, uSoft, cd + sqrt (2.0 * CL_H));\n" \
+	"	vec3 cs = normalize (cm + sn * CL_H / max (dot (cm, sn), 0.1));\n" \
 	"	col *= 1.0 - 0.35 * cl_cover (cs, 3) * smoothstep (-uSoft, uSoft, c);\n" \
-	"	vec3 cc = uClTint * mix (0.6, 0.95, smoothstep (0.0, 0.6, cd)) * mix (1.0 - uLook.y, 1.0, sqrt (mu));\n" \
+	"	vec2 rl = cl_light (cq, sn);\n" \
+	"	vec3 cc = uClTint * mix (vec3 (0.5, 0.55, 0.65), vec3 (0.97), smoothstep (-0.3, 0.7, rl.x));\n" \
+	"	cc *= mix (vec3 (0.84, 0.9, 1.0), vec3 (1.0), rl.y) * mix (1.0 - uLook.y, 1.0, sqrt (mu));\n" \
 	"	col = mix (col, mix (col, cc, lit), cl_cover (cq, 5) * smoothstep (rd, rd + CL_T, length (uClEye)));\n" \
 	"#endif\n" \
 	"	col = mix (col, uRim.rgb, uRim.a * 0.6 * pow (1.0 - mu, 4.0) * day);\n" \
