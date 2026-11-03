@@ -112,6 +112,8 @@ void procfx_corona_end (void);
 /* a layer's program: the shared noise library plus body, its main();
  * 0, after a note on stderr, when it does not compile (skies.c too) */
 unsigned int procfx_program (const char *name, const char *body);
+/* the noise library (pf_hash, pf_noise, pf_fbm) with its #version line */
+extern const char *const procfx_noise_glsl;
 
 /* change_vidmode, before the GL context goes */
 void procfx_forget (void);

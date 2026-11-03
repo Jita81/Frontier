@@ -50,6 +50,7 @@ static const char noise_glsl[] =
 	"	}\n"
 	"	return s / w;\n"
 	"}\n";
+const char *const procfx_noise_glsl = noise_glsl;	/* the hull's wear (gl.c) */
 
 /* Compile one layer's fragment shader (the noise library plus body) into
  * a program.  No vertex shader: the fixed-function vertex path stays, so
