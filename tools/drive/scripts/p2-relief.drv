@@ -1,14 +1,14 @@
-# p2-relief.drv - Phase 2 tour: a rocky moon's relief on the system map (W4).
+# p2-relief.drv - Phase 2 tour: the start system's rocky moon close up on
+# the system map (W4 regression check).
 #
-# Verifies: W4 crater bowls and ground relief on a rocky body (model word
-# $7e), the start system's rocky moon, drawn by the HD map.
+# Verifies: W4 (crater bowls and ground relief) keys airless bodies only,
+# so a rocky body (model word $7e) is drawn exactly as before W4.
 # Run:  tools/p2shots --routes relief --base BASE --branch BRANCH
 # Expect: 01 the map zoomed in seven times on the moon, day side to the
-#         left, the terminator down the middle; 02 zoomed in twice more:
-#         the ground between the model's crater discs mottled by low ridges
-#         (base: one flat colour); 03 the same view 0.5 s later (no
-#         swimming). The moon has no crater circles of its own, so it shows
-#         the ground relief alone.
+#         left, the terminator down the middle; 02 zoomed in twice more;
+#         03 the same view 0.5 s later. Base and branch alike in all three
+#         (the dark discs on the moon are the model's own polygons, not
+#         PS_CRATER circles).
 # Start 1 (landed), new game only. Each shot pauses the game (Esc); the
 # pointer is parked off the controls so no hover tip is drawn.
 

@@ -10,8 +10,8 @@ struct PPatch;
 
 /* --flat-biomes: the game's flat seas and land, no beaches or biomes (main.c) */
 extern int flat_biomes;
-/* --flat-relief: no W4 crater bowls or ground relief on airless and rocky
- * bodies, the rest of the W passes kept (main.c) */
+/* --flat-relief: no W4 crater bowls or ground relief on airless bodies,
+ * the rest of the W passes kept (main.c) */
 extern int flat_relief;
 
 /* Fill rgb[n*n*3] with the patch pt of feature codes, baked for one light

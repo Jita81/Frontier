@@ -21,7 +21,6 @@ int psurf_temperate (struct PSurf *s) { return 1; }
 int psurf_terran_temp (struct PSurf *s) { return airless ? -1 : 288; }
 int psurf_airless (struct PSurf *s) { return airless; }
 int psurf_gas_giant (struct PSurf *s) { return 0; }
-int psurf_rocky (struct PSurf *s) { return 0; }
 int psurf_craters (struct PSurf *s, double (*cr)[4], int max)
 {
 	cr[0][0] = cr[0][2] = 0.0; cr[0][1] = 1.0; cr[0][3] = 0.05;
