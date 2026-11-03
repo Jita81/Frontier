@@ -276,8 +276,9 @@ video mode change. Rasters under 16 texels a side get no biome.
 fine grey regolith speckle, and soft bright rays from its own craters.
 
 - **What keys it.** The body kind from the model word: `$7a`, `$7c` or
-  `$80` (`psurf_airless` in `src/planet.c`). Rocky, corrosive, terran and
-  every other body are drawn as before, byte for byte. Every code of the
+  `$80` (`psurf_airless` in `src/planet.c`). Rocky bodies take W4's
+  relief alone (below); corrosive, terran and every other body are drawn
+  as before, byte for byte. Every code of the
   body takes it, water and ice included (an airless body has none).
 - **The speckle.** Two octaves of the same value noise the coasts use, on
   the texel's unit direction, seeded by the planet's own seed
@@ -314,6 +315,61 @@ reuse the map. The grid array is static (1 MB) instead of on the stack.
 
 `--flat-biomes` turns all of this off: `worlds_bake` expands the codes
 with the plain palette, as for the biomes.
+
+## What is drawn: crater bowls and ground relief (W4)
+
+`src/worlds.c` (W4, slice 1) stops an airless or rocky body looking like
+a smooth painted ball: its craters read as bowls, and the ground between
+them is broken by low ridges.
+
+- **What keys it.** Airless bodies (`$7a`, `$7c`, `$80`) and rocky ones
+  (`$7e`, `$82`, `psurf_rocky` in `src/planet.c`). Every other body is
+  drawn as before, byte for byte.
+- **A tone, not a light.** The relief is a gain on the texel's
+  brightness, the same byte the W12 regolith uses, so it is albedo: the
+  light zones are baked once each and light it as they light the rest,
+  and it does not follow the sun ("cavity" style). Night stays dark.
+- **The bowls.** Each of the model's crater circles (`PS_CRATER`, the
+  same circles the rays leave) gets a darker floor (up to 0.12, faded out
+  from half the radius to 0.95 of it) and a lighter raised rim just
+  outside its edge (up to 0.16, from 0.85 to 1.45 radii, peaking at 1.05).
+- **The ground.** Two ridged octaves of the coasts' value noise, cells of
+  1/9 and 1/21 radian (the second is the speckle's own coarse octave, so
+  costs nothing), each folded (0.305 − |2n − 1|, 0.305 being the fold's
+  measured mean, so zero mean): the creases are thin bright ridges, the
+  rest broad shallow hollows, −0.08 to +0.04 and −0.05 to +0.02.
+- **Band-limited.** Every term fades out (smoothstep from 0.35 to 0.7
+  cycles a texel: the octaves by their cell, a rim by 0.2 of its radius, a
+  floor by half of it) where the raster is too coarse to hold it.
+- **Landing.** The whole relief also fades with the raster's texel, log-
+  linear from all of it at 2e-3 radian a texel (a face, and the patch at
+  the switch from faces) to none at 2e-5 (the landed patch, about 1e-5):
+  each patch step takes about a quarter of it away, so there is no pop on
+  the way down and the landed patch is the W12 surface.
+- **One gain byte.** Speckle, rays and relief together are clamped to
+  ±0.25 of the texel's brightness.
+- **Rocky bodies take the relief only.** No speckle, no rays and no grey:
+  by eye the speckle turns a rocky body into the airless regolith, and the
+  rays land on top of the rays some rocky models already draw as
+  polygons. `W_RSPECK` is the switch.
+
+Measured on the harness's test bodies (a lit disc, base then W4): mean disc luminance 120.60, 105.97, 101.17 (airless) and
+97.41, 38.20, 106.38 (rocky) before; 120.90, 106.28, 101.25 and 97.84,
+38.33, 106.82 after (all within +0.5%). Night 29.47 to 29.54 (+0.2%).
+Every other body's faces are byte-identical. Down a descent, the mean
+change across a patch switch is at most 0.8 of an 8-bit level (0.4
+before), and the landed patch is unchanged.
+
+Cost: on the W12 grid (about three texels), in the same cache. The low
+octave's lattice corners are kept from one sample to the next (a cell
+spans about twelve grid points), and the fades are worked out once a
+patch, so a first bake of an airless face, raster included, went from
+about 5.2 ms to about 5.6 ms (+8%, thread CPU time, medians of 21 on a
+busy host). A rocky face had no gain map before: it went from about
+0.6 ms to about 3.5 ms, the same per-texel pass an airless face takes.
+
+`--flat-relief` turns only this off (byte-identical to before W4);
+`--flat-biomes` turns it off with every other worlds pass.
 
 ## What is drawn: gas giant fine bands
 

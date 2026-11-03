@@ -1093,6 +1093,12 @@ int psurf_gas_giant (struct PSurf *s)
 	return in && in->body == B_GAS;
 }
 
+int psurf_rocky (struct PSurf *s)
+{
+	struct PInfo *in = s ? pinfo (s) : NULL;
+	return in && in->body == B_ROCKY;
+}
+
 int psurf_craters (struct PSurf *s, double (*cr)[4], int max)
 {
 	int i, n = 0;

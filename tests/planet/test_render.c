@@ -36,6 +36,7 @@
 #include "../../src/planet.h"
 #include "../../src/worlds.h"
 int flat_biomes = 0;
+int flat_relief = 0;
 #include "gl_stubs.h"
 #include "split_rgb.c"
 #include "planet_block.c"
