@@ -511,31 +511,41 @@ void procfx_planet_end (void)
 /* The sky deck (docs/hd/clouds.md): the same clouds seen from the ground
  * or the air.  Each fragment follows its model direction, gl_TexCoord[0],
  * from the eye to the deck sphere: from below to where it leaves the
- * sphere, from above to where it first grazes it.  From below the base
- * darkens where the cloud is thick, and the deck thins into the air's
- * colour with distance; from above, the grazing band takes the cap's own
- * rim and fades out from 1.05R to 1.2R, before the sphere takes over. */
+ * sphere, from above to where it first grazes it.  The cover there is the
+ * orbit view's; where it is neither clear nor full, a finer noise on the
+ * same drift breaks it into separate clouds, and it shades their bases,
+ * darker where the cloud is thick.  The deck thins into the air's colour
+ * with distance; from above, the grazing band takes the cap's own rim and
+ * fades out from 1.05R to 1.2R, before the sphere takes over.  Within
+ * CL_T of the deck the deck gives way to the in-cloud whitening, so
+ * crossing it has no step. */
 static const char deck_glsl[] = CLOUD_GLSL
 	"uniform vec4 uRim;\n"
 	"uniform float uSoft;\n"
 	"void main () {\n"
 	"	vec3 v = normalize (gl_TexCoord[0].xyz), e = uClEye, col = vec3 (0.0);\n"
 	"	float rd = 1.0 + CL_H, b = dot (e, v), c = dot (e, e) - rd*rd, h = b*b - c, a = 0.0;\n"
+	"	float t = c < 0.0 ? sqrt (max (h, 0.0)) - b : max (-b - sqrt (max (h, 0.0)), 0.0);\n"
+	"	vec3 q = normalize (e + v * t), r = q;\n"
+	"	r.xz = vec2 (uClRot.x * q.x - uClRot.y * q.z, uClRot.y * q.x + uClRot.x * q.z);\n"
+	"	vec3 p = r * 1500.0 + uClSeed + vec3 (uClRot.zw, 0.0) * 250.0;\n"
+	"	float n = cl_cover (q, 2), fine = 1.0 - smoothstep (0.3, 1.0, length (fwidth (p)));\n"
 	"	if (h > 0.0 && (c < 0.0 || b < 0.0)) {\n"
-	"		float t = c < 0.0 ? sqrt (h) - b : -b - sqrt (h);\n"
-	"		vec3 q = normalize (e + v * t);\n"
-	"		float lit = cl_lit (q, uSoft);\n"
-	"		a = cl_cover (q, 5);\n"
+	"		float lit = cl_lit (q, uSoft), u = n / uClCover.w, m = 0.0;\n"
+	"		if (u > 0.01 && fine > 0.0) m = (pf_fbm (p, 3) - 0.5) * fine;\n"
+	"		a = mix (n, smoothstep (0.3, 0.7, u + 1.5 * m) * uClCover.w, fine);\n"
 	"		col = mix (CL_NIGHT, cl_day (q), lit);\n"
 	"		if (c < 0.0) {\n"
 	"			float f = smoothstep (0.0, 0.06, t);\n"
-	"			col = mix (col * mix (0.95, 0.55, a), uRim.rgb, 0.5 * f * lit);\n"
+	"			col *= mix (1.0, 0.5, clamp (0.5 * u + 2.5 * m + 0.2, 0.0, 1.0));\n"
+	"			col = mix (col, uRim.rgb, 0.5 * f * lit);\n"
 	"			a *= 1.0 - f;\n"
 	"		} else {\n"
 	"			float mu = max (-dot (v, q), 0.0);\n"
 	"			col = mix (col, uRim.rgb, uRim.a * 0.6 * pow (1.0 - mu, 4.0) * lit);\n"
 	"			a *= 1.0 - smoothstep (1.05, 1.2, length (e));\n"
 	"		}\n"
+	"		a *= min (abs (length (e) - rd) / CL_T, 1.0);\n"
 	"	}\n"
 	"	float w = cl_inside ();\n"
 	"	gl_FragColor = vec4 (mix (col, cl_white (uSoft), w), mix (a, 1.0, w));\n"

@@ -107,16 +107,20 @@ after the ground, with alpha blending, in the planet's own znode.  So the
 game's sun, moons and stars, drawn before it, are covered by cloud, and
 anything the game draws later (ships, the port) is not.
 
-**From below.**  The ray leaves the deck sphere overhead.  Thick cloud
-has a darker base (0.95 of the lit colour where the cover is thin, 0.55
-where it is full).  Toward the horizon the deck thins into the air's
-colour (the innermost atmosphere layer, as the cap's rim uses).  It is
-half mixed and fully transparent by a path length of 0.06R.  So the deck
-reads as cloud overhead and haze at the horizon, never as a hard ceiling.
-At night the clouds go to the same dim neutral as from orbit (`CL_NIGHT`),
-and they cover the stars.
+**From below.**  The ray leaves the deck sphere overhead.  The cover
+there is `cl_cover`, as from orbit.  Wherever there is cloud, a
+finer noise (3 octaves, 1500 cells per planet radius, on the same drift)
+moves the cloud edge, so an overcast breaks into separate clouds with
+gaps, and the same noise darkens their bases (down to half the lit colour
+where the cloud is thick).  The fine noise fades out as its cells get
+smaller than a pixel, which leaves the orbit cover.  Toward the horizon
+the deck thins into the air's colour (the innermost atmosphere layer, as
+the cap's rim uses).  It is half mixed and fully transparent by a path
+length of 0.06R.  So the deck reads as cloud overhead and haze at the
+horizon, never as a hard ceiling.  At night the clouds go to the same dim
+neutral as from orbit (`CL_NIGHT`): dark shapes that hide the stars.
 
-**From above** (the eye over R(1 + H + T)).  Only the band between the
+**From above** (the eye over R(1 + H)).  Only the band between the
 horizon and the deck's own edge is drawn: the deck seen edge-on, with the
 cap's rim colour at grazing angles.  The ground below already shows the
 clouds through `PF_CLOUDS`.  The band fades out from 1.05R to 1.2R, so
@@ -126,7 +130,10 @@ at the 1.25R hand-over to the sphere there is no deck left to pop.
 that is 1 at the deck height and 0 at `CLOUD_DECK_T` (H/4) above and
 below it.  Both the deck and the `PF_CLOUDS` ground mix towards the lit
 cloud colour by it, so flying up through a cloud whitens the view and
-flying up through a gap does not.
+flying up through a gap does not.  Inside the same band the deck's own
+alpha falls to 0 at the deck height, so the switch from below to above
+happens under the whitening, with no step.  With `--flat-planets` the
+ground has no `PF_CLOUDS` shader, so only the deck whitens.
 
 **The eye.**  The ST's object matrix is not quite orthonormal: the length
 of a unit vector taken into model space runs from 0.992 to 0.994 with the
@@ -137,18 +144,22 @@ height from d/R alone.  d itself still carries the same scale error: d/R
 moves by up to 0.0007 as the ship turns in place.
 
 **Limits.**  The deck is drawn only on frames where the game draws the
-planet.  Looking straight up from low altitude, the game sends no planet
-(the ground is out of view), so there is no deck in that view.  Every
-view with ground or horizon in it has the deck.  `--flat-clouds` turns
-the deck off; `--flat-planets` keeps it (it uses nothing of the ground's
-shader).  The cloud cells are sized for the orbit view: one cell is
-hundreds of kilometres across, wider than the sky a pilot on the ground
-can see.  So from a base the sky is mostly all cloud or all clear, and
-broken sky shows only near a cell's edge or once the climb opens the
-view.
+planet, and the game draws it only when the ground is in view.  With the
+nose well above the horizon at low altitude there is no planet, so there
+is no deck in that view (the sky is the game's plain sky colour).  Every
+view with ground or horizon in it has the deck.  Models the game draws
+after the planet (ships, the port, and hills and buildings on the
+ground) are drawn over the deck, so from just above it they show through.
+`--flat-clouds` turns the deck off; `--flat-planets` keeps it (it uses
+nothing of the ground's shader).  The cloud cells are sized for the orbit
+view: one cell is hundreds of kilometres across.  The finer noise breaks
+the sky up inside a cell, but whether a base sees overcast, broken cloud
+or clear sky still follows the orbit cover over it.  At the start
+position with air the sky over the port is clear through the first
+afternoon and evening; it clouds over on the second day (`p2-ascent` speeds the clock up to reach it).
 
-**Cost.**  One fragment of the dome reads the noise five times for the
-cover, and five more inside a cloud.
+**Cost.**  One fragment of the dome reads the noise twice for the cover
+in clear sky and five times under cloud.  Within H/4 of the deck, `cl_inside` adds its own reads.
 
 ## The game's own clouds and the intro
 
