@@ -344,6 +344,8 @@ static struct BMap {
 	int one;
 	unsigned int lru;
 } bmaps[W_SLOTS];
+/* the slot key compares c, u, v and half as one block: they must lead PPatch */
+typedef char bmap_key_layout[offsetof (struct PPatch, n) == 10 * sizeof (double) ? 1 : -1];
 
 static double biome_at (const double d[3], int temp, unsigned int seed)
 {
@@ -376,7 +378,7 @@ static const unsigned char *biome_map (const struct PPatch *pt, unsigned int see
 		}
 		if (!e || m->lru < e->lru) e = m;
 	}
-	if (gn > 1024 / W_BSTEP + 1) return *one = -1, NULL;
+	if (gn < 2 || gn > 1024 / W_BSTEP + 1) return *one = -1, NULL;
 	for (y = 0; y < gn; y++)
 		for (x = 0; x < gn; x++) {
 			double a = (2.0 * x * sc + 1.0 - n) * pt->half / n, b = (2.0 * y * sc + 1.0 - n) * pt->half / n;
@@ -386,6 +388,7 @@ static const unsigned char *biome_map (const struct PPatch *pt, unsigned int see
 			lo = fminf (lo, g[y*gn + x]); hi = fmaxf (hi, g[y*gn + x]);
 		}
 	free (e->b);
+	e->b = NULL;	/* a uniform patch keeps no map */
 	e->seed = seed; e->temp = temp; e->p = *pt; e->lru = ++clock_;
 	e->one = (int) ((lo + hi) * 0.5f + 0.5f);
 	/* two steps of a byte are a fraction of a colour level: one byte */
@@ -436,9 +439,9 @@ static void tone_d (const unsigned char *in, int b, float *d)
 
 	memset (d, 0, 3 * sizeof (*d));
 	if (!(l = l > in[2] ? l : in[2])) return;
-	hue_toward (in, 110.0f, 25.0f, 1.1f, 0.92f, a);			/* lush */
-	if (x < 0.0f) x = -x, hue_toward (in, 0.0f, 0.0f, 0.35f, 1.1f, o);	/* tundra, rock */
-	else hue_toward (in, 40.0f, 60.0f, 0.7f, 1.1f, o);			/* dry */
+	hue_toward (in, 110.0f, 25.0f, 1.1f, 1.0f, a);			/* lush */
+	if (x < 0.0f) x = -x, hue_toward (in, 0.0f, 0.0f, 0.35f, 1.0f, o);	/* tundra, rock */
+	else hue_toward (in, 40.0f, 60.0f, 0.7f, 1.0f, o);			/* dry */
 	for (k = 0; k < 3; k++) {
 		d[k] = a[k] + (o[k] - a[k]) * x - in[k];
 		d[k] = d[k] > 0.25f * l ? 0.25f * l : d[k] < -0.25f * l ? -0.25f * l : d[k];

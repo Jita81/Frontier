@@ -240,13 +240,15 @@ none and 68%.
 The bounds:
 
 - Each tone is a hue shift of the texel's own palette colour (toward
-  green for lush, toward tan for dry, toward grey for tundra and rock), and
+  green for lush, toward tan for dry, toward grey for tundra and rock), at
+  the palette colour's own brightness (so where two biomes meet across a
+  narrow lush band no darker crease shows), and
   each channel moves by at most a quarter of the palette colour's
   brightest channel (checked over every 12-bit colour, every biome byte
   and every beach weight: at most a quarter plus 0.75 of an 8-bit level of
   rounding). The night and twilight zones stay as dark as the game draws
   them, and a world's land keeps its own hue on average (a green world's
-  mean land hue moves by 5° to 12°).
+  mean land hue moves by 5° to 13°).
 - Across the beach rim the biome gives way to the sand, so the two
   together stay within the same quarter.
 
@@ -256,5 +258,10 @@ and kept per patch (the same centre, axes, size, seed and temperature), in
 biome byte (the landed patch) keeps one byte and no map, and is one
 palette expansion. Colours are worked out once per (code, biome byte) a
 bake.
+
+Memory: a varying patch keeps one byte a texel (256 KB a face, 1 MB a
+ground patch), a uniform one none; with the 48 slots full of varying
+ground patches that is at most 48 MB beside the coast maps, freed on a
+video mode change. Rasters under 16 texels a side get no biome.
 
 `--flat-biomes` turns the biomes off with the sea depth and the beaches.
