@@ -192,6 +192,75 @@ close detail), the corona and the rings are built.
   - A real hole contour.
   - The wireframe renderer is untouched.
 
+## Prototype notes: the background stars
+
+The game draws every background star as a plain grey point: radius 0, or
+a dimmer radius-2 point under some stars' core.  This layer gives each
+star a fixed magnitude and colour.  It is HD only and changes nothing in
+the core.
+
+- **Which blobs are stars.**  `L44200_DrawBGStars` draws the sky object
+  (model word `0xb0`).  Its stars reach the host as `Nu_PutBlob` calls
+  (gl.c:6012), about 220 a frame.  `procfx_starfield_put` (procfx.c:163)
+  checks the object's record, as `procfx_sky_put` does.  The blobs of
+  other objects are left alone.  That includes the `0x76` dust that
+  streams past the ship.
+- **Identity.**  The sky is a few dozen copies of one small star pattern,
+  each placed and turned its own way.  A star is named by two exact
+  integers:
+  - the copy: a word of the object's link frame at a6-200
+    (`FRAME_COPY`, procfx.c:154), one fixed value per copy (17 copies seen
+    in a 3900-frame flight, each with its own value, never shared);
+  - the star in the copy: its vertex slot, a0 - a4.
+  
+  A hash of the two gives two bytes.  They go in the spare high half of
+  the blob's radius word, and `BLOB_SKY` goes on its colour (gl.c:5550).
+  No RNG and no clock are involved.  Nothing computed from the star's
+  position works: while the view turns, the game's integer maths moves a
+  star up to 0.017 radian in the sky's frame from one frame to the next.
+  The first cut keyed smooth noise on that direction, and stars popped
+  during a turn.
+- **Magnitude.**  `procfx_starfield_look` (procfx.c:181) sets each star's
+  brightness:
+  - most stars are 0.72 to 0.95 of the game's grey;
+  - about 1 in 20 is brighter, up to 1.6, with a soft additive glow
+    reaching about 3 px at 1600x1200 (`sky_star`, gl.c:5986);
+  - about 1 in 100 is also drawn 1.5x larger.
+
+  `sky_star` reads the game's 4-bit grey as n/15, where the base draw
+  uses n/16 (`split_rgb444i`).  That makes it 6.7% brighter, and the
+  factors above already allow for it.  The glow is GL_POINT_SMOOTH, so its
+  exact shape depends on the driver.
+- **Colour.**  The second byte picks a warm (orange-yellow) or cool
+  (blue-white) tint.  Its strength rises from zero near the middle, so
+  most stars stay white.  The tint scales the channels at low saturation,
+  never toward green or purple.
+- **Switch.**  `--flat-starfield` (main.c:265) makes the put step return
+  0, so every blob is drawn as before.  `--flat-sky` keeps its meaning.
+- **Checked** (1600x1200, lockstep replay of a hand-written flight tape
+  with a yaw, a pitch and the rear view, against base):
+  - Turn track.  Each star's light was tracked against base over 11 yaw
+    frames (26 stars) and 7 pitch frames (29 stars).  No ratio to base
+    changed by more than 25%.  In the yaw:
+    - 15 of 18 dim stars hold their ratio within 0.3%.  The other three
+      move by 0.5%, 3% and 11%, on stars whose own base light swings by up
+      to 1.7x with sub-pixel position;
+    - each of the 4 glow stars' own light stays within 5%.  Its ratio
+      moves by up to 17%, because base's 1-pixel point moves by 14 to 21%;
+    - 4 tracks jumped to a neighbouring star, and are left out.
+
+    In the pitch, 27 stars hold their ratio within 0.4%; 2 tracks jumped
+    to a neighbouring star.
+  - Mean.  Pooled over four views (151 stars), total star light is 1.00x
+    base.  The median star is 0.85x base.
+  - `--flat-starfield` frames are byte-identical to base.
+  - Two runs give byte-identical frames.
+  - Frame time in flight, over 1463 frames: p50 9.80 ms against 9.73 ms
+    for base, and p95 12.82 ms against 12.51 ms.
+  - The oracle end line is exact.
+- **Not yet checked.**  The intro sequence, and drivers other than macOS
+  OpenGL.
+
 ## Prototype notes: the game-over backdrop
 
 - **What.**  The tombstone sequence used to sit on flat black.  It now
@@ -365,3 +434,42 @@ shader, no new file.
   intro's flares were checked); missiles.  The plume code does not test
   `--flat-fx`, `--classic-ui` or `--pixel-art`; whether they should also
   turn it off is open.
+
+## Contact shadows
+
+`src/shadows.c` (with a few hook lines in `src/gl.c`): the player's ship,
+landed, sits on a soft dark blob on the ground.
+
+- **What it keys off.**  The flight state byte (A6+704) at the 3D view's
+  init: `$60` (on a pad) or `$68` (down off the pads) only.  Launch moves
+  it to `$48` on the first frame of the lift, so the blob is gone before
+  the ship leaves the pad and never stays behind; in flight, docked, in
+  space, in the intro and on the maps it is never drawn.  No fade: none
+  comes from the same key.  Only the faces, struts and wheels put in a
+  frame whose record is the player's ship (A6+674) are measured.
+- **Shape.**  Every vertex of those parts (a wheel widened by its radius)
+  is taken along the ship's own axes, the turn at -36 and the origin at
+  -16 of its top frame.  The lowest point along the ship's up axis (model
+  y) is the ground.  An ellipse there, across the ship's beam (model x)
+  and length (model z), 1.2x the ship's extent each way, centred under
+  its middle.  The light vector at -198 moves it away from the sun by the
+  shadow of the ship's middle, at most a quarter of the longer extent;
+  with the sun at or below the horizon it is not moved.
+- **Look.**  Black, alpha 0.55 at the centre falling as `1 - q^2` to 0 at
+  the rim (six rings of 40 steps), blended `GL_ZERO, GL_ONE_MINUS_SRC_ALPHA`
+  (`dst * (1 - a)`): it only darkens what is under it, so the pad's
+  markings show through and nothing glows at night.  Lighting, texture,
+  cull and blend state are pushed and popped.
+- **Where it sorts.**  One detached znode (`NU_SHADOW`), added after the
+  frame's faces into the sub-tree of the ship's farthest measured face,
+  at that face's z + 1.  It paints after everything farther (the ground,
+  the pad and its decals) and before every face of the ship.
+- **Bounds.**  Reads ST memory, never writes it.  Every read is checked
+  against `MEM_SIZE`; a frame whose ship frame cannot be found puts no
+  node.  No game RNG, no wall clock.
+- **Switches.**  `--flat-shadows` turns it off: no node is added and the
+  frames are byte-identical to the base build.  `--old-renderer`,
+  `--classic-ui` and `--pixel-art` also turn it off.  `--flat-hulls` does
+  not.
+- **Not done.**  Other landed ships, buildings, ships in flight or docked,
+  self-shadowing, terrain or cloud shadows.
