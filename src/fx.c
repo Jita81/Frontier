@@ -690,7 +690,7 @@ static void draw_effect (const struct effect *e)
 	float age = (float) (fx_ms - e->t0) / e->fade, shim;
 	const float *c = e->rgb;
 	int i;
-	if (held (e)) age = fminf (age, 0.35f * (e->drawn - 1));
+	if (held (e)) age = fminf (age, 0.35f * fmaxf (e->drawn - 1, 0));	/* not before its first running frame */
 	if (e->t != T_BEAM) {
 		col (c[0], c[1], c[2], 1 - age);
 		sprite (e->a, e->size * (1 + e->grow * age) * px_world (e->a[2]), 0);
@@ -723,26 +723,45 @@ static void draw_effect (const struct effect *e)
 	}
 }
 
+/* a quad of the bound texture over the 3D view, centred at x, y (-1 to 1),
+ * h of the view's half-height across, square on screen */
+static void screen_quad (float x0, float y0, float h)
+{
+	int k;
+	glMatrixMode (GL_PROJECTION), glPushMatrix (), glLoadIdentity ();
+	glMatrixMode (GL_MODELVIEW), glPushMatrix (), glLoadIdentity ();
+	glBegin (GL_QUADS);
+	for (k = 0; k < 4; k++) {
+		float x = k == 1 || k == 2, y = k > 1;
+		glTexCoord2f (x, y);
+		glVertex2f (x0 + (2 * x - 1) * h * vp_h / vp_w, y0 + (2 * y - 1) * h);
+	}
+	glEnd ();
+	glPopMatrix (), glMatrixMode (GL_PROJECTION), glPopMatrix (), glMatrixMode (GL_MODELVIEW);
+}
 /* The shell: out from a tenth of the game's sphere to all of it, fading as it
  * goes, an additive rim round a faint inside (ECM blue-white; a bomb's a hot
  * white-orange with a second, brighter rim inside it).  Never over 0.45 of the
- * view's height in radius, and gone as it reaches the eye: no whiteout close. */
+ * view's height in radius, and gone as it reaches the eye: no whiteout close.
+ * From inside it (a ship's own, from its cockpit) its rim runs out past the
+ * view's edges on the same pulse, fading in from 0 as the rim passes the eye. */
 static void draw_shell (const struct shell *s)
 {
 	float g = 0.1f + 0.9f * (1 - (1 - s->p) * (1 - s->p)), R = g * s->R, d = sqrtf (dist2 (s->c, (float [3]) { 0, 0, 0 }));
-	float raw = R / px_world (s->c[2]), S = 0.45f * vp_h, spin = 6.283f * hashf (s->key, 200) + s->p;
-	float a = GLOW_CAP * (1 - s->p) * sqrtf (1 - s->p) * fminf (fmaxf ((d - R) / (0.3f * d), 0), 1);
+	float raw = R / px_world (s->c[2]), S = 0.45f * vp_h, spin = 6.283f * hashf (s->key, 200) + s->p, h = (0.8f + 0.9f * g) / 0.82f;
+	float a = GLOW_CAP * (1 - s->p) * sqrtf (1 - s->p) * fminf (fabsf (d - R) / (0.3f * fmaxf (d, R)), 1);
 	R = raw * S / (raw + S) * px_world (s->c[2]);
 	blend (1, T_SHELL);
 	col (s->bomb ? 1 : 0.6f, s->bomb ? 0.6f : 0.8f, s->bomb ? 0.25f : 1, a);
-	sprite (s->c, R, spin);
-	if (s->bomb) col (1, 0.92f, 0.75f, 0.6f * a), sprite (s->c, 0.95f * R, -spin);
+	if (d < g * s->R) screen_quad (0, 0, h);
+	else sprite (s->c, R, spin);
+	if (s->bomb) col (1, 0.92f, 0.75f, 0.6f * a), d < g * s->R ? screen_quad (0, 0, 0.95f * h) : sprite (s->c, 0.95f * R, -spin);
 }
 
 void fx_frame_end (void)
 {
 	GLint vp[4];
-	int i, k, had_3d = drew_3d, l;
+	int i, had_3d = drew_3d, l;
 	float wash;
 	cur.kind = in_complex = drew_3d = 0;
 	if (flat_fx) return;
@@ -752,21 +771,12 @@ void fx_frame_end (void)
 	glGetIntegerv (GL_VIEWPORT, vp);
 	vp_h = vp[3] > 0 ? vp[3] : 480, vp_w = vp[2] > 0 ? vp[2] : 640;
 	if (wash > 0) {	/* the player's death: the bloom, a glow round the blast over the 3D view */
-		glMatrixMode (GL_PROJECTION), glPushMatrix (), glLoadIdentity ();
-		glMatrixMode (GL_MODELVIEW), glPushMatrix (), glLoadIdentity ();
 		l = unlit ();
 		blend (1, T_GLOW);
 		col (1, 0.93f, 0.82f, wash);
-		glBegin (GL_QUADS);
-		for (k = 0; k < 4; k++) {
-			float x = k == 1 || k == 2, y = k > 1;
-			glTexCoord2f (x, y);
-			glVertex2f (bloom_at[0] + (2 * x - 1) * 2.5f * vp_h / vp_w, bloom_at[1] + (2 * y - 1) * 2.5f);
-		}
-		glEnd ();
+		screen_quad (bloom_at[0], bloom_at[1], 2.5f);
 		blend_end ();
 		relight (l);
-		glPopMatrix (), glMatrixMode (GL_PROJECTION), glPopMatrix (), glMatrixMode (GL_MODELVIEW);
 	}
 	if (!scene) return;
 	blend (1, T_GLOW);

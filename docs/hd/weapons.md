@@ -329,6 +329,10 @@ when it reaches the camera. The ECM is blue-white; the
 bomb is white-orange with a second, near-white rim turned the other way,
 brighter and thicker. `--flat-fx` turns it off and the game's patches are
 drawn as before.
+With the camera inside the shell (a ship's own ECM seen from its cockpit)
+the same rim, on the same phase and cap, is drawn over the 3D view, centred,
+running out from just inside the view's edges to past its corners; it fades
+in from nothing as the shell's edge passes the camera, so there is no pop.
 
 The route: `tools/drive/scripts/p2-ecm.drv` starts a new landed game, sells
 the beam laser for the cash, fits the ECM system, takes the external view
