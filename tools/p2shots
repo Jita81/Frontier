@@ -57,7 +57,7 @@ def drive(col, route, out, a, slot):
     cmd = [sys.executable, "-I", os.path.join(DRIVE, "drive.py"), "--bin", exe,
            "--script", os.path.join(DRIVE, "scripts", "p2-%s.drv" % route),
            "--out", run, "--timeout", str(a.timeout), "--quiet", "--max-png-kb", "4000",
-           "--pos", "%d,640" % (1300 - 1200 * slot), "--args=" + game]
+           "--pos", "%d,%d" % (1840 - 40 * slot, 30 + 40 * slot), "--args=" + game]
     if a.lib:
         cmd += ["--lib", a.lib]
     env = dict(os.environ, PATH=os.path.join(out, "bin") + os.pathsep + os.environ["PATH"])
