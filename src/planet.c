@@ -1081,6 +1081,25 @@ int psurf_terran_temp (struct PSurf *s)
 	return in && in->body == B_TERRAN ? in->temp : -1;
 }
 
+int psurf_airless (struct PSurf *s)
+{
+	struct PInfo *in = s ? pinfo (s) : NULL;
+	return in && in->body == B_AIRLESS;
+}
+
+int psurf_craters (struct PSurf *s, double (*cr)[4], int max)
+{
+	int i, n = 0;
+
+	for (i = 0; s && i < s->npolys && n < max; i++) {
+		const struct PSPoly *p = &s->polys[i];
+		if (!p->circle || psurf_code_class (s, p->code) != PS_CRATER) continue;
+		memcpy (cr[n], p->cdir, sizeof (p->cdir));
+		cr[n++][3] = atan2 (p->crad, dot3 (p->coff, p->cdir));
+	}
+	return n;
+}
+
 /* Two pass 3-4 chamfer from the coast: 3 units a texel, negative in
  * water, positive elsewhere, +-32767 when there is no coast. */
 static void coast_distance (const unsigned char *cls, int n, short *d)

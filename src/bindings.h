@@ -100,6 +100,8 @@ void bindings_release_all (void);
  * the cockpit 3D view on the screen, and ST pixel (x, y) over that view
  * rather than the console. */
 int bindings_in_flight_view (int x, int y);
+/* the flight test for every HD flight overlay: also never the death camera */
+int hd_flight_overlays_ok (void);
 /* the pointer in ST pixels, as Call_GetMouseInput works it out */
 void bindings_pointer_st (int *x, int *y);
 

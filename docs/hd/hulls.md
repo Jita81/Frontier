@@ -206,7 +206,7 @@ and the reading of the model's frame). The art is in `art/hull/`.
 | station | `station.png` | large rectangular steel plates, straight seams, two hatches and two vents a tile (drawn in code) | 131072 |
 | hangar | `hangar.png` | industrial bulkheads, beams, conduits | 49152 |
 | deck | `deck.png` | tread and plain deck plates, grating (hangar floor and ceiling) | 32768 |
-| building | none: always the seeded `building` profile | concrete and metal slabs, four storeys a tile, window strips (a surface port's walls) | 65536 |
+| building | none: always the seeded `building` profile | one cladding, four storeys a tile, sky-tinted glass ribbons on a pane grid (a surface port's walls) | 65536 |
 
 Each class also sets:
 - contrast: how much of the tile's light and dark becomes paint
@@ -443,29 +443,50 @@ Word 96 is one model for all of it, so the class rules pick the walls:
 
 Everything else is a wall and is plated. The class has no tile: it always
 bakes the `building` profile in `hull.c` (`paint_storeys`), from the
-profile's own seed, never from the game:
+profile's own seed, never from the game (B6, slice 2):
 
-- four storeys a tile (16384 units each), a row of slabs per storey of
-  one to three quarter tiles, a third of them metal (plain and glossier),
-  the rest concrete with a fine grain; faint seams between slabs
-  and light weathering (wear 0.15);
-- a window strip across each storey, a little over a third of the
-  storey high, panes
-  some 24 texels wide at the 512 bake, behind thin frames and mullions;
-- which panes are lit comes from `hull_mix` of the seed, the storey and
-  the pane, never from the game's RNG or the clock, so it is the same
-  every frame and every run. About three in four panes on a lit storey
-  are lit, and about half the storeys are.
-- Glass sits below the slabs and is glossy. A lit pane is a little
-  lighter than the wall (albedo 1.4 against about 1 for a slab and 0.8
-  for a dark pane),
-  and its grime carries the class's warm tint (0.5), so lit windows read
-  a touch warm in daylight and never white. No shader term is added; the
-  shader's own highlight roll-off keeps a 240 grey wall from clipping.
+- four storeys a tile (16384 units each). Each storey is a floor line at
+  its foot, a spandrel of cladding, then a ribbon of glass from 0.40 to
+  0.88 of the storey behind thin frames;
+- panes a sixteenth of a tile wide (32 texels at the 512 bake), with a
+  column every four panes running through all the storeys. Every line
+  lands on the grid the tile wraps on, so no pane is cut at the wrap;
+- one cladding for the whole tile, concrete with a fine grain or plain
+  metal (from the seed), so a block reads as one material and not as a
+  patchwork of slabs;
+- a pane's tone (blinds drawn, a lit room: about one in sixteen) is
+  `hull_mix` of the seed, the storey and the pane, never the game's RNG
+  or the clock, so it is the same every frame and every run.
+- The glass is marked in the tile's spare channel (HZ). The shader
+  (`hull_fs5`, uniform `uB`) moves the glass's hue toward the sky's
+  colour, `MainRGBPalette[fe2_bgcol]`, read on the host each frame and
+  keeping the glass's own luminance, so a pane reads as glass in daylight
+  and follows the sky as it changes; nothing is added, and the luminance
+  stays the game's colour times the tile.
 
-The class's graze (2.30, the station's) fades a wall seen edge on to its
-own colour, and the footprint fade does the same far away, so the
-windows do not shimmer from the air.
+`gl.c` (`hull_storey_fit`) lays each wall on the grid: its storeys start
+at the wall's foot (the lowest corner along the model's y; the tile's v
+runs up that axis), and its panes start at one end and are stretched, by
+at most a thirty-second of a tile over the wall's width, to a whole
+number of panes. So a wall never begins or ends mid-pane or mid-storey.
+The same heights feed the shader's grounding: the lowest 0.15 of a tile
+of every wall (some 9800 units, about half a storey) darkens toward the
+ground, by up to 0.3 at the foot. Roofs and the apron (deck axis) stay the
+game's flat colour, so a roof now reads against the glazed walls under
+it. The class's graze (2.30, the station's) fades a wall seen edge on to
+its own colour, and the footprint fade does the same far away (the glass
+tint and the grounding fade with them), so the windows do not shimmer
+from the air.
+
+The airless port of the first start position draws its buildings with
+another word, 98 (unit 2^16): dark towers with the game's own lit-window
+polygons and low blocks with coloured roofs. It is not listed and stays
+flat: plated at scale 1 the towers' windows doubled with the game's, and
+at scale 4 the low blocks took storeys too tall for them.
+
+Seeded ground props round a port (trees, shrubs, ice spires; W11b, #81)
+were tried and removed at the operator's call: props are not terrain and
+make no sense in a base. The effort on a port goes into its buildings.
 
 ## Wear: each ship its own (B12, slice 1)
 
@@ -720,8 +741,10 @@ Known limits:
   facing, shape and size (the port is one model): a roof that is not
   level, a wall under 0.6 of a tile, or a large sign board of its own
   would be treated wrongly. Only the second start position's port (with
-  an atmosphere) was captured; an airless port and other worlds' ports
-  were not.
+  an atmosphere) is plated; the first's airless port (word 98) stays flat,
+  and other worlds' ports were not captured. Every building shares one
+  tile, so blocks differ only by the game's colours; a dusk sky was not
+  reached in the captures.
 - The hyperspace and fade-in flashes were not captured with plating.
 - The Viper, Python, Moray, Eagle and Transporter were not met in the test
   captures. They use their classes untested in-game.

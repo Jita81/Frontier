@@ -352,7 +352,7 @@ static void mask_parts (const unsigned char *raster)
 	for (i = 1; i < 256; i++)
 		if (count[i] > count[c]) c = i;
 	if (c == 255 || count[c] < 25) c = -1;
-	if (view == 0 && bindings_in_flight_view (0, 0) && !hdback_active ()) {
+	if (view == 0 && hd_flight_overlays_ok () && !hdback_active ()) {
 		if ((col = marker_try (raster, mx, my, c)) < 0 &&
 		    (col = marker_try (raster, mx = 160, my = 84, c)) < 0)
 			for (y = 14; y <= 153 && col < 0; y++)
@@ -606,7 +606,7 @@ static void boxes (const unsigned char *raster, unsigned char *out)
 	/* a flight view: the scanner drawn lately (not a map's) or, with the
 	 * missile pylons in the bay instead, the game's own flight-view test;
 	 * and no picture behind the page (a station's) */
-	if ((since > 8 && !bindings_in_flight_view (0, 0)) || hdback_active ()) return;
+	if ((since > 8 && !hd_flight_overlays_ok ()) || hdback_active ()) return;
 	for (i = 0; i < ST_W * VIEW_H; i++) clear += raster[i] == 255;
 	if (clear * 10 < ST_W * VIEW_H * 7) return;
 	/* the cells hdtext found glyphs in */

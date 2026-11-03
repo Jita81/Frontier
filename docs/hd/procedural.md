@@ -321,6 +321,21 @@ the core.
   front of a star (the game's draw order should cover it); frame time; a
   star near enough to take the sphere path (it would get no corona).
 
+## Prototype notes: the hypercloud
+
+The cloud is the game's five nested discs; `hyper_glow` draws each as four
+alpha steps (cover 0.6, 0.44 and 0.3, then a halo gone by 1.3x the radius),
+so they read as bands at about the old single soft disc's brightness (the
+intro's glows keep the single soft disc: banded, they read as hard rings).  The
+original's circle draw skips a disc whose size word `d2` (its diameter in
+ST pixels, the word `Nu_DrawBlob` and `Nu_DrawCircle` both read) is `$3f0`
+or more (fe2.s:6560), so its cloud is gone once you are close; HD drew
+those too, up to about 30 times the screen, and a close pass ended in a
+flat wash.  Both hyper branches now return at `HYPER_MAX_D2` (`$3f0`).
+Just under the limit the inner disc still fills the view, as the
+original's does.  The old renderer, `--classic-ui`, `--flat-hulls` and
+`--pixel-art` never tag a hyper disc, so they are unchanged.
+
 ## Lights
 
 The game marks stations, docking bays and landing pads with blinking
