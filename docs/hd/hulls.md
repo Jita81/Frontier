@@ -325,8 +325,9 @@ Not listed, so drawn flat:
   recentre on the inner planet to pick its moon's station), so it is not
   listed; a route would first fly to that planet under autopilot, then
   target the station from close in;
-- game table 176 (unit 2^0), seen beside the bay, and 98 and 148 (ground,
-  around a surface port); not identified;
+- game table 176 (unit 2^0), seen beside the bay, and 148 (ground,
+  around a surface port); not identified (98, met beside it, is the
+  airless port's buildings: below);
 - the intro's 4 (the title), 12, 34 (the banner), 36, 38, 40 to 54 (its
   scenes, the city among them) and every other intro word but 72 and the
   scene rows below.
@@ -456,22 +457,35 @@ profile's own seed, never from the game (B6, slice 2):
   patchwork of slabs;
 - a pane's tone (blinds drawn, a lit room: about one in sixteen) is
   `hull_mix` of the seed, the storey and the pane, never the game's RNG
-  or the clock, so it is the same every frame and every run.
-- The glass is marked in the tile's spare channel (HZ). The shader
-  (`hull_fs5`, uniform `uB`) moves the glass's hue toward the sky's
-  colour, `MainRGBPalette[fe2_bgcol]`, read on the host each frame and
-  keeping the glass's own luminance, so a pane reads as glass in daylight
-  and follows the sky as it changes; nothing is added, and the luminance
-  stays the game's colour times the tile.
+  or the clock, so it is the same every frame and every run. It rides in
+  the tile's spare channel (HZ) with the glass mask, not in the albedo:
+  the shader applies it only while a screen pixel covers under about a
+  hundredth of a tile, so near glass keeps its blinds and lit
+  rooms and glass at middle distance and beyond reads as one even tone
+  (no blotches, no soft dark patches on a big glazed front).
+- The shader (`hull_fs5`, uniform `uB`) moves the glass's hue toward the
+  sky's colour, `MainRGBPalette[fe2_bgcol]`, read on the host each frame
+  and keeping the glass's own luminance, so a pane reads as glass in
+  daylight and follows the sky as it changes. The tint scales with the
+  sky's luminance (none under a black or very dark sky, full from about
+  0.12) and each channel is clamped at 1, so a saturated sky cannot push
+  a channel over; nothing is added, and the luminance stays the game's
+  colour times the tile.
 
 `gl.c` (`hull_storey_fit`) lays each wall on the grid: its storeys start
 at the wall's foot (the lowest corner along the model's y; the tile's v
-runs up that axis), and its panes start at one end and are stretched, by
-at most a thirty-second of a tile over the wall's width, to a whole
-number of panes. So a wall never begins or ends mid-pane or mid-storey.
-The same heights feed the shader's grounding: the lowest 0.15 of a tile
-of every wall (some 9800 units, about half a storey) darkens toward the
-ground, by up to 0.3 at the foot. Roofs and the apron (deck axis) stay the
+runs up that axis), and its panes start at one end. Across, the wall is
+stretched to a whole number of panes, by at most half a pane over its
+width (a tall sliver narrower than one pane takes one: twice over at
+half a pane, more on a thinner sliver). Up, a
+wall over half a storey high is stretched to a whole number of storeys,
+by at most half a storey, so its top storey is never cut. So a wall
+never begins or ends mid-pane or mid-storey. The grounding is measured
+from the model's ground (its y = 0), not from each wall's own foot: the
+lowest 0.15 of a tile above the ground (some 9800 units, about half a
+storey) darkens, by up to 0.3 at the ground, so a wall raised on or
+stacked over another, or a fascia, has no dark band mid-facade. It fades
+with distance like the tint. Roofs and the apron (deck axis) stay the
 game's flat colour, so a roof now reads against the glazed walls under
 it. The class's graze (2.30, the station's) fades a wall seen edge on to
 its own colour, and the footprint fade does the same far away (the glass
@@ -480,9 +494,19 @@ from the air.
 
 The airless port of the first start position draws its buildings with
 another word, 98 (unit 2^16): dark towers with the game's own lit-window
-polygons and low blocks with coloured roofs. It is not listed and stays
-flat: plated at scale 1 the towers' windows doubled with the game's, and
-at scale 4 the low blocks took storeys too tall for them.
+polygons, low blocks with coloured roofs, sign boards and the domes'
+lattice of lines (B6, slice 3). Census (`FE2_HULL_LOG=1`, landed and a
+lift-off): the lettered boards (two colours) host lettering and stay
+flat, one black face has no frame (edge on) and stays flat, a few faces
+move against the model and keep their tile bound to them, and the roofs,
+ground and pad (deck axis), the yellow markings and the domes' lines
+(not faces) stay flat by the class rules; the walls are plated. It is
+listed at scale 1, so a storey is the same 16384 units of the model's
+frame as at the terran port, and with the whole-storey fit (above) the
+towers' own lit windows sit one to each storey (3x crops beside the
+landed ship). At scale 1 without that fit they fell between storeys and
+read doubled; at scale 4 the low blocks took one storey too tall for
+them.
 
 Seeded ground props round a port (trees, shrubs, ice spires; W11b, #81)
 were tried and removed at the operator's call: props are not terrain and
@@ -708,7 +732,12 @@ a kd-tree panel layout on a torus, from a seed.
   `--flat-buildings` the landed frames are byte for byte the earlier
   build's. The docked tour (stations and ships) was run in verification:
   the docked frame is byte for byte the same, and the others differ only
-  through flight timing; word 96 is never met there.
+  through flight timing; word 96 is never met there. Slice 3 (98 listed,
+  whole storeys, grounding from the model's ground, dark-sky guard, pane
+  tone evened with distance): `--flat-buildings` and `--flat-hulls` are
+  byte for byte the earlier build's on both landed tours (every view,
+  title bar aside), and the pre-launch frame of the airless lift-off
+  too.
 
 Known limits:
 - Bright, saturated liveries (an orange or red Krait) show little plating,
@@ -740,9 +769,9 @@ Known limits:
 - A surface port's buildings are told from its ground and signs only by
   facing, shape and size (the port is one model): a roof that is not
   level, a wall under 0.6 of a tile, or a large sign board of its own
-  would be treated wrongly. Only the second start position's port (with
-  an atmosphere) is plated; the first's airless port (word 98) stays flat,
-  and other worlds' ports were not captured. Every building shares one
+  would be treated wrongly. The two start positions' ports (96 with an
+  atmosphere, 98 airless) are plated; other worlds' ports were not
+  captured. Every building shares one
   tile, so blocks differ only by the game's colours; a dusk sky was not
   reached in the captures.
 - The hyperspace and fade-in flashes were not captured with plating.
