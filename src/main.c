@@ -58,6 +58,7 @@ int flat_lasers = 0;	/* --flat-lasers: every laser one plain ribbon, as before b
 int flat_missiles = 0;	/* --flat-missiles: a missile's plume only near its smoke, as before */
 int flat_hud_hits = 0;	/* --flat-hud-hits: one red hit flash, no critical tint (hddamage.c) */
 int flat_exhaust = 0;	/* --flat-exhaust: the game's flat engine plumes (gl.c) */
+int flat_starfield = 0;	/* --flat-starfield: the game's plain background stars (procfx.c) */
 int flat_shadows = 0;	/* --flat-shadows: no contact shadow under a landed ship (shadows.c) */
 
 /*-----------------------------------------------------------------------*/
@@ -229,6 +230,7 @@ void Main_ReadParameters(int argc, char *argv[])
 			   "  --old-renderer        Start with the old renderer.\n"
                "  --flat-hulls          Flat ship faces, no hull plating.\n"
                "  --flat-sky            The game's flat Milky Way band (no star clouds).\n"
+               "  --flat-starfield      The game's plain background stars (no magnitude or colour).\n"
                "  --flat-planets        Hard light zones and flat atmosphere rings.\n"
                "  --flat-biomes         Flat seas: no sea depth or beaches.\n"
                "  --flat-stars          No corona round the stars.\n"
@@ -269,6 +271,8 @@ void Main_ReadParameters(int argc, char *argv[])
 		flat_hulls = 1;
 	  else if (!strcmp(argv[i], "--flat-sky"))
 		flat_sky = 1;
+	  else if (!strcmp(argv[i], "--flat-starfield"))
+		flat_starfield = 1;
 	  else if (!strcmp(argv[i], "--flat-planets"))
 		flat_planets = 1;
 	  else if (!strcmp(argv[i], "--flat-biomes"))
