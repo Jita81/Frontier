@@ -3064,7 +3064,7 @@ static void hull_put_ctx (int n)
 	if (HULL_KEY_OK (key) && hull_log_on ()) hull_log_model (key);
 	znode_wrlong (key);
 	znode_wrlong (seed);
-	if (!flat_wear) znode_wrlong (hull_obj_seed (key));
+	if (hull_ctx == 2 && !flat_wear) znode_wrlong (hull_obj_seed (key));
 	for (k = 0; k < 3; k++) znode_wrword (lt[k]);
 	if (hull_ctx == 2) {
 		unsigned int va[4] = { a0, a1, a2, a3 };
@@ -3081,7 +3081,7 @@ static void hull_rdctx (void **data, struct HullCtx *cx, int n)
 
 	cx->key = znode_rdlong (data);
 	cx->seed = znode_rdlong (data);
-	cx->oseed = flat_wear ? 0 : znode_rdlong (data);
+	cx->oseed = hull_ctx == 2 && !flat_wear ? znode_rdlong (data) : 0;
 	for (k = 0; k < 3; k++) cx->light[k] = znode_rdword (data);
 	cx->wok = 0;
 	if (hull_ctx == 2) {
@@ -3265,10 +3265,12 @@ static const char hull_fs[] =
  * on a face that is bright already.
  * Wear (hull_wear_face, not with --flat-wear): each object's own broad
  * patches of grime and of paler, sun-faded plating, from two octaves of
- * value noise in the model's frame (vOb: a cell is 0.9 of a tile, some 4
- * to 6 plates, offset by the object's seed), so it rides with the hull,
- * runs on across its faces and differs from ship to ship; +-11% at most,
- * leaning paler (the -2.6) so a hull is never darker on average.
+ * value noise in the model's frame (vOb: a cell is 0.9 of the model's
+ * tile, some 4 to 6 plates, offset by the object's seed), so it rides with
+ * the hull, runs on across its faces and differs from ship to ship; the
+ * smoothstep gives the patches firm edges, grime -16% and fade +20% at
+ * most, leaning paler (centre 0.44) so a hull is not darker on average.
+ * Only bare metal fades toward grey; a painted face keeps its colour.
  */
 static const char hull_fs5[] =
 	"#version 120\n"
@@ -3306,10 +3308,10 @@ static const char hull_fs5[] =
 	"	col *= mix (vec3 (1.0), vec3 (1.10, 0.97, 0.82), uQ.x * g);\n"
 	"	col = mix (col, vec3 (lum * 1.15 * tone * ratio * ao), 0.75 * b.a * uQ.w * w);\n"
 	"#ifdef WEAR\n"
-	"	float ws = clamp (6.0 * pf_fbm (vOb.xyz, 2) - 2.6, -1.0, 1.0) * vOb.w * w;\n"
-	"	col *= 1.0 + 0.11 * ws;\n"
+	"	float ws = (2.0 * smoothstep (0.3, 0.58, pf_fbm (vOb.xyz, 2)) - 1.0) * vOb.w * w;\n"
+	"	col *= 1.0 + ws * (ws < 0.0 ? 0.16 : 0.2);\n"
 	"	col *= mix (vec3 (1.0), vec3 (1.04, 1.0, 0.92), max (-ws, 0.0));\n"
-	"	col = mix (col, vec3 (dot (col, vec3 (0.3, 0.59, 0.11))), 0.3 * max (ws, 0.0));\n"
+	"	col = mix (col, vec3 (dot (col, vec3 (0.3, 0.59, 0.11))), 0.3 * paint * max (ws, 0.0));\n"
 	"#endif\n"
 	"	if (uB.w > 0.0) {\n"
 	"		float gm = clamp (2.5 * b.r, 0.0, 1.0), sl = dot (uB.rgb, vec3 (0.3, 0.59, 0.11));\n"
@@ -3868,6 +3870,7 @@ static int hull_paint5 (double p[][3], int n, const struct HullCtx *cx, int host
 {
 	float sc, off[2];
 	int cls = hull_class_of_key (cx->key, &sc, off), i;
+	double wpanel = hull_classes[cls].panel * sc;	/* the model's, for the wear */
 	int mx = rgb[0] > rgb[1] ? rgb[0] : rgb[1], mn = rgb[0] < rgb[1] ? rgb[0] : rgb[1];
 	int calm = host && !HULL_BUILDING (cls);
 	int lamp, pure, mark = HULL_BUILDING (cls) && hull_marking (rgb);
@@ -3934,7 +3937,7 @@ static int hull_paint5 (double p[][3], int n, const struct HullCtx *cx, int host
 	if (cls == HC_BUILDING) hull_storey_fit (hf, n, cx->w, hull_classes[cls].panel * sc);
 #ifdef HULL_SHADERS
 	if (hull_program5 () && hull_begin5 (cls, calm)) {
-		hull_wear_face (cx, n, hull_classes[cls].panel * sc);
+		if (!flat_wear) hull_wear_face (cx, n, wpanel);
 		return 2;
 	}
 #endif
@@ -3996,7 +3999,7 @@ static int hull_paint (double p[][3], int n, int have_ctx, const struct HullCtx 
  * grey signs) and an unlisted model's stay flat.
  */
 static struct HullPlane hull_cplane;
-static double hull_cpanel;	/* its class's panel, for the wear */
+static double hull_cpanel;	/* its model's panel, for the wear */
 static int hull_cmode;		/* 2 shader, 1 fixed function */
 static GLdouble (*hull_cdoor)[3];	/* a door's contour, for its edge */
 static int hull_cdoor_n;
@@ -4057,6 +4060,7 @@ static int hull_complex_begin (GLdouble c[][3], int n, void **data)
 	if (!hull_cc_on || hull_style < 5 || flat_hulls || fx_tagged () || n < 3) return 0;
 	cls = hull_class_of_key (hull_cc.key, &sc, off);
 	if (cls == HC_BUILDING) return 0;	/* a port's ground, roads and hills */
+	hull_cpanel = hull_classes[cls].panel * sc;	/* the model's, as hull_paint5 */
 	mx = mn = c8[0];
 	for (k = 1; k < 3; k++) {
 		if (c8[k] > mx) mx = c8[k];
@@ -4090,7 +4094,6 @@ static int hull_complex_begin (GLdouble c[][3], int n, void **data)
 	}
 	for (k = 0; k < 9; k++) M[k] = hull_cc.M[k];
 	for (k = 0; k < 3; k++) light[k] = hull_cc.light[k];
-	hull_cpanel = hull_classes[cls].panel * sc;
 	if (!hull_plane_obj ((const double (*)[3]) c, n, M, hull_cc.o, light,
 			     hull_classes[cls].panel * sc, off, &hull_cplane))
 		return 0;
