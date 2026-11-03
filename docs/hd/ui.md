@@ -329,7 +329,10 @@ The other HD streams have their own switches: `--pixel-art` (stills) and
   after a hit, and while the hull is under 25%, when a HULL CRITICAL line
   is added and the hull bar pulses red. Undamaged, it is not drawn at all.
 - **Where.** Only over a flight view: not docked, not on the F3, map or
-  file pages, not in the intro, not under the F12 Controls page.
+  file pages, not in the intro, not under the F12 Controls page, and not
+  while the flight state at 704(a6) is `$58`: the death camera, which
+  stays set through the start menu after a death (where the player object
+  is still set and the flight test can pass).
 - **Switches.** Off with `--classic-ui`, `--pixel-art` and
   `--old-renderer`. `FE2_DMG_LOG=1` writes each change of the figures to
   stderr, to check them against the F3 page.

@@ -131,6 +131,7 @@ static const struct {
 	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 212, HC_ARMOUR,	2.0f },	/* the large ship of the first space scene */
 	{ 80,  HC_STATION,	1.0f },	/* orbital station, outside, close up */
 	{ 82,  HC_STATION,	1.0f },	/* launch structure */
+	{ 88,  HC_STATION,	1.0f },	/* large cross-armed orbital station (its slot too) */
 	{ 84,  HC_HANGAR,	1.0f },	/* docking bay seen through the slot */
 	{ 288, HC_HANGAR,	1.0f },	/* hangar interior */
 	{ 290, HC_HANGAR,	1.0f },	/* hangar interior part */

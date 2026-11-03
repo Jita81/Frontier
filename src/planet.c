@@ -1075,6 +1075,12 @@ int psurf_temperate (struct PSurf *s)
 	return in && (in->body == B_TERRAN || in->body == B_OCEAN);
 }
 
+int psurf_terran_temp (struct PSurf *s)
+{
+	struct PInfo *in = s ? pinfo (s) : NULL;
+	return in && in->body == B_TERRAN ? in->temp : -1;
+}
+
 /* Two pass 3-4 chamfer from the coast: 3 units a texel, negative in
  * water, positive elsewhere, +-32767 when there is no coast. */
 static void coast_distance (const unsigned char *cls, int n, short *d)

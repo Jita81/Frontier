@@ -1,0 +1,200 @@
+# p2-stations.drv - Phase 2 tour: the large orbital station (game table 88).
+#
+# Verifies: B5, station plating on the large cross-armed orbital station
+#           (docs/hd/hulls.md, Census of the station types).
+# Run:  python3 tools/drive/drive.py --script tools/drive/scripts/p2-stations.drv \
+#           --out RUN_DIR --timeout 420 "--args=--size 1600 1200"
+#       (FE2_HULL_LOG=1 in the environment prints the model 88 lines.)
+# Expect: exit 0; s00 to s39 a ladder of the approach under autopilot: the
+#         first few far out, then the station from some 4 km (the target box
+#         prints the distance), about 2.5 km, 800 m, the slot, and the last
+#         shots docked. Screen capture runs unpaused and takes 1-30 s a shot
+#         near the station, so which shot shows which distance varies by run.
+# Start 2 (landed at a surface port of the fourth planet), new game only:
+# part-exchange for the first ship in the list (it leaves cash), fit the
+# automatic pilot and atmospheric shielding, request launch and lift off.
+# On the system map zoomed in five steps the planet's orbital station is
+# the label right of the planet; target it, engage the autopilot and click
+# the 100x time icon once: the game drops back to 1x itself near the
+# station, so the approach is slow enough to sample (1000x docks between
+# two shots, and pausing for each shot stalls the approach far out).
+wait 6000
+key space
+wait 2000
+key 2
+wait 11000
+mouse 57 193
+wait 300
+click 200
+wait 2500
+mouse 271 57
+wait 300
+click 200
+wait 2500
+mouse 171 146
+wait 300
+click 200
+wait 3000
+mouse 129 33
+wait 300
+click 200
+wait 3000
+mouse 57 193
+wait 300
+click 200
+wait 2500
+mouse 271 57
+wait 300
+click 200
+wait 2500
+mouse 171 57
+wait 300
+click 200
+wait 3000
+mouse 129 145
+wait 300
+click 200
+wait 2000
+mouse 129 84
+wait 300
+click 200
+wait 2000
+mouse 57 193
+wait 300
+click 200
+wait 2500
+mouse 171 57
+wait 300
+click 200
+wait 3000
+# Lift off (the launch icon), climb for 20 s.
+mouse 263 193
+wait 300
+click 200
+wait 2000
+mouse 2 120
+wait 20000
+# System map, zoom in five steps, target the orbital station's label.
+sdlkey f2
+wait 1500
+sdlkey f2
+wait 2500
+mouse 271 193
+wait 300
+click 200
+wait 1000
+click 200
+wait 1000
+click 200
+wait 1500
+mouse 271 193
+wait 300
+click 200
+wait 1000
+click 200
+wait 1500
+mouse 311 193
+wait 300
+click 200
+wait 1000
+mouse 280 84
+wait 300
+click 200
+wait 1500
+# Front view; the autopilot icon twice, then the time icon.
+sdlkey f1
+wait 1500
+mouse 264 193
+wait 300
+click 200
+wait 1500
+mouse 264 193
+wait 300
+click 200
+wait 1500
+mouse 35 182
+wait 300
+click 200
+mouse 2 120
+wait 6500
+wait 400
+shot s00
+wait 400
+shot s01
+wait 400
+shot s02
+wait 400
+shot s03
+wait 400
+shot s04
+wait 400
+shot s05
+wait 400
+shot s06
+wait 400
+shot s07
+wait 400
+shot s08
+wait 400
+shot s09
+wait 400
+shot s10
+wait 400
+shot s11
+wait 400
+shot s12
+wait 400
+shot s13
+wait 400
+shot s14
+wait 400
+shot s15
+wait 400
+shot s16
+wait 400
+shot s17
+wait 400
+shot s18
+wait 400
+shot s19
+wait 400
+shot s20
+wait 400
+shot s21
+wait 400
+shot s22
+wait 400
+shot s23
+wait 400
+shot s24
+wait 400
+shot s25
+wait 400
+shot s26
+wait 400
+shot s27
+wait 400
+shot s28
+wait 400
+shot s29
+wait 400
+shot s30
+wait 400
+shot s31
+wait 400
+shot s32
+wait 400
+shot s33
+wait 400
+shot s34
+wait 400
+shot s35
+wait 400
+shot s36
+wait 400
+shot s37
+wait 400
+shot s38
+wait 400
+shot s39
+quit

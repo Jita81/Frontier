@@ -1,6 +1,7 @@
 #!/bin/sh
 # Planet tests: S-10 (radius normalization), S-11/S-21 (feature parser
-# and rasterizer fuzz), S-9/S-23 (the planet code of gl.c under ASan).
+# and rasterizer fuzz), S-9/S-23 (the planet code of gl.c under ASan),
+# and the biome map cache of worlds.c.
 # Usage: tests/planet/run.sh   (from anywhere; needs clang or gcc)
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
@@ -26,8 +27,10 @@ $CC $CFLAGS -o "$out/norm" "$here/test_norm_radius.c" "$top/src/planet.c" -lm
 $CC $CFLAGS -o "$out/fuzz" "$here/fuzz_features.c" "$top/src/planet.c" -lm
 $CC $CFLAGS -Wno-pointer-arith -Wno-deprecated-declarations -I"$out" -I"$here" \
 	-o "$out/render" "$here/test_render.c" "$top/src/planet.c" "$top/src/worlds.c" -lm
+$CC $CFLAGS -o "$out/biomes" "$here/test_biomes.c" -lm
 
 "$out/norm"
 "$out/fuzz" ${FUZZ_ITERS:-10000}
 "$out/render"
+"$out/biomes"
 echo "planet tests: all passed"
