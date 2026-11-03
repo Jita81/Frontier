@@ -714,11 +714,13 @@ void hdback_draw (int fb_w, int fb_h)
 
 /* --- the concourse ----------------------------------------------------
  *
- * Docked or landed at a port, looking out of the ship (front or rear
- * view), nothing else on the view: the port's arrivals concourse instead
- * of the 3D bay, behind hdui's station-home cards, with the port's own
- * name and the date lit on its two blank signs.  Cross-fades back to the
- * 3D view on a launch or another view; gone at once for a page or a map.
+ * Docked or landed at a port, looking out of the front of the ship,
+ * nothing else on the view: the port's arrivals concourse instead of the
+ * 3D bay, behind hdui's station-home cards, with the port's own name and
+ * the date lit on its two blank signs.  Cross-fades back to the 3D view
+ * on a launch or an external view; gone at once for a page or a map, and
+ * cut with the game's own camera to and from the rear view, which looks
+ * back over the port or the bay.
  * Four pictures (art/hangar, docs/hd/hangar.md), the opening in their
  * ceilings tinted to the star's light. */
 
@@ -835,9 +837,10 @@ static void sign_text (int k, const char *s, const float *q, float fade)
 
 static int conc_up;	/* the concourse took the gunsight out this frame */
 
+/* the rear view never has it, from the frame the view cuts there */
 int hdback_concourse_up (void)
 {
-	return conc_up;
+	return conc_up && rb (A6 + A6_VIEW_MODE) != 1;
 }
 
 /* out: the screen hdui and the rest have edited, before it is drawn */
@@ -846,12 +849,13 @@ void hdback_concourse (int fb_w, int fb_h, unsigned char *out)
 	static float fade, rgb[3];
 	static const struct cpic *p;
 	static Uint32 last;
+	static int cut;		/* the rear view was up: back in at once */
 	static char name[24], date[32];
 	const char *dt;
 	struct where w;
 	Uint32 now = SDL_GetTicks ();
 	float dts = last ? (now - last) / 1000.0f : 0, s, dw, dh, x0, y0, u, v, y, c, q[8], ph;
-	int px, py, pw, ph_i, top, k, i, bare;
+	int px, py, pw, ph_i, top, k, i, bare, ok, view;
 
 	last = now;
 	conc_up = 0;
@@ -860,15 +864,17 @@ void hdback_concourse (int fb_w, int fb_h, unsigned char *out)
 	if (pixel_art || classic_ui || off) return;
 	bare = hdui_concourse (&dt);
 	locate (&w);
-	if (bare == 2 && w.kind && w.state != STATE_LANDED_ROUGH && rb (A6 + A6_VIEW_MODE) <= 1 &&
-	    (rb (A6 + A6_SPACE_MODE) & 0x01)) {
+	view = rb (A6 + A6_VIEW_MODE);
+	ok = bare == 2 && w.kind && w.state != STATE_LANDED_ROUGH && (rb (A6 + A6_SPACE_MODE) & 0x01);
+	if (ok && view == 0) {
 		p = conc_pick (&w, rgb);
 		port_name (name, sizeof name);
 		snprintf (date, sizeof date, "%s", dt);
-		fade += dts / CONC_FADE;
+		fade = cut ? 1 : fade + dts / CONC_FADE;
 	} else
-		/* a launch: fades; a page or a map: gone at once */
-		fade = bare && (rb (A6 + A6_SPACE_MODE) & 0x01) ? fade - dts / CONC_FADE : 0;
+		/* a launch: fades; a page, a map or the rear view: gone at once */
+		fade = bare && (rb (A6 + A6_SPACE_MODE) & 0x01) && view != 1 ? fade - dts / CONC_FADE : 0;
+	cut = ok && view == 1;
 	if (fade > 1) fade = 1;
 	if (fade <= 0 || !p || !conc_load (p->file)) {
 		fade = 0;
