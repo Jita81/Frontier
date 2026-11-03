@@ -341,20 +341,24 @@ int fx_blob (const int *iv, int rad, int r, int g, int b)
 #define GLOW_CAP	0.6f	/* the most light a blob adds: a hull behind it still reads */
 /* What started an explosion, kept by record: 1 a missile (a heuristic: it
  * starts where a missile was last frame), 2 it has the event's shock ring
- * (no other explosion was near it when it started: a death's records share one) */
-static int blast (unsigned int rec, float a, const float *v, float R)
+ * (no other explosion was near it when it started: a death's records share one);
+ * *top, the biggest blob it has drawn (a steady reach for its embers), *last,
+ * the biggest it drew last frame (a steady size for the player's bursts) */
+static int blast (unsigned int rec, float a, const float *v, float R, float *top, float *last)
 {
-	static struct { unsigned int rec, seen; int fl; float a, v[3]; } bl[16];
+	static struct { unsigned int rec, seen; int fl; float a, v[3], top, cur, last; } bl[16];
 	static int n;
 	int i, k;
 	for (i = 0; i < 16 && bl[i].rec != rec; i++) ;
 	if (i == 16 || a < bl[i].a) {	/* a new one */
 		if (i == 16) i = n++ & 15;
-		bl[i].rec = rec, bl[i].fl = 2;
+		bl[i].rec = rec, bl[i].fl = 2, bl[i].top = bl[i].cur = bl[i].last = 0;
 		for (k = 0; k < 16; k++)
 			if (k != i && bl[k].rec && n_frames - bl[k].seen <= 2 && dist2 (bl[k].v, v) < 64 * R * R) bl[i].fl = 0;
 	}
-	bl[i].a = a, bl[i].seen = n_frames;
+	if (bl[i].seen != n_frames) bl[i].last = bl[i].cur, bl[i].cur = 0;
+	bl[i].a = a, bl[i].seen = n_frames, *top = bl[i].top = fmaxf (bl[i].top, R), bl[i].cur = fmaxf (bl[i].cur, R);
+	*last = bl[i].last > 0 ? bl[i].last : R;
 	memcpy (bl[i].v, v, sizeof bl[i].v);
 	for (k = 0; a < 0.02f && k < n_mprev; k++)
 		if (dist2 (mprev[k], v) < 0.01f * v[2] * v[2]) bl[i].fl |= 1;
@@ -388,42 +392,13 @@ static void shock_ring (const float *c, float r0, float t)
 	blend_end ();
 }
 
-int fx_circle (const int *iv, unsigned int d2, int r, int g, int b)
+/* a blob's fireball at age a: a body, its capped light and the flash.  How far
+ * its fire has burnt, by age and size: a fighter pops and is smoke by late life,
+ * a heavy ship burns on, a missile's is quick and hot; a blob the game draws
+ * yellow (g, its green) runs a little hotter than a red one */
+static void fireball (const float *v, float R, float a, float k, int mis, float g, float spin)
 {
-	float v[3] = { iv[0], iv[1], iv[2] }, R = 0.002f * ((short) d2 + (d2 >> 16) / 65536.0f) * fabsf (v[2]);
-	float a, k, f, heat, ember, flash, spin, body, fire[3];
-	struct ball *o;
-	int fl, mis, i, n = 0, l;
-	if (cur.kind != M_EXPL) return 0;
-	for (i = 0; i < n_balls; i++)	/* an inner ring of a blob of this record drawn already */
-		if (balls[i].rec == cur.rec && (n++, R <= balls[i].R && dist2 (balls[i].v, v) < 0.25f * balls[i].R * balls[i].R))
-			return 1;
-	if (cur.aux)	/* the intro's fireball: its record is the scene's, with no clock */
-		a = 0.1f, k = 0.5f, fl = mis = 0;	/* hot, before smoke; no shock ring */
-	else {
-		a = 1 - (unsigned int) STMemory_ReadLong (cur.rec + OBJ_CLOCK) / 4294967296.0f;	/* its age, 0 to 1 */
-		k = fminf (fmaxf (((short) STMemory_ReadWord (cur.rec + OBJ_SIZE) + 1) / 2.0f, 0), 1);	/* +88 -1 to 0, +1 to 1 */
-		fl = blast (cur.rec, a, v, R), mis = fl & 1;
-	}
-	o = &balls[n_balls < 64 ? n_balls++ : 63];
-	*o = (struct ball) { cur.rec, mis, { v[0], v[1], v[2] }, R, a };
-	/* its turn, seeded by the record and the blob's place in it: steady frame to frame */
-	spin = hashf (rb (cur.rec + 93) + 7 * n, STMemory_ReadWord (cur.rec + 126) & 0xffff) * 6.283f + a * (3 - 2 * k);
-	l = unlit ();
-	if (c8 (b) > 2 * c8 (r)) {	/* a blue spark: kept small */
-		o->R = 0;
-		blend (1, T_GLOW);
-		col (0.55f, 0.7f, 1, GLOW_CAP * (1 - a));
-		sprite (v, R, 0);
-		blend_end ();
-		relight (l);
-		return 1;
-	}
-	if ((fl & 2) && !n) shock_ring (v, R * (mis ? 0.9f : 1.3f), a / 0.25f);
-	/* how far its fire has burnt, by age and size: a fighter pops and is smoke
-	 * by late life, a heavy ship burns on, a missile's is quick and hot; a blob
-	 * the game draws yellow runs a little hotter than a red one */
-	f = a * (mis ? 2.0f : 1.3f - 0.6f * k) + 0.15f * (0.6f - c8 (g));
+	float f = a * (mis ? 2.0f : 1.3f - 0.6f * k) + 0.15f * (0.6f - g), heat, ember, flash, body, fire[3];
 	flash = 1 - a / (mis ? 0.04f : 0.03f + 0.03f * k);	/* white-yellow only at the start */
 	heat = fmaxf (0, 1 - 1.6f * f);			/* yellow 1 to red 0 */
 	ember = fminf (fmaxf ((f - 0.55f) / 0.45f, 0), 1);	/* fire 0 to smoke 1 */
@@ -442,6 +417,109 @@ int fx_circle (const int *iv, unsigned int d2, int r, int g, int b)
 		sprite (v, 1.5f * R, 0);
 	}
 	blend_end ();
+}
+
+/* An event's embers: 8 (k 0) to 24 (k 1) hot sparks, 5 for a missile's, each
+ * on a direction, reach and life hashed from the event's seed and its index.
+ * Out fast and slowing, cooling yellow-white to orange to deep red, all out by
+ * 50% (k 0) to 70% (k 1) of the explosion's life, 35% for a missile's (the
+ * fire is smoke by 77% at k 0).  A streak and a dot, a few pixels: never over
+ * a quarter of the flash across. */
+static void embers (const float *v, float R, float a, float k, int mis, unsigned int seed)
+{
+	float L = mis ? 0.35f : 0.5f + 0.2f * k, Rpx = R / px_world (v[2]), w0 = fminf (1.5f + 0.03f * Rpx, 0.3f * Rpx);
+	int i, j, c, n = mis ? 5 : (int) (8.5f + 16 * k);
+	if (a >= L || v[2] > -1) return;
+	blend (1, T_GLOW);
+	for (i = 0; i < n; i++) {
+		float z = 2 * hashf (seed, 4 * i) - 1, ph = 6.283f * hashf (seed, 4 * i + 1), s = sqrtf (1 - z * z);
+		float e = a / (L * (0.6f + 0.4f * hashf (seed, 4 * i + 2))), hot = 1 - e * (mis ? 0.6f : 1);
+		float reach = R * (mis ? 1.5f : 2.5f + 3 * k) * (0.5f + 0.5f * hashf (seed, 4 * i + 3)), d[3] = { s * cosf (ph), s * sinf (ph), 0.5f * z }, p[2][3], w;
+		if (e >= 1) continue;
+		for (j = 0; j < 2; j++) {	/* the streak's tail a moment back, then its head */
+			float u = fmaxf (e - 0.07f * (1 - j), 0);
+			for (c = 0; c < 3; c++) p[j][c] = v[c] + d[c] * reach * (1 - (1 - u) * (1 - u));
+		}
+		w = w0 * (1 - 0.5f * e);
+		col (0.6f + 0.4f * fminf (2 * hot, 1), 0.08f + 0.87f * powf (hot, 1.5f), 0.75f * hot * hot * hot, GLOW_CAP * (1 - e * e));
+		ribbon (p[0], p[1], 0.3f * w, w, 1);
+		sprite (p[1], 1.2f * w * px_world (p[1][2]), 0);
+	}
+	blend_end ();
+}
+
+/* The player's own death (704(a6) = $58, the record's owner +236 = $ff): the
+ * death timer 722(a6) is set to $3cae6 and run down by the frame's time step
+ * until it would go below 0, then the game-over screen (fe2.s:42633, L63b9c):
+ * t, 0 to 1, stages it.  Two or three seeded secondary bursts (fireball and
+ * embers, no ring) one to two blob radii off, one after another; and a slow
+ * bloom over the 3D view, a warm white glow round the blast, additive, at most
+ * 0.35 at its middle, rising from t 0.2 to its peak at 0.5, gone by t 0.8. */
+#define A6_DEATH_T	722
+#define OBJ_OWNER	236
+static float death_t (void) { return 1 - fminf ((unsigned int) STMemory_ReadLong (A6 + A6_DEATH_T) / 248550.0f, 1); }
+static float bloom (void)
+{
+	float t = death_t ();
+	return flat_explosions || rb (A6 + A6_STATE) != 0x58 || t <= 0.2f || t >= 0.8f ? 0 : 0.35f * sinf (5.236f * (t - 0.2f));
+}
+static float bloom_at[2];	/* the blast on screen, -1 to 1 */
+static void death_bursts (const float *v, float R, float k, float g, unsigned int seed)
+{
+	float t = death_t ();
+	int j, c, n = 2 + (hashf (seed, 99) < 0.5f);
+	bloom_at[0] = fminf (fmaxf (v[0] / (-v[2] * 0.32975f * vp_w / vp_h), -1), 1);
+	bloom_at[1] = fminf (fmaxf (v[1] / (-v[2] * 0.32975f), -1), 1);
+	for (j = 0; j < n; j++) {
+		float b = (t - 0.1f - 0.18f * j - 0.1f * hashf (seed, 100 + j)) / 0.3f, m = R * (1 + hashf (seed, 104 + j));
+		float z = 2 * hashf (seed, 108 + j) - 1, ph = 6.283f * hashf (seed, 112 + j), s = sqrtf (1 - z * z), p[3];
+		if (b < 0 || b >= 1) continue;
+		for (c = 0; c < 3; c++) p[c] = v[c] + m * (c == 2 ? 0.5f * z : s * (c ? sinf (ph) : cosf (ph)));
+		fireball (p, 0.7f * R, b, k, 0, g, ph + b);
+		embers (p, 0.7f * R, b, k, 0, seed * 31 + j + 1);
+	}
+}
+
+int fx_circle (const int *iv, unsigned int d2, int r, int g, int b)
+{
+	float v[3] = { iv[0], iv[1], iv[2] }, R = 0.002f * ((short) d2 + (d2 >> 16) / 65536.0f) * fabsf (v[2]);
+	float a, k, spin, top = R, last = R;
+	unsigned int seed;
+	struct ball *o;
+	int fl, mis, i, n = 0, l;
+	if (cur.kind != M_EXPL) return 0;
+	for (i = 0; i < n_balls; i++)	/* an inner ring of a blob of this record drawn already */
+		if (balls[i].rec == cur.rec && (n++, R <= balls[i].R && dist2 (balls[i].v, v) < 0.25f * balls[i].R * balls[i].R))
+			return 1;
+	if (cur.aux)	/* the intro's fireball: its record is the scene's, with no clock */
+		a = 0.1f, k = 0.5f, fl = mis = 0;	/* hot, before smoke; no shock ring */
+	else {
+		a = 1 - (unsigned int) STMemory_ReadLong (cur.rec + OBJ_CLOCK) / 4294967296.0f;	/* its age, 0 to 1 */
+		k = fminf (fmaxf (((short) STMemory_ReadWord (cur.rec + OBJ_SIZE) + 1) / 2.0f, 0), 1);	/* +88 -1 to 0, +1 to 1 */
+		fl = blast (cur.rec, a, v, R, &top, &last), mis = fl & 1;
+	}
+	o = &balls[n_balls < 64 ? n_balls++ : 63];
+	*o = (struct ball) { cur.rec, mis, { v[0], v[1], v[2] }, R, a };
+	/* its turn, seeded by the record and the blob's place in it: steady frame to frame */
+	seed = STMemory_ReadWord (cur.rec + 126) & 0xffff;
+	spin = hashf (rb (cur.rec + 93) + 7 * n, seed) * 6.283f + a * (3 - 2 * k);
+	seed = seed << 8 | rb (cur.rec + 93);
+	l = unlit ();
+	if (c8 (b) > 2 * c8 (r)) {	/* a blue spark: kept small */
+		o->R = 0;
+		blend (1, T_GLOW);
+		col (0.55f, 0.7f, 1, GLOW_CAP * (1 - a));
+		sprite (v, R, 0);
+		blend_end ();
+		relight (l);
+		return 1;
+	}
+	if ((fl & 2) && !n) shock_ring (v, R * (mis ? 0.9f : 1.3f), a / 0.25f);
+	fireball (v, R, a, k, mis, c8 (g), spin);
+	if ((fl & 2) && !n) {	/* the event's sprays */
+		embers (v, top, a, k, mis, seed);
+		if (rb (A6 + A6_STATE) == 0x58 && rb (cur.rec + OBJ_OWNER) == 0xff) death_bursts (v, last, k, c8 (g), seed);
+	}
 	relight (l);
 	return 1;
 }
@@ -562,13 +640,32 @@ static void draw_effect (const struct effect *e)
 void fx_frame_end (void)
 {
 	GLint vp[4];
-	int i, had_3d = drew_3d;
+	int i, k, had_3d = drew_3d, l;
+	float wash;
 	cur.kind = in_complex = drew_3d = 0;
 	if (flat_fx) return;
 	check_scene ();
-	if (!had_3d || (!scene && !n_balls)) return;	/* no flight view or explosion this frame */
+	wash = bloom ();
+	if (!had_3d || (!scene && !n_balls && !wash)) return;	/* no flight view or explosion this frame */
 	glGetIntegerv (GL_VIEWPORT, vp);
 	vp_h = vp[3] > 0 ? vp[3] : 480, vp_w = vp[2] > 0 ? vp[2] : 640;
+	if (wash > 0) {	/* the player's death: the bloom, a glow round the blast over the 3D view */
+		glMatrixMode (GL_PROJECTION), glPushMatrix (), glLoadIdentity ();
+		glMatrixMode (GL_MODELVIEW), glPushMatrix (), glLoadIdentity ();
+		l = unlit ();
+		blend (1, T_GLOW);
+		col (1, 0.93f, 0.82f, wash);
+		glBegin (GL_QUADS);
+		for (k = 0; k < 4; k++) {
+			float x = k == 1 || k == 2, y = k > 1;
+			glTexCoord2f (x, y);
+			glVertex2f (bloom_at[0] + (2 * x - 1) * 2.5f * vp_h / vp_w, bloom_at[1] + (2 * y - 1) * 2.5f);
+		}
+		glEnd ();
+		blend_end ();
+		relight (l);
+		glPopMatrix (), glMatrixMode (GL_PROJECTION), glPopMatrix (), glMatrixMode (GL_MODELVIEW);
+	}
 	if (!scene) return;
 	blend (1, T_GLOW);
 	for (i = 0; i < n_missiles; i++) draw_plume (&missiles[i]);
