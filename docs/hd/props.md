@@ -1,131 +1,132 @@
 ## Scenery props
 
 `src/props.c` (with hook lines in `src/gl.c`, `src/main.c` and
-`Makefile-C`): a sparse, seeded ring of pines and shrubs (terran worlds)
-or ice spires (ice worlds) on the flat ground round a surface port.
+`Makefile-C`): a sparse, seeded scatter of pines and shrubs (terran
+worlds) or ice spires (ice worlds) on a surface port's own flat green
+ground, between its buildings.  Off by default; `--props` turns it on.
 
-**Status: stopped at placement (step 4).**  On both landed routes the
-port's own flat, non-water ground lies wholly inside the clear disc, so
-the census places nothing and nothing draws.  The census, the kit, the
-lighting, the fade, the nodes and the switches are in and measured; no
-prop has been seen on screen.  See *The stop* below.
+**Status: drawing (W11b slice 1).**  Props are seen on both landed routes
+(`p2-landed.drv`, `p2-landed-ice.drv`); the default build draws the same
+pixels as the base.  Measurements below.
 
-- **What it keys off.**  The flight state byte (A6+704) at the 3D view's
-  init, `$60` or `$68` (landed) and the climb after it, and a port object
-  in the frame: a starport model whose parent body is terran (`$88`,
-  `$8a`, `$90`) or ice (`$8c`).  The key is the port's slot, model, seed
-  and parent; a new key resets the census.
-- **Census.**  For the first 8 drawn frames (`WINDOW`) every complex
-  shape, triangle and quad the engine puts while the port's frame is open
-  is taken into the port's model space
-  (`ldexp(V/32768, h10 - s) * (v - o)`, as `hull_model_frame`; one storey
-  is 16384 units, model +y up).  Shapes are split into flat (y-range under
-  `FLAT`), sloped, solid (triangles and quads) and cloud (above the
-  ground plane by more than `CLOUD`).  The census is the same from the
-  front, rear and outside views and over time: it is the whole port, not
-  the frustum.  `FE2_PROPS_LOG=1` prints it.
-- **Freeze.**  At the 8th frame: `y_g` is the height carrying the most
-  flat area; `E` is the solids' radius; `Rc` is 1.15x the largest
-  distance from the port's centre of the solids, the companion pads and
-  the small ground shapes; up to 32 boxes are built round water, hills
-  and companion terrain.
-- **Placement.**  A 3-storey lattice over the annulus 1.15..2.5 `Rc`;
-  a cell is a candidate when murmur3-seeded value noise is above 0.45, it
-  lies inside a flat, non-water ground shape the port draws, outside every
-  box and out of every hill's radial shadow.  The 200 nearest are kept;
-  each takes a variant (terran 70 % pine, 30 % shrub; ice one of two
-  spires), a size, a yaw and a lean from the hash.  If no flat ground lies
-  beyond the disc, the lattice is not walked and nothing is placed.
-- **Look.**  Flat-shaded triangles from the kit, lit on the CPU by the
-  same sun vector as the hulls: ambient `.18 + .17 * day`, plus the diffuse
-  term.  Back faces are culled on the CPU and the rest sorted back to
-  front.  Lighting, texture, blend and cull state are pushed and popped.
-- **Fade.**  `k = k_eye * k_t * k_px`: `k_eye` is 1 within `F0` = 3 `Rc`
-  of the port and 0 beyond `F1` = 6 `Rc` (smoothstep), so props are gone
-  before the engine stops drawing the port; `k_px` is a smoothstep of the
-  prop's projected height from 0.75 to 1.5 px; `k_t` ramps in by 1/16 a
-  drawn frame.  `k` scales the prop from its root, so there is no pop.
-- **Where it sorts.**  Two detached znodes (`NU_PROPS`): FAR, in the
-  ground's sub-tree at the ground's z - 1 (after the ground, before the
-  port's buildings), for props whose eye-to-root segment crosses the
-  port's disc; NEAR, in the buildings' sub-tree at their nearest z - 1,
-  for the rest.  When the ground and the buildings interleave in one
-  sub-tree, FAR goes after the highest building z.
-- **Cost.**  `props_write` (the census, freeze and per-prop tests) runs a
-  frame; `props_draw` emits the triangles.  Measured `props_write`:
-  9-25 us a frame on both routes, the freeze frame about 23 us.
-- **Bounds.**  Reads ST memory, never writes it.  No game RNG, no wall
-  clock in any decision (the clock only times the log).
-- **Switches.**  Off by default; `--props` turns it on.  `--flat-props`
-  always wins.  `--old-renderer`, `--classic-ui` and `--pixel-art` also
-  turn it off.  Off, no node is added and the frames are the base build's.
+### The rule
 
-### Census
-
-| | terran route (start 2) | ice route (start 1) |
-|---|---|---|
-| port model, body | `$60`, `$88` terran | `$62`, `$8c` ice |
-| h10, s | 18, 18 | 16, 16 |
-| prims | 407 | 252 |
-| flat complex | 39, radius 1900 storeys (444 apron r <= 127; 060 squares 179-776; 55d water to 1900) | 6, radius 389 storeys (444, 060) |
-| sloped complex | 53, y -15.8..472.6, radius 2616 (hills 18-47 storeys tall at 1100-2600, snow caps; one 472-storey mountain) | 1, radius 31 |
-| solid | 315, y -0.3..29.5, radius 834.55 | 237, y -0.2..4.6, radius 355.97 |
-| companions in range | none | model `$94`, s 22, 8 prims: terrain x 159..594, z 449..975, y -37..575 storeys |
-| `E`, `Rc` | 834.55, 959.73 storeys | 355.97, 447.89 storeys |
-| flat non-water ground beyond 1.15 `Rc` | none (land ends at 776) | none (ends at 389) |
-| placed | 0 | 0 |
+- **Which port.**  A model the engine draws with its object at A6-212 is
+  a port when its model word is an even number 90..108 and its flags byte
+  (+280) has bit 4; its parent slot names the body it stands on: terran
+  (`$88`, `$8a`, `$90`) or ice (`$8c`).  The key is the port's slot, model
+  word and seed; a new key resets everything.
+- **Census (8 drawn frames, `WINDOW`).**  Every complex shape, triangle
+  and quad put while that port is being drawn is taken into the port's
+  model space, `model = fsc * R (v - o)` with `fsc = ldexp (1, h10 - s)`
+  (one storey is 16384 units, +y up).  A put whose y-range is under
+  `FLAT` is a *flat shape* (its outline kept, 32 points, and whether its
+  colour is green: G above both R and B in rgb444); anything else is a
+  *box*: its xz bounds grown by `MARGIN`.  Anything whose lowest point is
+  above `CLOUD` is a cloud and is left out.  A shape or box seen again
+  (same bounds within 1/16 storey) is counted once.
+- **Placement (at the freeze).**  A `CELL` lattice over each green
+  shape's bounds, each point jittered by +-0.4 cell from a murmur3 hash of
+  the port's seed, its parent's seed and the cell.  A point is a candidate
+  when value noise (period 3 cells) is at least 0.45 (on ice worlds, also
+  a 30 % hash keep), and it and its four probes at +-`MARGIN` in x and z
+  all lie inside the same green shape, inside no non-green flat shape at
+  or above that height (a road, the apron, a pad, a lake), and in no
+  grown box (a building, a hill, a billboard).  A green square drawn twice
+  is walked once.  The `NPROPS` nearest the port's centre are kept; each
+  takes a variant (terran 70 % pine, 30 % shrub; ice one of two spires),
+  a size of 0.7..1.3, a yaw and, on ice, a lean of +-8 degrees.
+- **Where it sorts.**  The engine paints back to front by node z; a
+  building's node z is 0.141 (`ZK`) times its view depth (measured on
+  both ports).  Each prop is its own detached node in the port's solids
+  tree at `max (1, ZK * depth of its centre)`, so it paints after the
+  ground (whose nodes carry a huge z) and in depth order with the
+  buildings.
+- **Look.**  Flat-shaded triangles from the kit below, lit on the CPU by
+  the port's sun vector: ambient `.18 + .17 * day`, plus the diffuse term
+  scaled by `day`, times a per-prop tint of 0.92..1.08.  Back faces are
+  culled on the CPU and the rest sorted back to front.
+- **Fade and cull.**  `k = k_t * k_px` scales a prop from its root:
+  `k_t` ramps in by 1/16 a drawn frame after the freeze, `k_px` is a
+  smoothstep of the prop's projected height from 0.75 to 1.5 px.  A prop
+  behind the eye, faded to 0 or wholly off the 3D view (its centre
+  projected through the last frame's projection matrix, with a 1.2x
+  height radius) gets no node.
+- **Log.**  `FE2_PROPS_LOG=1` prints one line a freeze: the port, its
+  scale, the flat shapes (green), the boxes, the candidates and the props
+  placed.  Nothing else is logged.
+- **Bounds.**  Reads ST memory only, never writes it.  No game RNG, no
+  wall clock in any decision.
+- **Switches.**  `--props` turns it on.  It is off whenever the 3D view is
+  not the HD GL view: `--old-renderer`, `--classic-ui`, `--pixel-art`,
+  `--flat-hulls` (also when the hull cycle reaches flat), and
+  `--flat-props` always wins.
 
 ### Constants
 
 | name | value | what |
 |---|---|---|
-| `STOREY` | 16384 | model units a storey |
-| `PROPS_CELL` | 3 storeys | placement lattice |
-| `FLAT` | 1/8 storey | a ground shape's y-range under this is flat |
-| `CLOUD` | 16 storeys | above `y_g`: cloud, not port |
-| `WINDOW` | 8 frames | census before the freeze |
-| `Rc` | 1.15 x max distance | clear disc radius |
-| annulus | 1.15 .. 2.5 `Rc` | where props may stand |
-| noise | value noise > 0.45, lattice / 3 | clusters and clearings |
-| `NPROPS` | 200 | per port, nearest kept |
-| boxes | 32 | water, hills, terrain |
-| `F0`, `F1` | 3, 6 `Rc` | `k_eye` full .. gone |
-| `k_px` | 0.75 .. 1.5 px | projected height |
-| `RAMP` | 1/16 a frame | `k_t` |
-| ambient | .18 + .17 day | lighting |
-| variants | terran 70 / 30 pine / shrub; ice 50 / 50 | |
+| `STOREY` | 16384 | model units a storey of the port's buildings |
+| `CELL` | 3 storeys | placement lattice |
+| `MARGIN` | 2 storeys | clearance from roads, apron, pads, buildings |
+| `FLAT` | 1/8 storey | a flat shape's y-range is under this |
+| `CLOUD` | 16 storeys | lowest point above this: a cloud, not port |
+| `ZK` | 0.141 | engine node z per unit of view depth |
+| `WINDOW` | 8 | drawn frames measured before the freeze |
+| `NPROPS` | 200 | props kept, nearest the port's centre |
+
+### Measured (2026-11-03, 1600x1200)
+
+| route | port | scale (h10, s) | flat shapes (green) | boxes | candidates | placed |
+|---|---|---|---|---|---|---|
+| `p2-landed.drv` | `$60` terran | 18, 18 | 179 (49) | 199 | 315 | 200 |
+| `p2-landed-ice.drv` | `$62` ice | 16, 16 | 34 (11) | 206 | 437 | 200 |
+
+- **Seen.**  In the external view (the third shot; the front and rear
+  shots show the HD hangar backdrop, which hides the 3D view).  Terran:
+  pines stand on the green beyond the pad, right of the billboard, clear
+  of the apron and the roads.  Ice: sparse spires stand on the lawns
+  between and in front of the buildings.  Neither route has a prop on the
+  pad.
+- **Default unchanged.**  Without `--props`, all three shots of both
+  routes are pixel-identical to the base below the title bar (0 px of
+  1 920 000 each); with `--props` added to `--old-renderer`,
+  `--classic-ui`, `--pixel-art` or `--flat-hulls`, the land route's
+  shots are identical to the same flag without it.
+- **Oracle.**  The route tape ends on the reference line with and
+  without `--props`.
+- **Cost.**  Timed with a throwaway `clock_gettime` patch (not in the
+  tree) over 256-frame windows on both routes: the props' CPU time (write
+  and nodes, plus drawing) is 0.02-0.10 ms a frame with 24-136 nodes, the
+  worst window 0.102 ms (write 7 us, draw 95 us, 52 nodes).  Before the
+  off-screen cull and with GL state saved by `glPushAttrib`, drawing alone
+  took up to 0.43 ms; the cull and four `glIsEnabled` reads replaced it.
+  The 3D view is still drawn under the hangar backdrop, so the props cost
+  the same in the front and rear views, where they cannot be seen.
+
+The white puffs above the terran port's horizon are the port's clouds:
+their lowest point is far above `CLOUD`, so the census leaves them out.
+They are not snow caps on the hills, and props never test against them.
 
 ### Asset ledger
 
-All Claude-authored in `src/props.c` (`kit[]`): 14 rows of frusta (sides,
-bottom and top radius, bottom and top height in storeys, x offset, lean,
-rgb444), built into triangles at first use, at most 32 a variant.
+All six variants are Claude-authored rows in `src/props.c` (`kit[]`):
+frusta of 4-6 sides with radii, heights and offsets in storeys, a lean
+about z, and an rgb444 albedo per part.  No binary assets.  Author:
+Claude.  Date: 2026-11-03.
 
-| variant | rows | triangles |
-|---|---|---|
-| pine A, pine B | trunk (4-sided), two 6-sided tiers | 28 each |
-| shrub A, shrub B | 6-sided bicone | 12 each |
-| spire A, spire B | 5-sided cone and a leaning 4-sided shard | 14 each |
+| variant | parts | albedo (rgb444) | design prompt |
+|---|---|---|---|
+| 0 pine A | trunk, lower tier, upper tier | `642`, `262`, `373` | a stylised conifer in two stacked hexagonal cones on a short brown trunk, about 3.4 storeys tall |
+| 1 pine B | trunk, lower tier, upper tier | `532`, `253`, `364` | a slimmer, bluer twin of pine A, about 3 storeys tall, so a stand does not look cloned |
+| 2 shrub A | bicone halves | `463`, `473` | a low rounded bush, a hexagonal bicone 0.6 storey tall, lighter on top |
+| 3 shrub B | bicone halves | `552`, `562` | an olive bush like shrub A for variety on the same lawns |
+| 4 ice spire A | cone, leaning shard | `cdf`, `bcf` | a pale blue-white ice spike 2.2 storeys tall with a smaller shard leaning off its foot |
+| 5 ice spire B | cone, leaning shard | `def`, `ace` | a shorter (1.6 storeys) ice spike with a shard leaning the other way |
 
-No game data, no external asset.
+### Not done
 
-### The stop
-
-Props stand only on flat ground the port itself draws.  The ground past
-the port (the green land and the hills seen from the pad) is drawn by
-the planet block, which this slice does not read, and the port's own flat
-ground ends inside the disc on both routes.  Ways on, for a decision:
-(a) stand props on the planet block's ground at `y_g` beyond the disc,
-which needs that block's height (out of scope here); (b) let them stand
-on the port's own green squares between buildings, with building boxes;
-(c) define `Rc` from a percentile of the solids rather than the farthest;
-(d) use the ice route's companion terrain.
-
-**Ground-height limit.**  Props stand at one height, `y_g`, the plane of
-the port's largest flat area.  They are never placed on a hill, slope,
-lake, water or the planet's own terrain, and do not follow the curve of
-the world; beyond about 2.5 `Rc` the ground falls away below `y_g` and
-props would float, which is why the annulus stops there.
-
-- **Not done.**  Any prop drawn; captures of props, the fade and the
-  climb; frame-time comparison against the base build.
+- No approach frame: the landed routes stay landed, and no drive script
+  in this tree yet climbs from a surface pad.
+- Placement is on green ground only; a port with no green flat ground
+  gets no props (the freeze line says so).

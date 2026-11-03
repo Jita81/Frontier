@@ -1306,7 +1306,7 @@ static int num_subtrees;
 /* the tree Nu_InsertZNode sorts into */
 static struct ZNode **cur_ztree = &znode_start;
 static struct ZNode **ztree_stack[MAX_ZTREE_DEPTH];
-#define prop_put(f, n, s) props_put (f, n, s, znode_cur ? znode_cur->z : 0, (void *) cur_ztree)	/* props.c */
+#define prop_put(f, n, s) props_put (f, n, s, (void *) cur_ztree)	/* props.c */
 static int ztree_depth;
 /* the engine's head for each level; ztree_heads[ztree_depth] is the current */
 static unsigned int ztree_heads[MAX_ZTREE_DEPTH + 1];
@@ -1391,7 +1391,7 @@ void Nu_3DViewInit ()
 	scene_overflow = 0;
 	hull_latch ();
 	shadow_tree = NULL, shadows_begin (use_renderer == R_GL && !classic_ui && !pixel_art);
-	props_begin (use_renderer == R_GL && !classic_ui && !pixel_art);
+	props_begin (use_renderer == R_GL && !classic_ui && !pixel_art && !flat_hulls);
 }
 
 static void lighting_on (float light_vec[4], int rgb444_light_col, int rgb444_extra_col, int rgb444_obj_col)
@@ -6800,8 +6800,8 @@ void Nu_DrawScreen ()
 	if (shadow_tree && shadow_z + 1) { unsigned char *d = add_detached_node (shadow_tree, shadow_z + 1, 4 + SHADOW_BYTES);
 		if (d) *(int *) d = shadows_write (d + 4) ? NU_SHADOW : NU_END; }	/* NU_END: an empty node */
 	shadow_tree = NULL;
-	{ int m = props_write (), k; void *t; unsigned int z;	/* props.c: a far and a near node */
-	  for (k = 0; k < 2; k++) if (m >> k & 1 && props_node (k, &t, &z)) { unsigned char *d = add_detached_node (t, z, 4 + PROPS_BYTES);
+	{ int m = props_write (), k; void *t; unsigned int z;	/* props.c: a node a prop */
+	  for (k = 0; k < m; k++) if (props_node (k, &t, &z)) { unsigned char *d = add_detached_node (t, z, 4 + PROPS_BYTES);
 		if (d) *(int *) d = NU_PROPS, *(int *) (d + 4) = k; } }
 	if (scene_overflow) {
 		/* S-6: the display lists are cut short somewhere: drop this
