@@ -79,5 +79,7 @@ int psurf_terran_temp (struct PSurf *s);
  * radius in radians in cr[i][3]. Returns how many. */
 int psurf_airless (struct PSurf *s);
 int psurf_craters (struct PSurf *s, double (*cr)[4], int max);
+/* W7 (worlds.c): 1 if the body is a gas giant (model word $92, $94 or $96). */
+int psurf_gas_giant (struct PSurf *s);
 
 #endif /* _PLANET_H */

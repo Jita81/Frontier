@@ -419,19 +419,36 @@ layer's code path unchanged.
 Host-side only: `Nu_PutTeardrop` / `Nu_DrawTeardrop` in `src/gl.c`, no
 shader, no new file.
 
-- **What is drawn.**  A ship's plume is two translucent fills of the
-  game's own Bezier teardrop (same control points, same 40 steps):
-  - Halo: the game's colour and outline, alpha 0.8 from a point on the
-    axis out to 85% of the way to the rim, then 0 at the rim (normal
-    blend), so the body keeps the game's width and only the edge is soft.
-  - Core: the outline scaled about the engine end, half as wide and 80% as
-    long, in the game's colour mixed 70% toward white, alpha 0.9,
-    additive.  It lies inside the halo, so nothing is drawn outside the
-    game's silhouette.
-  - Flicker: the core's length moves by up to +-8%, from a byte hashed
-    from the object's record and the game clock (A6+524 >> 12).  The same
-    frame draws the same in every run; it stands still while paused.  No
-    game RNG, no wall clock.
+- **What is drawn.**  A ship's plume is four translucent fills of the
+  game's own Bezier teardrop (same control points, same 40 steps), each the
+  outline scaled about the engine end by `s` along the axis and `w` across.
+  The outline is `x = 4t(1-t)` along and `3t(1-t)(1-2t)` across, so a layer
+  with `w <= sqrt(s)` stays inside it (checked numerically for each layer):
+  - Fringe (`s 1, w 1`): the game's outline in its colour deepened
+    (`0.75 c^2`), alpha 0.75, normal blend.
+  - Body (`s 0.8, w 0.75`): the game's colour, alpha 0.8, normal blend.
+  - Core (`w 0.45`): the colour mixed 70% toward white, alpha 0.9,
+    additive; its length `s` is 0.45 at idle to 0.8 at full burn.
+  - Nozzle spot (`s 0.2, w 0.4`): warm white (1, 0.9, 0.8), additive,
+    alpha 0.5 at idle to 0.9 at full burn.  A filled spot, no ring.
+  - Each layer is soft: alpha from a point on the axis out to 85% of the
+    way to its rim, 0 at the rim; and its alpha falls toward the pointed
+    tail (by 45% for the fringe, 35% the body, 20% the core), so the plume
+    is white-hot at the engine and cools to the deeper tone at the tail
+    while the outline keeps its full length.
+  - Thrust: `th = log2(length / half-width) / 3`, clamped to 0..1.  The
+    game draws the plume no wider than it is long and stretches it under
+    thrust: the ratio is about 1 at idle, about 3 on a short tap and about
+    8 at full burn (measured on the player's ship).
+  - Flicker: the core's length moves by +-3% at idle and +-12% at full
+    burn.  Two bytes are hashed from the object's record, the plume's place
+    among that record's plumes this frame (so twin engines flicker apart)
+    and two ticks of the game clock (A6+524 >> 12, about 4 frames at 1x),
+    now's and the next; the flicker is the blend between them by bits 4-11
+    of the clock, so it glides rather than jumps.  The same frame draws the
+    same in every run; it stands still while paused.  No game RNG, no wall
+    clock.  (The game itself moves the outline's length by about 2% a
+    frame, paused or not; that is the base look and is kept.)
   - Colour, blend, current and lighting state are pushed and popped.
 - **Which plumes.**  Decided at put time and carried as one extra znode
   long: `hull_model_key()` must name the game's own table and a model word
@@ -444,20 +461,31 @@ shader, no new file.
   its scenes and its credits.  Its flicker byte also hashes the part's
   word and the plume's order in the frame, since a scene's ships share
   one record, so two ships in one scene flicker apart.  The intro's
-  orange flames (144) keep the flat fill.  `--classic-ui`, `--flat-hulls`,
-  `--flat-fx` and `--pixel-*` keep the base intro.
+  orange flames (144) keep the flat fill.  The attract loop's small ships
+  (word `$48`, radius 9 to 12) take the HD path the same way.
+  `--classic-ui`, `--flat-hulls`, `--flat-fx` and `--pixel-*` keep the
+  base intro.
 - **Small plumes.**  The engine draws a plume whose projected radius is 8
   or less as a 3D line (fe2.s, the branch before the `$70` hostcall), so it
   never reaches the teardrop and keeps the game's look.
-- **Switches.**  `--flat-exhaust` puts a 0 and the draw takes the game's
-  path: frames byte-identical to the base build.  `--old-renderer` never
-  puts a teardrop, so it is unaffected.
-- **Not checked.**  Another ship's plume in flight; an in-game chimney
-  flare (the intro's flares were checked); missiles.  The intro's plumes
-  were checked on its idle tape (two plumes of one 86 ship, frame 8300;
-  86 ships in several scenes).  In flight the plume code does not test
-  `--flat-fx`, `--classic-ui` or `--pixel-art`; whether they should also
-  turn it off is open.
+- **Switches.**  `--flat-exhaust` or `--flat-fx` puts a 0 and the draw
+  takes the game's path: frames byte-identical to the base build.  The
+  plume follows the combat effects (lasers, missiles, explosions), which
+  only `--flat-fx` and their own `--flat-*` switch turn off, so
+  `--classic-ui` and `--pixel-art` keep it HD, as they keep the HD hulls
+  and effects; in the intro all of them keep the base look.
+  `--old-renderer` never puts a teardrop, so it is unaffected.
+- **Not checked.**  Another ship's plume in flight: none was found on the
+  tapes searched (this slice's flight tape, a 10x station wait, the
+  effects and explosion labs, the death-and-menu tape and the p2 routes);
+  only the player's twin plumes (Rear View) and the intro's ships drew a
+  teardrop, so the HD path for another hull in flight rests on the key
+  test alone.  An in-game chimney flare (the intro's flares were checked);
+  missiles.  The nozzle hot spot sits under the console in Rear View, so
+  it was checked on the intro's ships only.  At idle the player's plume is
+  off screen in Rear View.  Pause frames are not pixel-identical in base
+  either (the game moves the outline every frame); the flicker value was
+  checked frozen while paused.
 
 ## Contact shadows
 

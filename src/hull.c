@@ -137,6 +137,7 @@ static const struct {
 	{ 290, HC_HANGAR,	1.0f },	/* hangar interior part */
 	{ 294, HC_HANGAR,	1.0f },	/* hangar interior part */
 	{ 96,  HC_BUILDING,	1.0f },	/* surface port: its buildings, apron and sign boards */
+	{ 98,  HC_BUILDING,	1.0f },	/* airless port: towers, low blocks, domes */
 };
 #define HULL_NMODELS	(int) (sizeof hull_models / sizeof hull_models[0])
 
@@ -550,8 +551,9 @@ static void paint_panel (const struct Panel *pl, const struct HullProfile *pr, i
  * foot (gl.c, hull_storey_fit) is never cut mid-pane. One cladding for
  * the tile, concrete or metal from the seed, so a block reads as one
  * material and not a patchwork. HZ marks the glass for the shader (the
- * sky in it); a pane's tone (blinds, a lit room) is a hash of the seed,
- * never the game's. */
+ * sky in it) and carries a pane's tone (blinds, a lit room), a hash of
+ * the seed, never the game's, which the shader keeps near and evens out
+ * with distance. */
 static void paint_storeys (unsigned int seed)
 {
 	int sh = N / 4, pane = N / 16, g0 = (int) (0.40f * sh), g1 = (int) (0.88f * sh);
@@ -572,8 +574,9 @@ static void paint_storeys (unsigned int seed)
 			} else if (px < m || sy < g0 + m || sy >= g1 - m) {	/* frame */
 				Hh[i] = -0.4f; AL[i] = 0.7f; GS[i] = 0.6f;
 			} else {					/* glass */
-				Hh[i] = -1.4f; AL[i] = 0.42f + 0.05f * (h & 3) + ((h & 15) == 0 ? 0.12f : 0);
-				GS[i] = 0.95f; HZ[i] = 1;
+				Hh[i] = -1.4f; AL[i] = 0.5f;
+				GS[i] = 0.95f;
+				HZ[i] = 0.4f + 0.1f * (h & 3) + ((h & 15) == 0 ? 0.24f : 0);
 			}
 		}
 }
