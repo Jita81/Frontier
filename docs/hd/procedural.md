@@ -370,7 +370,8 @@ shader, no new file.
   puts a teardrop, so it is unaffected.
 - **Not checked.**  Another ship's plume in flight; an in-game chimney
   flare (the intro's flares were checked); missiles.  The intro's plumes
-  were checked on its idle tape (two 86 ships in one scene, frame 8300).  The plume code does not test
+  were checked on its idle tape (two plumes of one 86 ship, frame 8300;
+  86 ships in several scenes).  In flight the plume code does not test
   `--flat-fx`, `--classic-ui` or `--pixel-art`; whether they should also
   turn it off is open.
 

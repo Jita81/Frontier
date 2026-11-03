@@ -342,15 +342,16 @@ after the table for a part of record N.
   `hull_intro_fx_part` (`gl.c`): the part word in the scenes and also in
   record 72 (the credits and the start menu), whose parts are the scenes'
   words while its plating keeps the record's key. Every word below was
-  found by logging each line, teardrop, blob and circle put with its
-  record and part word (kit `fxid.py`, `ids.md` in the run's notes).
+  found by logging each line, teardrop, blob and circle put on the idle
+  intro with its record, part word and colour (a scratch logger, not in
+  the tree).
 
 | intro word | what | HD path |
 |---|---|---|
 | 214 | the hypercloud's discs (blue) | the game's hypercloud glow (`hyper_tag`, `BLOB_HYPER`); in the scenes since #65, in record 72 new |
 | 94 | an orange cloud a ship leaves | the hypercloud glow |
 | 96 | a pale cloud a ship comes out of | the hypercloud glow |
-| 114, 116 | the fireball's circles, in a scene and in the credits | the explosion fireball (`fx.c`, `I_FIRE`, as model 188) |
+| 114, 116 | the fireball's circles, in a scene and in the credits | the explosion fireball (`fx.c`, `put_model`, as model 188) |
 | 80, 92, 132 | red beams (ground and space) | a red pulse laser, look 1: travelling bolts with a muzzle glow in the beam's colour (`fx_laser_line`) |
 | 86's plumes | the green ship's engines | the HD plume (halo, white core, flicker; `exhaust_intro`) |
 
@@ -364,9 +365,10 @@ after the table for a part of record N.
   not a ship's engine), the red beams with no part word in records 56 and
   68 (part -1, the record's own model), 126's circles beside the fireball
   and the lines and circles not listed above.
-- **Clock:** in the intro (bit 5 of 598(a6) set and not `--flat-fx`)
-  fx's clock is 20 ms per drawn 3D frame, not the wall clock, so a
-  fireball's age and a bolt's travel are the same in every run.
+- **Clock:** in the intro (bit 5 of 598(a6) set, not the death camera's
+  state `$58` at 704(a6), and not `--flat-fx`) fx's clock is 20 ms per
+  drawn 3D frame, not the wall clock, so a fireball's age and a bolt's
+  travel are the same in every run.
 - **Off:** `--classic-ui`, `--flat-hulls`, `--flat-fx`, `--pixel-*`
   (`hull_intro_base`: a scene's key is then its record's, as in the base,
   never marked `HULL_TAB_SCENE`, so the rows above are not reached and
@@ -374,10 +376,15 @@ after the table for a part of record N.
 - **Lights:** #57's halo tests the record's key (`hull_record_key`), as in
   the base, so a part whose word is in the stars' range keeps its halo.
 - **Gate:** `fx.c`'s `put_model` tests the intro first (bit 5 of 598(a6)
-  set and `hull_intro_fx` FIRE or LASER for `hull_intro_fx_part`), then the flight and death-camera
-  gate, so the intro does not depend on 42(a6) and a death-camera record is
-  never read as an intro part. The fireball takes the explosions' layered
-  look (weapons.md).
+  set and `hull_intro_fx` FIRE, or LASER in an intro frame, for
+  `hull_intro_fx_part`); any other part falls through to the flight and
+  death-camera gate, as in the base, so the intro does not depend on
+  42(a6) and the death camera (bit 5 set too, but the game's table, so no
+  intro part) keeps its blasts and smoke. The intro frame is latched in
+  `fx_frame_begin` (bit 5 set and 704(a6) not `$58`), never re-read at
+  draw time; the game data pointer cannot latch it, as it names the
+  intro's table only while a model is drawn. The fireball takes the
+  explosions' layered look (weapons.md).
 - **No carry-over:** a fireball is drawn from its circle at once and a
   beam's bolt and glow live 90 ms of the intro's clock, and a change of
   scene empties fx's ring; on the newgame tape no pixel of the first

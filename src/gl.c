@@ -1999,7 +1999,7 @@ extern int flat_exhaust;	/* --flat-exhaust (main.c) */
  * the intro too), so a frame draws the same in every run; in the intro by
  * the part and its plume's place in the frame as well, as a scene's ships
  * share its record. */
-static unsigned int hull_frame_no;
+static unsigned int hull_frame_no;	/* the engine's frames, for hull_anim_bind and the plumes */
 static unsigned int exhaust_intro (void)
 {
 	static unsigned int frame, order;
@@ -2657,7 +2657,6 @@ struct HullCtx {
 /* this frame's triangles and quads carry a HullCtx: 1 for styles 0 to 4,
  * 2 for style 5 (with the face in the model's frame) */
 static int hull_ctx;
-static unsigned int hull_frame_no;	/* the engine's frames, for hull_anim_bind */
 static int hull_logging = -1;
 
 static int hull_log_on (void)
@@ -2744,12 +2743,12 @@ unsigned int hull_intro_part (void)
  * the record's key for the plating */
 unsigned int hull_intro_fx_part (void)
 {
-	unsigned int key = hull_record_key (), r = key & 0xffff;
+	unsigned int key = hull_record_key ();
 	int w;
 
-	if (!(key & HULL_TAB_INTRO) || hull_intro_base () || (r != 72 && !HULL_INTRO_SCENE (r)))
-		return 0;
-	return (w = hull_part_word (key)) > 0 ? w : 0;
+	if (!(key & HULL_TAB_INTRO) || hull_intro_base ()) return 0;
+	if (HULL_INTRO_SCENE (key & 0xffff)) return hull_intro_part ();
+	return (key & 0xffff) == 72 && (w = hull_part_word (key | HULL_TAB_SCENE)) >= 0 ? w : 0;
 }
 
 static int hull_model_unit (unsigned int key);

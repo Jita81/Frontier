@@ -57,6 +57,7 @@ static int in_flight (void) { return !(rb (A6 + A6_START_FLAGS) & 0x20) && (sign
 #define A6_STATE	704
 static int intro_fire;	/* put_model's last tag was the intro's fireball */
 static int intro_look = -1;	/* its last was an intro laser's beam: its look, else -1 */
+static int intro_on;		/* this frame is the intro's (latched in fx_frame_begin) */
 static int put_model (unsigned int *rec)
 {
 	unsigned int a6 = GetReg (REG_A6);
@@ -69,8 +70,8 @@ static int put_model (unsigned int *rec)
 	if (rb (A6 + A6_START_FLAGS) & 0x20) {
 		fx = hull_intro_fx (hull_intro_fx_part (), &look);
 		if (fx == HULL_FX_FIRE) return (intro_fire = readable (*rec, 256)) ? M_EXPL : 0;
-		return fx == HULL_FX_LASER ? (intro_look = look, M_LASER) : 0;
-	}
+		if (fx == HULL_FX_LASER && intro_on) return intro_look = look, M_LASER;
+	}	/* else as the base: the death camera's blasts and smoke, below */
 	if ((signed char) rb (A6 + A6_TOOLS_MODE) >= 0) return 0;
 	m = readable (*rec, 256) ? STMemory_ReadWord (*rec + OBJ_MODEL) & 0xffff : 0;
 	return in_flight () || ((m == M_EXPL || m == M_SMOKE) && rb (A6 + A6_STATE) == 0x58) ? m : 0;
@@ -201,7 +202,6 @@ static struct effect *effect_new (const float *p, const float *b, int t, float s
 /* a new screen or view: nothing from the last one stays */
 #define SCENE_INTRO	0x1000	/* the intro's, latched at its frame's start */
 static int scene = -1;		/* 0 none, SCENE_INTRO, else 1 + the flight view */
-static int intro_on;		/* this frame is the intro's (bit 5 of 598(a6)) */
 static void check_scene (void)
 {
 	int now = in_flight () ? 1 + rb (A6 + A6_VIEW) : intro_on ? SCENE_INTRO : 0;
@@ -241,7 +241,9 @@ void fx_frame_begin (void)
 	drew_3d = 1;
 	for (n_mprev = 0; n_mprev < n_missiles; n_mprev++) memcpy (mprev[n_mprev], missiles[n_mprev].v[0], sizeof mprev[0]);
 	n_missiles = n_smoke = n_balls = n_mrot = 0;
-	intro_on = !flat_fx && (rb (A6 + A6_START_FLAGS) & 0x20);
+	/* the intro and start menu (bit 5 of 598(a6)), not the death camera's
+	 * (also bit 5; its state 0x58); the game data pointer is the game's here */
+	intro_on = !flat_fx && (rb (A6 + A6_START_FLAGS) & 0x20) && rb (A6 + A6_STATE) != 0x58;
 	check_scene ();
 	if (STMemory_ReadLong (A6 + A6_TIME_RATE) != 0) fx_wall += d > 50 ? 50 : d;
 	/* the intro's time is its frames', so its replays draw the same */
