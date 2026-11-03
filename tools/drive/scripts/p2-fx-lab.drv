@@ -1,0 +1,242 @@
+# p2-fx-lab.drv - C1 combat FX lab: a fight at the start station, held in view.
+#
+# Verifies: C1 every HD combat effect on screen in one fight: laser beams,
+#         muzzle blooms, hit flares, fireballs, smoke and debris.
+# Run:  record once (docs/hd/weapons.md, Combat FX lab), then replay the
+#       tape to capture frames; the tape lives outside git.
+# Expect: launch, turn about to face the station, close in to about 1.5 km
+#         and stop; then pulses of the front laser on the station (hit
+#         flares) bring out its ships, and ships blow up 0.5-1.5 km ahead
+#         while the view stays forward on the fight.
+# Start 3 (docked), new game only, no purchase. The front view stays on.
+wait 6000
+key space
+wait 2000
+key 3
+wait 11000
+mouse 57 193
+wait 300
+click 200
+wait 1500
+mouse 130 19
+wait 300
+click 200
+wait 31000
+mouse 160 100
+keydown rshift
+wait 3000
+keyup rshift
+wait 500
+press right
+move 8 0 100 20
+release right
+wait 800
+press right
+move 8 0 10 20
+release right
+wait 800
+press right
+move 8 0 10 20
+release right
+wait 800
+press right
+move 8 0 10 20
+release right
+wait 800
+press right
+move 8 0 10 20
+release right
+wait 800
+press right
+move 8 0 10 20
+release right
+wait 800
+press right
+move 8 0 10 20
+release right
+wait 800
+press right
+move 8 0 10 20
+release right
+wait 800
+press right
+move 8 0 10 20
+release right
+wait 800
+press right
+move 8 0 10 20
+release right
+wait 800
+keydown return
+wait 1500
+keyup return
+wait 6000
+keydown rshift
+wait 3000
+keyup rshift
+wait 2000
+press right
+move 18 0 5 20
+release right
+wait 1500
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+keydown space
+wait 2000
+keyup space
+wait 1000
+quit
