@@ -1,0 +1,67 @@
+# p2-sunglow.drv - Phase 2 tour: the sun seen from low flight in a planet's air.
+#
+# Verifies: W15 the sun's glow in the air: a soft glow in the air's colour
+#           round the sun's disc (the disc itself unchanged), wider and
+#           warmer with the sun low, smaller with it high; steady through
+#           lift-off (no pop).  Base shows the hard disc throughout.
+# Run:  tools/p2shots --routes sunglow --base BASE --branch BRANCH
+#       (--flags=--flat-sunglow: the branch without the glow, as base)
+# Expect: 01-03 lifting off from the pad, the rear view pitched up to the
+#         morning sun (about 17 degrees up), a few seconds apart; 04 an
+#         hour on at 1000x, the sun higher (about 32 degrees).
+# Each shot pauses the game (Esc) and resumes it at 1x (Shift+F1); the
+# pointer is parked off the controls so no hover tip is drawn.
+
+wait 6000
+key space
+wait 2000
+key 2             # start position 2: landed at a surface port with an atmosphere
+wait 11000
+mouse 57 193      # comms, then the launch request
+wait 300
+click 200
+wait 2500
+mouse 171 57
+wait 300
+click 200
+wait 3000
+mouse 263 193
+wait 300
+click 200
+wait 500
+mouse 8 193       # the view icon: the rear view
+wait 300
+click
+wait 300
+mouse 2 120
+press right       # look up to the sun
+move 0 -6 10 20
+release right
+wait 300
+sdlkey esc
+wait 600
+shot 01-liftoff
+sdlkey f1 shift
+wait 3000
+sdlkey esc
+wait 600
+shot 02-climb
+sdlkey f1 shift
+wait 8000
+sdlkey esc
+wait 600
+shot 03-hover
+sdlkey f1 shift
+wait 300
+sdlkey f4 shift   # 1000x: an hour passes, the sun climbs
+wait 6000
+sdlkey f1 shift
+press right       # after it, up and round
+move 3 -3 10 20
+release right
+wait 1500
+sdlkey esc
+wait 600
+shot 04-high-sun
+sdlkey f1 shift
+quit

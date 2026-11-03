@@ -254,6 +254,8 @@ Models (`hull_models[]`, by the whole type word and its table;
 | 88 | large cross-armed orbital station, its slot tunnel too | station |
 | 288, 290, 294 | hangar interior and its parts | hangar |
 | 96 | a surface port: its buildings, apron, roads and signs | building (walls only, see below) |
+| 18 | escape capsule | capsule (see Small objects) |
+| 184 | jettisoned cargo canister | cargo (see Small objects) |
 
 A ship's panel scale puts one to one and a half tiles across its biggest
 face, measured in the shipyard's view (the Viper's biggest face is some
@@ -614,6 +616,78 @@ from ship to ship and stay put on the hull.
   for base, so there it is within that variance too. `--flat-hulls` draws
   no plating at all, so no wear either (in the landed route its 3D view
   was bit for bit slice 1's `--flat-hulls`).
+
+## Small objects (B10, slice 1b)
+
+The jettisoned cargo canister (word 184) and the escape capsule (word 18)
+are listed in `hull_models[]` at x1, each with a class of its own.
+
+- **What the game draws.** Close up, the canister's body is no polygon but
+  a cylinder: `Nu_PutCylinder` and `Nu_DrawCylinder` in `gl.c`, two discs
+  and a tube of 20 slices (`gluCylinder`), fixed-function lit. Face
+  plating never reached it, so the hook is the cylinder itself.
+- **The hook.** `Nu_PutCylinder` adds the model's context to the znode
+  stream after the cylinder's own words: with style 5 (`hull_ctx` 2) the
+  complex-shape context (`hull_put_cctx`: key, object seed, light, model
+  frame); with styles 0 to 4 (`hull_ctx` 1) the model key and the light.
+  `Nu_DrawCylinder` reads it back. Only when the key's class is `cargo`
+  or `capsule`, in the GL renderer, is the side drawn by `cyl_side`
+  instead: the same 20 slices as explicit quads through `hull_paint`, so
+  they take the class's plating in the model's own frame
+  (`w = M(v - o)`, as a complex shape's faces): the plates are fixed to
+  the object and turn with it. The caps are drawn as before (`gluDisk`,
+  not plated). Every other cylinder user reads the extra words and then
+  makes exactly the GL calls it made before.
+- **The light.** `cyl_side` lights each slice edge as GL's fixed function
+  lit the tube (ambient 0.2 of the colour, diffuse 0.8 of the light,
+  GL's 0.04 global ambient, the game's integer colours as GL maps them),
+  so the side keeps base's shading and mean colour; the plating then
+  modulates it as on any face. GL's light, normal, current colour and
+  `hull_chain` are left as base's side left them.
+- **The classes.** `cargo` (profile `HP_CARGO`): big plates, banded on most
+  plates (0.75), no hatches. `capsule` (`HP_CAPSULE`): hatches on most
+  plates big enough for one, deep grooves, heavy wear, less sheen. Neither
+  has a tile; each bakes its profile in code, as the building class does.
+  Both sit before `HC_STATION` in the enum (not buildings), and their rows
+  in `hull_classes[]` sit in the same place (the array is positional).
+- **The bake.** The two classes bake at 256x256, not the 512 of the other
+  seeded classes: a texel per model unit at panel 256, about one to two
+  screen pixels per texel at the closest view, and a quarter of the work.
+  With style 5 they are made with the station class, inside that load
+  hitch (`hull_begin5`), so a canister's first sight in flight bakes
+  nothing (`FE2_HULL_LOG=1`, load about 15: station 102 ms, then cargo
+  5 ms and capsule 4 ms in the same frame; at the jettison, no bake). A
+  game that never makes the station class makes them lazily, as any class
+  (cargo alone measured 8 ms at 256 under load, 13 to 23 ms at 512).
+  The bands and the capsule's "darker" are tone only: plating keeps a
+  face's mean brightness at the game's colour, as on every class, so no
+  new colour (no yellow and black) is added.
+- **The scale, measured.** With a cylinder log on the jettison route the
+  canister's cylinder has radius about 51 and length about 202 model
+  units. A panel of 256 units puts some 1.6 to 2.6 plates along it and
+  two to three across its face. The capsule was not reached (below), so
+  its 256 is not measured.
+- **Near and far.** One key and one class at every level of detail: the
+  faces the game draws for a canister further off go through `hull_paint`
+  with the same key as the close cylinder's side, and the style-5 shader
+  fades the plating to the face's own colour on both once a texel is
+  smaller than a pixel, so the tone does not jump when the game swaps
+  levels (by construction; no capture of the swap).
+- **The capsule.** No drive route reaches one: none was found to launch
+  from the start ship, and none was met in the routes. It is listed so that one met
+  later is plated, but no capture shows it.
+- **Other cylinder users.** Logged on the routes run (a cylinder log
+  build, not committed): models 32, 52 and 58 (ships' parts), 184 (the
+  canister) and the intro's 72. Only 18 and 184 change: the landed route,
+  which draws 32, 58 and the intro's 72, gave base-identical frames.
+- **Route.** `tools/drive/scripts/p2-jettison.drv` jettisons a canister,
+  pauses, turns the external view on it and zooms one step: the canister
+  side-on some 20 to 25 m from the eye, about 230 px tall at 1600x1200.
+- **Off.** `--flat-hulls` and `--old-renderer` give `hull_ctx` 0: nothing
+  extra is written or read and the side is `gluCylinder` as before.
+  `--classic-ui` and the `--pixel-*` modes follow the ships: the far
+  faces go through `hull_paint`, which does not test them, so the close
+  side does not either, and near and far agree under every flag.
 
 ## Switches
 

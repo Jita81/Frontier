@@ -1375,6 +1375,16 @@ void Nu_3DViewInit ()
 	obj_data_pos = 0;
 	detached_pos = 0;
 	procfx_sky_seen = 0;
+	/* the sun's glow eases toward what the last view put; with its planet
+	 * out of sight it holds while the game's sky is lit, else goes, so
+	 * turning from the planet never pops it */
+	{
+		struct procfx_sunglow *g = &procfx_sunglow;
+		float aim = g->dr ? g->aim : MainRGBPalette[fe2_bgcol] & 0xffffff ? g->w : 0;
+
+		g->w += fmaxf (-0.04f, fminf (0.04f, aim - g->w));
+		g->dr = 0;
+	}
 
 	//add_node (&znode_start, 0);
 	znode_start = NULL;
@@ -2551,7 +2561,9 @@ static void hull_make_class (int cls, int shader)
 	int tiled = lum != NULL;
 	Uint32 t = SDL_GetTicks ();
 
-	if (!lum) n = 512;
+	/* B10's small objects: a quarter of the bake (a texel per model unit at
+	 * panel 256), so the first sight of a canister costs no dropped frame */
+	if (!lum) n = cls == HC_CARGO || cls == HC_CAPSULE ? 256 : 512;
 	buf = malloc ((size_t) n * n * 8);
 	if (!buf) {
 		free (lum);
@@ -3596,10 +3608,16 @@ static void hull_begin_shader (int prof, int level, int calm)
 static int hull_begin5 (int cls, int calm)
 {
 	const struct HullClass *c = &hull_classes[cls];
-	int cur = 1000 + cls * 2 + calm;
+	int cur = 1000 + cls * 2 + calm, k;
 
 	if (hull_on == 2 && hull_cur == cur) return 1;
-	if (!hull_cls[cls].t[0] && !hull_cls[cls].failed) hull_make_class (cls, 1);
+	if (!hull_cls[cls].t[0] && !hull_cls[cls].failed) {
+		hull_make_class (cls, 1);
+		/* B10: the small objects' maps made in the port's load hitch, not
+		 * mid-flight at a canister's first sight (else lazily, as any) */
+		for (k = HC_CARGO; cls == HC_STATION && k <= HC_CAPSULE; k++)
+			if (!hull_cls[k].t[0] && !hull_cls[k].failed) hull_make_class (k, 1);
+	}
 	if (!hull_cls[cls].t[0]) return 0;
 	if (hull_on == 1) hull_end ();
 	glUseProgram (hull_prog5);
@@ -4055,7 +4073,7 @@ static int hull_paint (double p[][3], int n, int have_ctx, const struct HullCtx 
 	hull_gnd[0] = hull_gnd[1] = hull_gnd[2] = hull_gnd[3] = 0;
 	/* the plating belongs to the ships and stations listed in
 	 * hull_models[]: anything else (the intro's titles and banners,
-	 * text, planets, buildings, missiles, debris, cargo) is drawn flat,
+	 * text, planets, buildings, missiles, debris) is drawn flat,
 	 * as with --flat-hulls */
 	if (flat_hulls || fx_tagged () || !have_ctx || !hull_key_listed (cx->key)) {
 		hull_end ();
@@ -5941,6 +5959,21 @@ void Nu_PutPlanet ()
 			air = STMemory_ReadWord (q + 4) & 0xfff;
 	}
 	cloud_look (mw, air >= 0, air, p.seed, p.cl_cover, p.cl_tint);
+	/* the sun's glow down in the air: the nearest planet's, the sun's
+	 * height over its horizon (light comes from -light, up is -centre) */
+	{
+		struct procfx_sunglow *g = &procfx_sunglow;
+		double d = sqrt (pdot (p.centre, p.centre)), dr = p.R > 0 ? d / p.R : 0;
+		double l = sqrt (pdot (p.light, p.light));
+
+		if (dr > 0 && l > 0 && (!g->dr || dr < g->dr)) {
+			g->dr = dr;
+			g->aim = air < 0 ? 0 : 1 - planet_ramp (1.02, PLANET_SKY_RATIO, dr);
+			g->y = pdot (p.light, p.centre) / (l * d);
+			for (i = 0; i < 3; i++)
+				g->air[i] = (air < 0 ? 0 : air >> (8 - 4*i) & 15) / 15.0f;
+		}
+	}
 
 	znode_wrlong (NU_PLANET);
 	/* S-7: through the checked writer */
@@ -6267,6 +6300,69 @@ void Nu_DrawCircle (void **data)
 			 hyper & 0xffff, (short) dreg2, size / (halo_k * -v1[2]), r & 255, g & 255, b & 255, -v1[2], halo);
 }
 
+/*
+ * B10: the side of a small object's cylinder (the canister, the capsule:
+ * hull_models' HC_CARGO and HC_CAPSULE) as the 20 slices gluCylinder
+ * draws, each an explicit quad through hull_paint so it takes its class's
+ * plating in the model's frame, lit per vertex as GL lit base's (the light
+ * set in the cylinder's own frame, GL's default material). m: that frame.
+ */
+static void cyl_side (const double m[16], int rad1, int rad2, double h, const float lv[4],
+		      int lc, int ec, int oc, struct HullCtx *cx)
+{
+	double q[21][2][3], len = sqrt (h * h + (double) (rad1 - rad2) * (rad1 - rad2));
+	double lw = sqrt (lv[0] * lv[0] + lv[1] * lv[1] + lv[2] * lv[2]);
+	unsigned int l[3], o[3], e[3];
+	float col[21][3];
+	int i, j, k, t, unlit = oc & 0x100, chain = hull_chain;	/* hull_paint's, kept */
+	static const int ord[4] = { 0, 1, 3, 2 };
+
+	split_rgb444i (lc, &l[0], &l[1], &l[2]);
+	split_rgb444i (oc & ~0x110, &o[0], &o[1], &o[2]);	/* as lighting_on */
+	split_rgb444i (ec, &e[0], &e[1], &e[2]);
+	for (i = 0; i <= 20; i++) {
+		double sn = sin (2 * M_PI * i / 20), cs = cos (2 * M_PI * i / 20);
+		double nl[3] = { sn * h / len, cs * h / len, (rad1 - rad2) / len };
+		double d = (nl[0] * lv[0] + nl[1] * lv[1] + nl[2] * lv[2]) / (lw > 0 ? lw : 1);
+		for (k = 0; k < 3; k++) {	/* GL's int colours: signed, 2c+1 over 2^32-1 */
+			unsigned int ok = o[k] + (oc & 0x10 ? e[k] : 0);
+			double c = unlit ? ok / 4294967295.0 : 0.04 + (0.2 * (2.0 * (int) ok + 1) +
+				   0.8 * (d > 0 ? d : 0) * (2.0 * (int) l[k] + 1)) / 4294967295.0;
+			col[i][k] = c < 0 ? 0 : c > 1 ? 1 : c;
+		}
+		for (j = 0; j < 2; j++)
+			for (k = 0; k < 3; k++)
+				q[i][j][k] = m[12 + k] + (j ? rad2 : rad1) * (sn * m[k] + cs * m[4 + k]) + (j ? h : 0) * m[8 + k];
+	}
+	glEnable (GL_CULL_FACE);
+	for (i = 0; i < 20; i++) {
+		double p[4][3];
+		float st[4][2];
+		struct HullFrame hf;
+		int rgb[3], tex;
+
+		for (t = 0; t < 4; t++)	/* round the quad: low, high, high, low */
+			for (k = 0; k < 3; k++) p[t][k] = q[i + (t >> 1)][t == 1 || t == 2][k];
+		for (t = 0; cx->wok && t < 4; t++)	/* w = M (v - o), as hull_tess_vertex */
+			for (j = 0; j < 3; j++)
+				for (cx->w[t][j] = 0, k = 0; k < 3; k++)
+					cx->w[t][j] += hull_cc.M[3*j+k] * ((k == 2 ? -p[t][k] : p[t][k]) - hull_cc.o[k]);
+		for (k = 0; k < 3; k++) rgb[k] = (int) (127.5f * (col[i][k] + col[i + 1][k]));
+		cx->seed = hull_mix (cx->key + 0x5bd1e995u + i);
+		tex = hull_paint (p, 4, hull_ctx, cx, 0, rgb, st, &hf);
+		glBegin (GL_TRIANGLE_STRIP);
+		for (t = 0; t < 4; t++) {
+			if (tex == 1) glTexCoord2fv (st[ord[t]]); else if (tex == 2) hull_attr (&hf, ord[t]);
+			glColor3fv (col[i + (ord[t] >> 1)]);
+			glVertex3dv (p[ord[t]]);
+		}
+		glEnd ();
+	}
+	hull_end ();
+	hull_chain = chain;
+	glDisable (GL_CULL_FACE);
+}
+
 /* life is so strange */
 void Nu_PutCylinder ()
 {
@@ -6282,6 +6378,13 @@ void Nu_PutCylinder ()
 	znode_wrlong (GetReg (REG_D1));
 	znode_wrlong (GetReg (REG_D5));
 	znode_wrlong (GetReg (REG_D4));
+	if (hull_ctx == 1) {	/* B10: the model and light, for cyl_side */
+		short lt[3];
+		int k;
+		hull_read_light (lt);
+		znode_wrlong (hull_model_key ());
+		for (k = 0; k < 3; k++) znode_wrword (lt[k]);
+	} else hull_put_cctx ();	/* style 5: and the model's frame */
 	shadow_put (REG_A2, 2, MAX (GetReg (REG_D0) & 0xffff, GetReg (REG_D1) & 0xffff));
 }
 void Nu_DrawCylinder (void **data)
@@ -6290,8 +6393,9 @@ void Nu_DrawCylinder (void **data)
 	int v1[3], v2[3];
 	float vdiff[3];
 	int rad1, rad2;
-	int light_col, obj_col, extra_col;
-	float h;
+	int light_col, obj_col, extra_col, cap1, cap2, plate = 0, k;
+	float h, sc, off[2];
+	struct HullCtx cx = { 0 };
 
 	znode_rdvertexf (data, light_vec);
 	light_col = znode_rdlong (data);
@@ -6309,6 +6413,23 @@ void Nu_DrawCylinder (void **data)
 	
 	rad1 = znode_rdlong (data) & 0xffff;
 	rad2 = znode_rdlong (data) & 0xffff;
+	cap1 = znode_rdlong (data);
+	cap2 = znode_rdlong (data);
+	if (hull_ctx == 2) {
+		hull_rdcctx (data);
+		cx.key = hull_cc.key;
+		cx.oseed = hull_cc.oseed;
+		cx.wok = hull_cc_on;
+		memcpy (cx.light, hull_cc.light, sizeof cx.light);
+	} else if (hull_ctx) {
+		cx.key = znode_rdlong (data);
+		for (k = 0; k < 3; k++) cx.light[k] = znode_rdword (data);
+	}
+	if (hull_ctx && use_renderer == R_GL && hull_key_listed (cx.key) &&
+	    (hull_ctx == 1 || cx.wok)) {	/* as the far faces' hull_paint; else the base look */
+		k = hull_class_of_key (cx.key, &sc, off);
+		plate = k == HC_CARGO || k == HC_CAPSULE;
+	}
 	
 	glShadeModel (GL_SMOOTH);
 	
@@ -6318,14 +6439,30 @@ void Nu_DrawCylinder (void **data)
 	glRotatef (-RAD_2_DEG * asin (vdiff[1]/h), 1.0f, 0.0f, 0.0f);
 #define CYLINDER_POOP	20
 	
-	lighting_on (light_vec, light_col, extra_col, znode_rdlong (data));
+	lighting_on (light_vec, light_col, extra_col, cap1);
 	gluDisk (qobj, 0.0, rad1, CYLINDER_POOP, 1);
 	glTranslatef (0, 0, h);
 	
-	lighting_on (light_vec, light_col, extra_col, znode_rdlong (data));
+	lighting_on (light_vec, light_col, extra_col, cap2);
 	gluDisk (qobj, 0.0, rad2, CYLINDER_POOP, 1);
 	glTranslatef (0, 0, -h);
 	
+	if (plate) {	/* B10: the side plated, the caps as base's; GL's light, normal */
+		double m[16], len = sqrt (h * h + (rad1 - rad2) * (rad1 - rad2));
+		lighting_on (light_vec, light_col, extra_col, obj_col);	/* and colour left as */
+		glNormal3f (0, h / len, (rad1 - rad2) / len);		/* base's side leaves them */
+		glPushAttrib (GL_CURRENT_BIT);
+		glLoadIdentity ();
+		glTranslatef (v1[0], v1[1], v1[2]);
+		glRotatef (-RAD_2_DEG * (atan2 (vdiff[2], vdiff[0]) - M_PI/2), 0.0f, 1.0f, 0.0f);
+		glRotatef (-RAD_2_DEG * asin (vdiff[1]/h), 1.0f, 0.0f, 0.0f);
+		glGetDoublev (GL_MODELVIEW_MATRIX, m);
+		glPopMatrix ();
+		lighting_off ();
+		cyl_side (m, rad1, rad2, h, light_vec, light_col, extra_col, obj_col, &cx);
+		glPopAttrib ();
+		return;
+	}
 	glEnable (GL_CULL_FACE);
 	lighting_on (light_vec, light_col, extra_col, obj_col);
 	gluCylinder (qobj, rad1, rad2, h, CYLINDER_POOP, 1);
