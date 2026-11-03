@@ -5,15 +5,25 @@
  * as it does from an empty cache, read no freed map, and free nothing
  * twice when everything is forgotten (a video mode change).
  * Stubs stand in for planet.c: every code is land of a 288 K terran world.
+ * W12: then the same body as airless with one crater: its regolith and rays
+ * must be seeded (the same twice), change the look, keep the mean, and be
+ * off under --flat-biomes.
  */
 #include <stdio.h>
 #include <string.h>
 #include "../../src/planet.h"
 int flat_biomes = 0;
 static unsigned int seed = 1;
+static int airless;
 unsigned int psurf_seed (struct PSurf *s) { return seed; }
 int psurf_temperate (struct PSurf *s) { return 1; }
-int psurf_terran_temp (struct PSurf *s) { return 288; }
+int psurf_terran_temp (struct PSurf *s) { return airless ? -1 : 288; }
+int psurf_airless (struct PSurf *s) { return airless; }
+int psurf_craters (struct PSurf *s, double (*cr)[4], int max)
+{
+	cr[0][0] = cr[0][2] = 0.0; cr[0][1] = 1.0; cr[0][3] = 0.05;
+	return airless && max > 0;
+}
 int psurf_code_class (struct PSurf *s, int code) { return PS_LAND; }
 int psurf_raster (struct PSurf *s, const struct PPatch *p, unsigned char *codes) { return 1; }
 int psurf_classify (struct PSurf *s, const unsigned char *codes, int n, unsigned char *cls,
@@ -52,5 +62,26 @@ int main (void)
 	worlds_forget (NULL);
 	printf ("biomes: %d face maps then a landed patch: same as fresh, no stale map\n",
 		6 * (W_SLOTS / 6 + 1));
+
+	{
+		static unsigned char a[512 * 512 * 3];
+		double m0 = 0.0, m1 = 0.0;
+		int i;
+		airless = 1; flat_biomes = 1;
+		bake (1, 1.0, 512);
+		memcpy (ref, rgb, sizeof (a));
+		flat_biomes = 0;
+		bake (1, 1.0, 512);
+		memcpy (a, rgb, sizeof (a));
+		worlds_forget (NULL);
+		bake (1, 1.0, 512);
+		for (i = 0; i < 512 * 512 * 3; i++) m0 += ref[i], m1 += a[i];
+		if (memcmp (a, rgb, sizeof (a)) || !memcmp (a, ref, sizeof (a)) || fabs (m1 / m0 - 1.0) > 0.05) {
+			printf ("biomes: airless regolith not seeded, not drawn or off its mean (%.4f)\n", m1 / m0);
+			return 1;
+		}
+		printf ("biomes: airless face seeded, changed, mean x%.4f; flat is plain\n", m1 / m0);
+		worlds_forget (NULL);
+	}
 	return 0;
 }
