@@ -44,7 +44,7 @@ it.
 | 10, 12, 14, 16 | homing, smart, naval and nuclear missiles | a flame off the tail every frame the body is drawn: near-white nozzle, a flame in the type's hue, flicker; longer, wider and hotter from homing to nuclear (see Missiles) |
 | 188 | explosion circles | one layered fireball per blob, by age and size (see Explosions) |
 | 194 | smoke blobs | noise puffs that spread and thin with age |
-| 192 | shield hit | a translucent blue-cyan bubble round the hit ship, rim-lit, with a ripple, on the game's flash frames only (see Shield hits) |
+| 192 | shield hit | a translucent bubble round the hit ship in the circle's colour (pale at full shields, red when drained), rim-lit, with a ripple, on the game's flash frames only (see Shield hits) |
 | 200 | ECM pulse, energy bomb | one translucent shell round the ship that grows and fades over the countdown: ECM blue-white, the bomb a hotter white-orange with a second, brighter rim (see ECM and energy bomb) |
 
 ## Lasers
@@ -355,20 +355,34 @@ held on the ship gives a run of frames (probe runs of 15, 7, 5, 4, 3 and 2).
 The hull is not drawn on those frames, in base or here.
 
 `fx_tag_for` tags model 192 and `fx_circle` (`shield_hit`) skips the flat
-circle, keeping its centre and radius. The bubble is keyed by the ship's
-record, at most four at once; a run starts when the record was not seen on
-the last frame, and its start is on the game's clock. `fx_frame_end` draws
+circle, keeping its centre, radius and colour. The colour is the circle's
+own colour argument, which the game picks by the shields left: pale beige
+(192,192,128) with plenty left, through (192,160,64), (192,128,0) and
+(192,64,0) to red (192,0,0) and dark red (128,0,0) when nearly gone (seen
+at 62%, 46%, 21% and 1%: pale, orange, red, dark red). The bubble is
+keyed by the ship's record, at most four at once; a run starts when the
+record was not seen on the last frame, and its start is on the game's
+clock. `fx_frame_end` draws
 one bubble per hit ship, on the game's flash frames only, so it is in the
 same place at the same time as base and never lasts longer:
 
-- additive and camera-facing: a bright rim (the ECM shell's texture) round
-  a faint mottled haze (30% of the rim), soft blue-cyan;
+- camera-facing, drawn at the circle's depth and never eased or capped, so
+  the rim sits at 0.9 of the circle's radius at any range (`sprite`'s
+  half-view cap is not used: it would shrink a near bubble);
+- a mottled fill in the circle's colour (`T_FILL`, 60%), densest toward the
+  rim and thin in the middle, the view behind showing through; the game
+  draws no ship on these frames;
+- a rim in the same colour, added on top and lifted toward white by the
+  colour's brightness: a full shield's pale rim reads near white, a drained
+  shield's dark red rim is dim and barely lifted, so it reads as failing;
 - a ripple running out from the centre every 240 ms, its phase from the
   record and the slot, no random numbers and no wall clock;
-- brightest on a run's first frame, settling to half in about 150 ms;
-- brightness capped as a glow's is; the on-screen radius eased toward 60%
-  of the view's height, so a close hit is not a whiteout; faded out as the
-  camera comes within twice the bubble's radius.
+- brightest on a run's first frame, settling to half in about 150 ms, the
+  rim's brightness capped as a glow's is;
+- with the eye inside the bubble or within 1.2 of its radius, the same
+  layers drawn over the whole view (`screen_quad`, as the ECM shell does): a
+  tint in the shield's colour with its rim round the view's edge, never a
+  whiteout.
 
 Paused, the game keeps putting model 192 on every frame while a hit is
 pending (base holds its disc through the pause too); the bubble's clock
@@ -488,3 +502,28 @@ against base. `--old-renderer` is byte-identical to base; with `--classic-ui`
 and the `--pixel-*` flags the branch differs only on the flash frames, inside
 the 3D view. Time acceleration did not engage under attack (the game held
 1x), so 10x was not seen. The oracle is unchanged.
+
+Shield colour, size and fill (the follow-up to the first slice), on the same
+hit-scene tape at 1600x1200, base | first slice | branch | `--flat-shields`,
+frames with 62%, 21% and 1% shields left: the bubble takes the circle's
+pale, red and dark red; the rim peak is at 0.89-0.91 of base's disc radius
+(the disc's edge row by row, the projection being taller than wide) and the
+haze ends at the disc's edge, where the first slice's ring sat well inside
+it. Through the fill the view behind keeps 0.71-0.72 of its contrast from
+0.3 to 0.7 of the radius and 0.60 near the rim. Mean brightness of the 3D
+view: 154 against base's 161 at 62% (7% of pixels near white, on the rim),
+121 against 90 at 21%, 102 against 79 at 1%. Replays of this tape are not
+frame-exact even base against base (some 370 frames in eleven spans jitter
+by a frame); on every frame stable across three base replays,
+`--flat-shields` and `--flat-fx` are byte-identical to base, and the branch
+differs from the first slice only on the flash frames, which two replays
+give identically. A paced recording of `p2-shields.drv` gave hits at 46%
+and 18% (orange, red) at the same range, identical across two replays on
+its stable frames. The Combat FX lab and ECM tapes are identical to the
+first slice on every stable frame; `--old-renderer` is identical,
+`--classic-ui` and `--pixel-*` differ only on and next to the flash frames.
+No tape reached a hit seen from inside or near the bubble: zoomed close,
+the game drew no circle on three paced recordings, so the near tint was
+seen only in a scratch build that forced it. No recorded pause landed on a
+hit, so holding still in a pause rests on the bubble using only the game's
+clock.
