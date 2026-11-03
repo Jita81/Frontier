@@ -49,10 +49,9 @@ void procfx_sky_feather (const double (*v)[3], int n);
 void procfx_sky_end (void);
 /* --flat-starfield: every background star as the game draws it */
 extern int flat_starfield;
-/* Put side, in Nu_PutBlob with v the blob's view vertex: 0 when it is not
- * one of the sky object's stars, else a tag (bit 16 set, then two noise
- * bytes) fixed to the star's direction */
-unsigned int procfx_starfield_put (unsigned int v);
+/* Put side, in Nu_PutBlob: 0 when the blob is not one of the sky object's
+ * stars, else a tag (bit 16 set, then two hash bytes) fixed to the star */
+unsigned int procfx_starfield_put (void);
 /* Draw side: the tag's colour and magnitude on the game's grey rgb; returns
  * the point size factor, with the strength of a soft glow in *glow */
 float procfx_starfield_look (unsigned int tag, float rgb[3], float *glow);

@@ -194,45 +194,72 @@ close detail), the corona and the rings are built.
 
 ## Prototype notes: the background stars
 
-The game draws every background star as one flat grey point.  This layer
-gives each one a fixed magnitude and colour.  It is HD only and changes
-nothing in the core.
+The game draws every background star as a plain grey point: radius 0, or
+a dimmer radius-2 point under some stars' core.  This layer gives each
+star a fixed magnitude and colour.  It is HD only and changes nothing in
+the core.
 
 - **Which blobs are stars.**  `L44200_DrawBGStars` draws the sky object
   (model word `0xb0`).  Its stars reach the host as `Nu_PutBlob` calls
-  (gl.c:6012), about 220 a frame.  `procfx_starfield_put` (procfx.c:186)
-  reads the object's record and rotation, as `procfx_sky_put` does.  It
-  turns the blob's view vertex back into the sky's frame, so a star keeps
-  the same direction to about 4e-5 radian however the view turns.  The
-  blobs of other objects are left alone.  That includes the `0x76` dust
-  that streams past the ship.
-- **Identity.**  Smooth value noise runs over that direction, at 64 cells
-  per radian (`STAR_CELLS`, procfx.c:153; `pf_star_noise`, procfx.c:165).
-  It is remapped to about uniform.  A star's jitter moves it a few
-  thousandths of a cell, so nothing pops.  Two noise bytes go in the spare
-  high half of the blob's radius word, and `BLOB_SKY` goes on its colour
-  (gl.c:5550).  No RNG and no clock are involved.
-- **Magnitude.**  `procfx_starfield_look` (procfx.c:209) sets each star's
+  (gl.c:6012), about 220 a frame.  `procfx_starfield_put` (procfx.c:163)
+  checks the object's record, as `procfx_sky_put` does.  The blobs of
+  other objects are left alone.  That includes the `0x76` dust that
+  streams past the ship.
+- **Identity.**  The sky is a few dozen copies of one small star pattern,
+  each placed and turned its own way.  A star is named by two exact
+  integers:
+  - the copy: a word of the object's link frame at a6-200
+    (`FRAME_COPY`, procfx.c:154), one fixed value per copy (17 copies seen
+    in a 3900-frame flight, each with its own value, never shared);
+  - the star in the copy: its vertex slot, a0 - a4.
+  
+  A hash of the two gives two bytes.  They go in the spare high half of
+  the blob's radius word, and `BLOB_SKY` goes on its colour (gl.c:5550).
+  No RNG and no clock are involved.  Nothing computed from the star's
+  position works: while the view turns, the game's integer maths moves a
+  star up to 0.017 radian in the sky's frame from one frame to the next.
+  The first cut keyed smooth noise on that direction, and stars popped
+  during a turn.
+- **Magnitude.**  `procfx_starfield_look` (procfx.c:181) sets each star's
   brightness:
   - most stars are 0.72 to 0.95 of the game's grey;
   - about 1 in 20 is brighter, up to 1.6, with a soft additive glow
     reaching about 3 px at 1600x1200 (`sky_star`, gl.c:5986);
   - about 1 in 100 is also drawn 1.5x larger.
+
+  `sky_star` reads the game's 4-bit grey as n/15, where the base draw
+  uses n/16 (`split_rgb444i`).  That makes it 6.7% brighter, and the
+  factors above already allow for it.  The glow is GL_POINT_SMOOTH, so its
+  exact shape depends on the driver.
 - **Colour.**  The second byte picks a warm (orange-yellow) or cool
   (blue-white) tint.  Its strength rises from zero near the middle, so
   most stars stay white.  The tint scales the channels at low saturation,
   never toward green or purple.
 - **Switch.**  `--flat-starfield` (main.c:265) makes the put step return
   0, so every blob is drawn as before.  `--flat-sky` keeps its meaning.
-- **Checked** (1600x1200, in flight, one paused frame redrawn with the
-  layer on, then off):
-  - only star pixels change;
-  - total star energy is 1.012x flat in the front view and 0.992x in the
-    rear view;
-  - the median star is 0.93x flat, the brightest 2.7x.
+- **Checked** (1600x1200, lockstep replay of a hand-written flight tape
+  with a yaw, a pitch and the rear view, against base):
+  - Turn track.  Each star's light was tracked against base over 11 yaw
+    frames (26 stars) and 7 pitch frames (29 stars).  No ratio to base
+    changed by more than 25%.  In the yaw:
+    - 15 of 18 dim stars hold their ratio within 0.3%.  The other three
+      move by 0.5%, 3% and 11%, on stars whose own base light swings by up
+      to 1.7x with sub-pixel position;
+    - each of the 4 glow stars' own light stays within 5%.  Its ratio
+      moves by up to 17%, because base's 1-pixel point moves by 14 to 21%;
+    - 4 tracks jumped to a neighbouring star, and are left out.
+
+    In the pitch, 27 stars hold their ratio within 0.4%; 2 tracks jumped
+    to a neighbouring star.
+  - Mean.  Pooled over four views (151 stars), total star light is 1.00x
+    base.  The median star is 0.85x base.
+  - `--flat-starfield` frames are byte-identical to base.
+  - Two runs give byte-identical frames.
+  - Frame time in flight, over 1463 frames: p50 9.80 ms against 9.73 ms
+    for base, and p95 12.82 ms against 12.51 ms.
   - The oracle end line is exact.
-- **Not yet checked.**  Frame time in flight; the numbers so far come
-  from the landed oracle route only.
+- **Not yet checked.**  The intro sequence, and drivers other than macOS
+  OpenGL.
 
 ## Prototype notes: the game-over backdrop
 

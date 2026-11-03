@@ -141,16 +141,17 @@ int procfx_sky_put (float m[9])
  *
  * The game's background stars are the sky object's blobs: Nu_PutBlob while
  * the object being drawn carries SKY_MODEL (L44200_DrawBGStars), a dim
- * point (radius 2) under a brighter core (radius 0) for some.  Each is a
- * view vertex some 50000 to 70000 units out; turned back by the object's
- * rotation (its transpose) it is the star's direction in the sky's frame,
- * steady to about 4e-5 radian from frame to frame however the view turns.
- * Smooth value noise over that direction gives each star its look: the
- * jitter moves it a few thousandths of a noise cell, so nothing ever pops,
- * where a hash of a rounded direction would flip a star on a cell's edge.
+ * point (radius 2) under a brighter core (radius 0) for some.  The sky is
+ * a few dozen copies of one small star pattern, each placed and turned its
+ * own way; the copy being drawn is told by a word of the object's link
+ * frame (FRAME_COPY, one fixed value per copy) and the star within it by
+ * its vertex slot (a0 - a4).  A hash of those two exact integers gives each
+ * star its look.  Nothing computed from the star's position would do: the
+ * game's integer maths moves a star up to a hundredth of a radian in the
+ * sky's frame while the view turns, enough to change any key built on it.
  * The blobs of the other objects (the dust that streams past the ship)
  * keep the game's look. */
-#define STAR_CELLS	64.0f	/* noise cells per radian: the closest stars sit 1.5 apart */
+#define FRAME_COPY	200
 
 static float pf_smooth (float e0, float e1, float x)
 {
@@ -159,53 +160,24 @@ static float pf_smooth (float e0, float e1, float x)
 	return t * t * (3 - 2 * t);
 }
 
-/* smooth value noise on the integer lattice, one field per salt, spread
- * back to about uniform on [0, 1] (the blend of eight corners leaves it
- * near normal, sd 0.185, so few stars would reach the tails) */
-static float pf_star_noise (const float p[3], unsigned int salt)
+unsigned int procfx_starfield_put (void)
 {
-	float f[3], c[8];
-	int i[3], k;
-	unsigned int h;
+	unsigned int a6 = (unsigned int) GetReg (REG_A6), rec, h;
 
-	for (k = 0; k < 3; k++) {
-		i[k] = (int) floorf (p[k]);
-		f[k] = pf_smooth (0, 1, p[k] - i[k]);
-	}
-	for (k = 0; k < 8; k++) {
-		h = (unsigned) (i[0] + (k & 1)) * 73856093u ^ (unsigned) (i[1] + (k >> 1 & 1)) * 19349663u
-		  ^ (unsigned) (i[2] + (k >> 2)) * 83492791u ^ salt * 2654435761u;
-		h ^= h >> 16; h *= 0x7feb352du; h ^= h >> 15; h *= 0x846ca68bu; h ^= h >> 16;
-		c[k] = (h & 0xffffff) / 16777216.0f;
-	}
-	for (k = 0; k < 4; k++) c[k] = c[2*k] + (c[2*k+1] - c[2*k]) * f[0];
-	for (k = 0; k < 2; k++) c[k] = c[2*k] + (c[2*k+1] - c[2*k]) * f[1];
-	return 0.5f + 0.5f * erff ((c[0] + (c[1] - c[0]) * f[2] - 0.5f) / 0.262f);
-}
-
-unsigned int procfx_starfield_put (unsigned int v)
-{
-	unsigned int a6 = (unsigned int) GetReg (REG_A6), rec;
-	float p[3], d[3], n = 0;
-	int j, k;
-
-	if (flat_starfield || !(rec = pf_record ()) || !rd_ok (a6 - FRAME_ROT, 18) || !rd_ok (v, 12)) return 0;
+	if (flat_starfield || !(rec = pf_record ()) || !rd_ok (a6 - FRAME_COPY, 2)) return 0;
 	if ((STMemory_ReadWord (rec + OBJ_MODEL) & 0xffff) != SKY_MODEL) return 0;
-	for (k = 0; k < 3; k++) p[k] = (float) (int) STMemory_ReadLong (v + 4*k);
-	for (j = 0; j < 3; j++) {
-		for (d[j] = 0, k = 0; k < 3; k++)
-			d[j] += (short) STMemory_ReadWord (a6 - FRAME_ROT + 2*(3*j + k)) * p[k];
-		n += d[j] * d[j];
-	}
-	if (n <= 0) return 0;
-	for (n = STAR_CELLS / sqrtf (n), j = 0; j < 3; j++) d[j] *= n;
-	return 0x10000 | (unsigned) (255 * pf_star_noise (d, 1)) << 8 | (unsigned) (255 * pf_star_noise (d, 2));
+	h = (STMemory_ReadWord (a6 - FRAME_COPY) & 0xffff) * 0x9e3779b1u
+	  ^ (unsigned) (GetReg (REG_A0) - GetReg (REG_A4)) * 0x85ebca6bu;
+	h ^= h >> 16; h *= 0x7feb352du; h ^= h >> 15; h *= 0x846ca68bu; h ^= h >> 16;
+	return 0x10000 | (h & 0xffff);
 }
 
 /* Magnitude (u): most stars 0.72 to 0.95 of the game's grey, the top one
  * in twenty up to 1.6 with a soft glow, the top one in a hundred half as
  * large again.  Colour (t): a blackbody-like tint, orange-yellow through
- * white to blue-white, a third of the stars plain white, low saturation. */
+ * white to blue-white, a third of the stars plain white, low saturation.
+ * The grey these scale is sky_star's n/15, 16/15 of the game's n/16
+ * (split_rgb444i), so on average a star is 0.92 of the game's grey. */
 float procfx_starfield_look (unsigned int tag, float rgb[3], float *glow)
 {
 	static const float warm[3] = { 1.18f, 0.96f, 0.72f }, cool[3] = { 0.84f, 0.96f, 1.20f };

@@ -6015,7 +6015,7 @@ void Nu_PutBlob ()
 
 	if (use_renderer == R_OLD) return;
 	put_fx ();
-	sky = procfx_starfield_put (GetReg (REG_A0)+4);
+	sky = procfx_starfield_put ();
 	znode_wrlong (NU_BLOB);
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrlong ((GetReg (REG_D0) & ~(BLOB_HYPER | BLOB_SKY)) | hyper_tag () | (sky ? BLOB_SKY : 0));
