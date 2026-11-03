@@ -1193,6 +1193,7 @@ enum NuPrimitive {
 	NU_FX,		/* fx.c's tag for the primitive that follows */
 	NU_RINGS,	/* skies.c: the complex shape that follows is a ring */
 	NU_SHADOW,	/* shadows.c: a landed ship's contact shadow */
+	NU_DECK,	/* deck_hook: the sky deck without its planet */
 	NU_MAX
 };
 /* the next primitive belongs to a weapon, missile, explosion...: say which (fx.c) */
@@ -5053,19 +5054,27 @@ static void cloud_look (int model_word, int air, int rim, unsigned int seed,
 	for (i = 0; i < 3; i++) tint[i] += (rgb[i] - 1.0f) * l[4];
 }
 
-/* Hand procfx the eye and the sun in model space, the eye in units of R. */
-static void cloud_stage (const struct PlanetPrim *p, double d, const double sun[3])
+/* Hand procfx the eye and the sun in model space, the eye in units of R.
+ * The ST's matrix is not quite orthonormal (lengths off by up to a
+ * percent): from orbit that is nothing, but near the ground it is the
+ * whole height of the deck, so the deck (norm) normalises both and lets
+ * d/R alone say how high the eye is. */
+static void cloud_stage (const struct PlanetPrim *p, double d, const double sun[3], int norm)
 {
-	double up[3], e[3], s[3];
+	double up[3], e[3], s[3], le = 1.0, ls = 1.0;
 	float eye[3], fs[3];
 	int i;
 
 	for (i = 0; i < 3; i++) up[i] = -p->centre[i] / d;
 	to_model (p, up, e);
 	to_model (p, sun, s);
+	if (norm) {
+		le = sqrt (pdot (e, e));
+		ls = sqrt (pdot (s, s));
+	}
 	for (i = 0; i < 3; i++) {
-		eye[i] = e[i] * d / p->R;
-		fs[i] = s[i];
+		eye[i] = norm ? e[i] / le * d / p->R : e[i] * d / p->R;
+		fs[i] = norm ? s[i] / ls : s[i];
 	}
 	procfx_planet_clouds (p->cl_cover, p->cl_tint, p->cl_rot, p->cl_seed, eye, fs);
 }
@@ -5213,15 +5222,14 @@ static void draw_planet_sphere (struct PlanetTex *t, const struct PlanetPrim *p,
  * Host constant, not ST data (docs/09 §3). */
 #define GROUND_DOME_RADIUS	1.0e6
 
-static void draw_horizon_cap (struct PlanetTex *t, const struct PlanetPrim *p, double d,
-			      const double sun[3], const struct LightZone *zones, int nzones, double soft)
+/* 'up' from the planet centre towards the camera (origin), and two axes
+ * across it */
+static void planet_up_frame (const struct PlanetPrim *p, double d, double up[3], double e1[3],
+			     double e2[3])
 {
-	static struct PVert v[HORIZON_CAP_RINGS+1][HORIZON_CAP_SLICES+1];
-	double up[3], e1[3], e2[3];
-	double theta_max, dot, len;
-	int i, j, k, z;
+	double dot, len;
+	int k;
 
-	/* 'up' points from the planet centre towards the camera (origin) */
 	up[0] = -p->centre[0]/d;
 	up[1] = -p->centre[1]/d;
 	up[2] = -p->centre[2]/d;
@@ -5241,6 +5249,17 @@ static void draw_horizon_cap (struct PlanetTex *t, const struct PlanetPrim *p, d
 	e2[0] = up[1]*e1[2] - up[2]*e1[1];
 	e2[1] = up[2]*e1[0] - up[0]*e1[2];
 	e2[2] = up[0]*e1[1] - up[1]*e1[0];
+}
+
+static void draw_horizon_cap (struct PlanetTex *t, const struct PlanetPrim *p, double d,
+			      const double sun[3], const struct LightZone *zones, int nzones, double soft)
+{
+	static struct PVert v[HORIZON_CAP_RINGS+1][HORIZON_CAP_SLICES+1];
+	double up[3], e1[3], e2[3];
+	double theta_max;
+	int i, j, k, z;
+
+	planet_up_frame (p, d, up, e1, e2);
 
 	/* Half-angle of the cone of directions that actually hit the surface.
 	 *
@@ -5323,6 +5342,74 @@ static void draw_horizon_cap (struct PlanetTex *t, const struct PlanetPrim *p, d
 				emit_zone_quad (&zones[z], &v[i][j], &v[i][j+1], &v[i+1][j+1], &v[i+1][j]);
 	}
 }
+
+/* The sky deck (docs/hd/clouds.md): below DECK_TOP, a dome over every
+ * direction the cap leaves, from up to pi - asin(R/d), each vertex
+ * carrying its model direction; procfx finds the clouds along it.  The
+ * dome is centred on the eye, so the interpolated direction is exact
+ * whatever the rings: a few, in one draw, cost least.  It needs nothing
+ * of the ground's shader, so --flat-planets keeps it: the deck is cloud,
+ * not ground.  fade: the vertex alpha, deck_hook's. */
+#define DECK_RINGS	8
+#define DECK_SEGS	64
+#define DECK_TOP	1.2
+
+static void deck_vertex (const struct PlanetPrim *p, const double up[3], const double e1[3],
+			 const double e2[3], double th, double a)
+{
+	double dir[3], m[3];
+	int k;
+
+	for (k = 0; k < 3; k++)
+		dir[k] = up[k]*cos (th) + (e1[k]*cos (a) + e2[k]*sin (a))*sin (th);
+	to_model (p, dir, m);
+	glTexCoord3dv (m);
+	for (k = 0; k < 3; k++) dir[k] *= GROUND_DOME_RADIUS;
+	planet_vertex (dir);
+}
+
+static int draw_cloud_deck (const struct PlanetPrim *p, double d, const double sun[3], double soft,
+			    double fade)
+{
+	double up[3], e1[3], e2[3], top = M_PI - asin (p->R/d > 1.0 ? 1.0 : p->R/d);
+	float air[4] = { p->cl_tint[0], p->cl_tint[1], p->cl_tint[2], planet_aloft (p, d) };
+	int i, j, r, g, b;
+
+	if (p->rim >= 0) {
+		split_rgb444b (p->rim, &r, &g, &b);
+		air[0] = r / 255.0f; air[1] = g / 255.0f; air[2] = b / 255.0f;
+	}
+	cloud_stage (p, d, sun, 1);
+	if (!procfx_deck_begin (air, soft > 0.0 ? soft : 0.1)) return 0;
+	planet_up_frame (p, d, up, e1, e2);
+	glPushAttrib (GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_CURRENT_BIT | GL_LIGHTING_BIT);
+	glDisable (GL_LIGHTING);
+	glDisable (GL_CULL_FACE);
+	glDisable (GL_TEXTURE_2D);
+	glEnable (GL_BLEND);
+	glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	glColor4f (1.0f, 1.0f, 1.0f, (float) fade);
+	glBegin (GL_QUADS);
+	for (i = 0; i < DECK_RINGS; i++)
+		for (j = 0; j < DECK_SEGS; j++) {
+			double t0 = top * i / DECK_RINGS, t1 = top * (i+1) / DECK_RINGS;
+			double a0 = 2.0*M_PI*j / DECK_SEGS, a1 = 2.0*M_PI*(j+1) / DECK_SEGS;
+			deck_vertex (p, up, e1, e2, t0, a0);
+			deck_vertex (p, up, e1, e2, t1, a0);
+			deck_vertex (p, up, e1, e2, t1, a1);
+			deck_vertex (p, up, e1, e2, t0, a1);
+		}
+	glEnd ();
+	glPopAttrib ();
+	procfx_deck_end ();
+	return 1;
+}
+
+/* The last deck drawn with its planet, the raw primitive (before
+ * planet_fix_radius): deck_hook (outside this block) draws it on in the
+ * frames the game sends no planet.  fresh: drawn this frame. */
+struct DeckPrim { struct PlanetPrim p; double soft, fade; };
+static struct { struct DeckPrim k; int ok, fresh; } deck_last;
 
 /*
  * Atmosphere layers.
@@ -5662,7 +5749,7 @@ void Nu_DrawPlanet (void **data)
 	struct PlanetPrim p;
 	struct PlanetTex *t;
 	struct LightZone zones[PLANET_MAX_ZONES];
-	double d, sun[3], soft = 0.0;
+	double d, sun[3], soft = 0.0, R0;
 	int nzones, smooth;
 
 	memcpy (&p, *data, sizeof (p));
@@ -5670,6 +5757,7 @@ void Nu_DrawPlanet (void **data)
 
 	d = sqrt (pdot (p.centre, p.centre));
 	if (p.R <= 0.0 || d <= 0.0) return;
+	R0 = p.R;
 	planet_fix_radius (&p, d);
 
 	/* We are close enough to a planet that its surface is the ground
@@ -5690,7 +5778,7 @@ void Nu_DrawPlanet (void **data)
 	glEnable (GL_TEXTURE_2D);
 	glTexEnvi (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
 	glColor3f (1.0f, 1.0f, 1.0f);
-	if (p.cl_cover[3] > 0.0f) cloud_stage (&p, d, sun);
+	if (p.cl_cover[3] > 0.0f) cloud_stage (&p, d, sun, 0);
 	smooth = planet_smooth_begin (&p, d, zones, nzones, &soft);
 	if (!smooth) soft = 0.0;
 
@@ -5705,7 +5793,34 @@ void Nu_DrawPlanet (void **data)
 	}
 
 	if (smooth) procfx_planet_end ();
+	/* the planet we are in the sky of: its deck, kept for deck_hook */
+	if (d < p.R * PLANET_SKY_RATIO) {
+		deck_last.ok = d < p.R * DECK_TOP && p.cl_cover[3] > 0.0f && !flat_clouds
+			       && draw_cloud_deck (&p, d, sun, soft, 1.0);
+		if (deck_last.ok) {
+			deck_last.k.p = p;
+			deck_last.k.p.R = R0;
+			deck_last.k.soft = soft;
+			deck_last.k.fade = 1.0;
+			deck_last.fresh = 1;
+		}
+	}
 	glDisable (GL_TEXTURE_2D);
+}
+
+/* deck_hook's node: the deck alone, from a primitive it rebuilt */
+void Nu_DrawDeck (void **data)
+{
+	struct DeckPrim k;
+	double d, sun[3];
+
+	memcpy (&k, *data, sizeof (k));
+	*data += sizeof (k);
+	d = sqrt (pdot (k.p.centre, k.p.centre));
+	if (k.p.R <= 0.0 || d <= 0.0) return;
+	planet_fix_radius (&k.p, d);
+	planet_sun (&k.p, sun);
+	draw_cloud_deck (&k.p, d, sun, k.soft, k.fade);
 }
 /* ==== PLANET END ==== */
 
@@ -5798,6 +5913,25 @@ static unsigned int planet_find_model (unsigned int a6, unsigned int end, unsign
 	return 0;
 }
 
+/* The clouds' drift on the game clock: one lap in 16 days, reshaping on a
+ * 3-day loop (time of day at +524 of the a6 block, a whole day being
+ * 2^32, day at +528) */
+static void cloud_clock (float rot[4])
+{
+	unsigned int tod = STMemory_ReadLong (__DL5eb6_a6_base + 524),
+		day = STMemory_ReadLong (__DL5eb6_a6_base + 528);
+	double t16 = day % 16 + tod / 4294967296.0, t3 = day % 3 + tod / 4294967296.0;
+
+	rot[0] = cos (2.0 * M_PI * t16 / 16.0);
+	rot[1] = sin (2.0 * M_PI * t16 / 16.0);
+	rot[2] = 0.6 * cos (2.0 * M_PI * t3 / 3.0);
+	rot[3] = 0.6 * sin (2.0 * M_PI * t3 / 3.0);
+}
+
+/* the planet we are in the sky of was sent this frame, at this depth */
+static int deck_put;
+static unsigned int deck_put_z;
+
 void Nu_PutPlanet ()
 {
 	static bool stats_init;
@@ -5833,23 +5967,16 @@ void Nu_PutPlanet ()
 	/* the planet object's random seed (L3d3f0) */
 	p.seed = STMemory_ReadLong (STMemory_ReadLong (a6 - 212) + 118);
 	p.detail = (short) STMemory_ReadWord (__DL60d4_optdetail2);
-	/* the clouds' seed, from the whole body seed, and their drift on the
-	 * game clock: one lap in 16 days, reshaping on a 3-day loop (time of
-	 * day at +524 of the a6 block, a whole day being 2^32, day at +528) */
+	/* the clouds' seed, from the whole body seed, and their drift */
 	mw = STMemory_ReadWord (STMemory_ReadLong (a6 - 212) + 90) & 0xffff;
 	{
-		unsigned int h = p.seed, tod = STMemory_ReadLong (__DL5eb6_a6_base + 524),
-			day = STMemory_ReadLong (__DL5eb6_a6_base + 528);
-		double t16 = day % 16 + tod / 4294967296.0, t3 = day % 3 + tod / 4294967296.0;
+		unsigned int h = p.seed;
 		for (i = 0; i < 3; i++) {
 			h = ((h + 0x9e3779b9u) ^ (h >> 16)) * 0x7feb352du;
 			h = (h ^ (h >> 15)) * 0x846ca68bu;
 			p.cl_seed[i] = (h >> 16) / 256.0f;
 		}
-		p.cl_rot[0] = cos (2.0 * M_PI * t16 / 16.0);
-		p.cl_rot[1] = sin (2.0 * M_PI * t16 / 16.0);
-		p.cl_rot[2] = 0.6 * cos (2.0 * M_PI * t3 / 3.0);
-		p.cl_rot[3] = 0.6 * sin (2.0 * M_PI * t3 / 3.0);
+		cloud_clock (p.cl_rot);
 	}
 	for (i = 0; i < 16; i++)
 		p.table[i] = STMemory_ReadWord (a3 + 2*i);
@@ -5883,6 +6010,10 @@ void Nu_PutPlanet ()
 	znode_wrlong (NU_PLANET);
 	/* S-7: through the checked writer */
 	znode_wrblock (&p, sizeof (p));
+	if (znode_cur && sqrt (pdot (p.centre, p.centre)) < p.R * PLANET_SKY_RATIO) {
+		deck_put = 1;
+		deck_put_z = cur_ztree == &znode_start ? znode_cur->z : 0xfffffffeu;
+	}
 
 	/* The ST draws each atmosphere layer as a primitive of its own,
 	 * inserted at the very back (the largest depth, in L3d8f4): it is a
@@ -6772,7 +6903,8 @@ NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	&Nu_DrawComplexOval,
 	&fx_draw_tag,
 	&Nu_DrawRings,
-	&shadows_draw
+	&shadows_draw,
+	&Nu_DrawDeck
 };
 
 /*
@@ -6999,6 +7131,132 @@ static void begin_frame (void)
 	endcard_frame ();
 }
 
+/*
+ * The sky deck between planet frames (docs/hd/clouds.md).  Nose up, once
+ * the horizon leaves the picture the game sends no planet, and the deck
+ * would go with it.  So the last deck drawn is drawn on from the cached
+ * primitive, turned and moved with the camera: the player's record (+674
+ * of the a6 block) holds the camera's matrix P and its position in the
+ * planet's frame, and the planet's matrix is A = V P with V fixed by the
+ * view mode (+706), so A' = A inv(P) P' and the eye moves by the change
+ * in position, scaled as the cached frame scales it.  Same place in the
+ * frame order (the planet's depth), only in a flight view with the same
+ * camera record, frame and view mode, and the sun kept where it was:
+ * after DECK_HOLD of game time it fades out.
+ */
+#define DECK_HOLD	(1.0 / 48.0)	/* days */
+
+struct DeckCam { unsigned int rec, tod, day; int frame, vm, ok; double P[3][3], pos[3]; };
+
+static void deck_cam_read (struct DeckCam *c)
+{
+	unsigned int a6 = __DL5eb6_a6_base;
+	int r, k;
+
+	c->rec = STMemory_ReadLong (a6 + 674);
+	c->tod = STMemory_ReadLong (a6 + 524);
+	c->day = STMemory_ReadLong (a6 + 528);
+	c->vm = STMemory_ReadByte (a6 + 706);
+	c->ok = c->rec >= 0x400 && c->rec < MEM_SIZE - 128;
+	if (!c->ok) return;
+	c->frame = STMemory_ReadByte (c->rec + 68);
+	for (r = 0; r < 3; r++)
+		for (k = 0; k < 3; k++)
+			c->P[r][k] = (short) STMemory_ReadWord (c->rec + 2*(3*k + r)) / 32768.0;
+	for (k = 0; k < 3; k++)
+		c->pos[k] = (int) STMemory_ReadLong (c->rec + 56 + 4*k) * 4294967296.0
+			  + (unsigned int) STMemory_ReadLong (c->rec + 44 + 4*k);
+}
+
+static int inv3 (const double m[3][3], double o[3][3])
+{
+	double det;
+	int i, j;
+
+	for (i = 0; i < 3; i++)
+		for (j = 0; j < 3; j++)
+			o[j][i] = m[(i+1)%3][(j+1)%3] * m[(i+2)%3][(j+2)%3]
+				- m[(i+1)%3][(j+2)%3] * m[(i+2)%3][(j+1)%3];
+	det = m[0][0]*o[0][0] + m[0][1]*o[1][0] + m[0][2]*o[2][0];
+	if (fabs (det) < 1e-6) return 0;
+	for (i = 0; i < 3; i++)
+		for (j = 0; j < 3; j++)
+			o[i][j] /= det;
+	return 1;
+}
+
+static void mul3 (const double a[3][3], const double b[3][3], double o[3][3])
+{
+	int i, j;
+	for (i = 0; i < 3; i++)
+		for (j = 0; j < 3; j++)
+			o[i][j] = a[i][0]*b[0][j] + a[i][1]*b[1][j] + a[i][2]*b[2][j];
+}
+
+static void mulv3 (const double a[3][3], const double v[3], double o[3])
+{
+	int i;
+	for (i = 0; i < 3; i++) o[i] = a[i][0]*v[0] + a[i][1]*v[1] + a[i][2]*v[2];
+}
+
+static void deck_hook (void)
+{
+	static struct DeckCam now, then;
+	static unsigned int z;
+	struct DeckCam prev = now;
+	struct DeckPrim k;
+	double Ai[3][3], Pi[3][3], V[3][3], e[3], l[3], c[3], age, s, g;
+	unsigned char *n;
+	int i;
+
+	deck_cam_read (&now);
+	if (deck_last.fresh) {
+		then = prev;
+		deck_last.fresh = 0;
+	}
+	if (deck_put) {
+		z = deck_put_z;
+		deck_put = 0;
+		return;
+	}
+	if (scene_overflow || !deck_last.ok || !then.ok || !now.ok || now.rec != then.rec || now.frame != then.frame
+	    || now.vm != then.vm || use_renderer != R_GL || !bindings_in_flight_view (0, 0))
+		return;
+	age = (int) (now.day - then.day) + ((double) now.tod - (double) then.tod) / 4294967296.0;
+	if (age < 0.0 || age >= DECK_HOLD) return;
+	k = deck_last.k;
+	if (!inv3 (k.p.A, Ai) || !inv3 (then.P, Pi)) return;
+	mul3 (k.p.A, Pi, V);
+	mul3 (V, now.P, k.p.A);
+	for (i = 0; i < 3; i++) c[i] = -k.p.centre[i];
+	mulv3 (Ai, c, e);
+	mulv3 (Ai, k.p.light, l);
+	s = sqrt (pdot (then.pos, then.pos));
+	g = sqrt (pdot (e, e));
+	if (s <= 0.0 || g <= 0.0) return;
+	g = sqrt (pdot (k.p.centre, k.p.centre)) / g;
+	s = sqrt (pdot (e, e)) / s;
+	for (i = 0; i < 3; i++) e[i] += s * (now.pos[i] - then.pos[i]);
+	/* the camera matrices are not quite orthonormal, so A' alone would
+	 * stretch the distance by up to a tenth of a percent as the view
+	 * turns (half the deck's height): keep it the moved eye's */
+	mulv3 (k.p.A, e, c);
+	s = sqrt (pdot (c, c));
+	if (s <= 0.0) return;
+	s = g * sqrt (pdot (e, e)) / s;
+	for (i = 0; i < 3; i++) c[i] *= s;
+	mulv3 (k.p.A, l, k.p.light);
+	for (i = 0; i < 3; i++) k.p.centre[i] = -c[i];
+	if (sqrt (pdot (c, c)) >= k.p.R * DECK_TOP) return;
+	cloud_clock (k.p.cl_rot);
+	k.fade = fmin (1.0, 2.0 - 2.0 * age / DECK_HOLD);
+	n = add_detached_node (&znode_start, z, 4 + sizeof (k));
+	if (n) {
+		*(int *) n = NU_DECK;
+		memcpy (n + 4, &k, sizeof (k));
+	}
+}
+
 static int stalled;	/* host updates since the last frame */
 
 void Nu_DrawScreen ()
@@ -7013,6 +7271,7 @@ void Nu_DrawScreen ()
 	//printf ("Frame: %d znodes.\n", znode_buf_pos);
 	planet_ground_seen = 0;
 	galmap_update ();
+	deck_hook ();
 	if (shadow_tree && shadow_z + 1) { unsigned char *d = add_detached_node (shadow_tree, shadow_z + 1, 4 + SHADOW_BYTES);
 		if (d) *(int *) d = shadows_write (d + 4) ? NU_SHADOW : NU_END; }	/* NU_END: an empty node */
 	shadow_tree = NULL;

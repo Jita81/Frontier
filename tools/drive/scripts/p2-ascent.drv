@@ -1,0 +1,128 @@
+# p2-ascent.drv - Phase 2 tour: lift off from an atmospheric surface port
+# under an overcast and climb nose-up out of the sky into space.
+#
+# Verifies: clouds2 (W5b2) the sky deck seen from the pad and from below,
+# and that it stays when the nose comes up so far that the horizon leaves
+# the picture: the game then sends no planet at all, and the deck is drawn
+# on from the last one (deck_hook, docs/hd/clouds.md).  Then the deck from
+# above and the hand-over to the orbit view of the clouds.
+# Run:  tools/p2shots --routes ascent --base BASE --branch BRANCH
+# The sky over this port is clear on the first afternoon, so the route
+# first runs the clock at 10000x to midnight (the port's midnight message
+# drops it to 1x, which fixes the start), then 65 s at 1000x to about
+# 18:00 on the second day, when the port is under an overcast.  The .drv
+# language has no verb that waits on game state, so these are waits on
+# wall time; a busy machine moves the clock a little.
+# Expect: 01 the pad (external view) under the overcast, 02 the front view
+#         just after lift-off (the deck overhead, the horizon in view),
+#         03 nose up under thrust (the horizon low in the picture), 04 and
+#         05 nose far up, the horizon gone (base: an empty sky; branch: the
+#         deck, thinning at 04 as the ship comes up to its height, and gone
+#         at 05, above it), 06 the rear view, 07 high (at 10x), 08 space.
+#         The frames across the horizon leaving are the proof of the hook:
+#         record them with a frame dump, not these shots.
+# Each shot pauses the game (Esc) and resumes it at 1x (Shift+F1); the
+# pointer is parked off the controls so no hover tip is drawn.
+# Log markers: padtime..padend (landed, for frame timing), climb..climbend
+# (the nose-up climb with the horizon out of the picture, no pauses).
+
+wait 6000
+key space
+wait 2000
+key 2             # start position 2: landed at a surface port with an atmosphere
+wait 11000
+mouse 2 120
+wait 300
+sdlkey f5 shift   # 10000x: on to the midnight message (1x)
+wait 15000
+sdlkey f4 shift   # 1000x: to about 18:00 on the second day
+wait 65000
+sdlkey f1 shift   # 1x
+mouse 8 193       # the view icon twice: the external view
+wait 300
+click 200
+wait 1200
+mouse 8 193
+wait 300
+click 200
+wait 1200
+mouse 2 120
+log padtime
+wait 15000
+log padend
+sdlkey esc
+wait 600
+shot 01-pad
+sdlkey f1 shift
+mouse 8 193       # the view icon again: the front view
+wait 300
+click 200
+wait 1200
+mouse 57 193      # comms: ask for launch clearance
+wait 300
+click 200
+wait 2500
+mouse 171 57
+wait 300
+click 200
+wait 3000
+mouse 263 193     # lift off
+wait 300
+click 200
+wait 2000
+mouse 2 120
+wait 7000
+sdlkey esc
+wait 600
+shot 02-low
+sdlkey f1 shift
+press right       # a first pull: the nose up, the horizon still in view
+move 0 8 6 40
+release right
+wait 500
+keydown return    # full thrust
+wait 3000
+sdlkey esc
+wait 600
+shot 03-noseup
+sdlkey f1 shift
+press right       # a second pull: the horizon leaves the picture
+move 0 8 10 60
+release right
+log climb
+wait 6000
+log climbend
+sdlkey esc
+wait 600
+shot 04-sky
+sdlkey f1 shift
+press right       # further over
+move 0 8 10 60
+release right
+wait 1500
+sdlkey esc
+wait 600
+shot 05-sky
+sdlkey f1 shift
+mouse 8 193       # the view icon: the rear view
+wait 300
+click 200
+wait 1200
+mouse 2 120
+wait 2000
+sdlkey esc
+wait 600
+shot 06-rear
+sdlkey f1 shift
+sdlkey f2 shift   # 10x
+wait 12000
+sdlkey esc
+wait 600
+shot 07-high
+sdlkey f1 shift
+sdlkey f2 shift
+wait 9000
+sdlkey esc
+wait 600
+shot 08-space
+quit

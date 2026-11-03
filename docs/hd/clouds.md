@@ -112,9 +112,96 @@ before the warp, so the warp does not make them fade early.
 
 ## Sky deck
 
-Not built yet (parked).  When it comes back it calls `cl_cover` for its
-cover and `cl_light` for its relief, so it shows the same clouds lit the
-same way.
+From the ground and in low flight the same clouds are drawn overhead, as
+the underside of the deck.  `draw_cloud_deck` (`gl.c`) draws a dome of
+`DECK_RINGS` x `DECK_SEGS` quads over every direction the horizon cap
+leaves (from straight up to pi - asin(R/d)), each vertex carrying its
+direction in the model frame.  The deck shader (`deck_glsl`, `procfx.c`)
+follows that direction from the eye to the deck sphere and reads
+`cl_cover (q, 5)` there, with the same seed, turn and drift uniforms as
+the orbit view, so the cover overhead is the cover the planet shows from
+space at that point.  Where there is no cover the fragment is discarded
+before anything else is done.  It is drawn only below `DECK_TOP` = 1.2R,
+on a world with clouds, and never with `--flat-clouds`, `--classic-ui`,
+`--pixel-art` or the old renderer, so all of those, space, station
+interiors, airless bodies and the view from above 1.2R draw exactly as
+before.  The orbit view's shader is not changed: the night side from
+orbit is as it was.
+
+**Detail.**  Overhead the deck is close, so a finer noise breaks the cover
+into separate clouds: `pf_fbm` at `CL_FINE_K` = 1500 cells across the unit
+sphere, one octave, gone by the time a cell is under a pixel (`fwidth`).  It drifts with the clouds' change of shape
+at `CL_FINE_DRIFT` = 25 times its rate (it was 250, which raced under time
+acceleration).  It moves only cover that is neither clear nor full, so a
+full overcast stays one unbroken deck; thicker cloud has a darker base,
+and the thin cloud towards the sun brightens.  From below the deck thins
+into the colour of the air with distance; at night it is a dim neutral
+(8% of its day colour) that hides the stars.  From above, only the lit
+deck near the horizon shows, with the cap's rim colour, fading out from
+1.05R to 1.2R; looking down, the orbit view's clouds on the ground are
+what shows, and near a port the game's own map of the surface is drawn
+over those (as in base), so on the way down the cover appears overhead
+as the ship passes under the deck.  Within `CLOUD_DECK_T` of the
+deck's height it fades, so flying through it has no step.
+
+**Height.**  The ST's camera matrix is not quite orthonormal (lengths off
+by up to a percent), which near the ground is as large as the deck's
+height.  So the deck takes the eye's direction and the sun from the
+matrix, normalised, and the eye's height from d/R alone.
+
+**Nose up.**  When the nose comes up so far that the horizon leaves the
+picture, the game stops sending the planet, and with it the deck would go
+in one frame, the whole sky at once.  So the last deck drawn is kept and
+drawn on by `deck_hook`, called from `Nu_DrawScreen` before the tree is
+drawn.  The player's record (`__DL5eb6_a6_base` + 674) holds the camera's
+matrix P and its position in the planet's frame; the planet's matrix is
+A = V P with V fixed by the view mode (+706), so the hook turns the cached
+deck by A' = A inv(P) P' and moves the eye by the change in position,
+scaled as the cached frame scales it, keeping its length as the moved
+eye's (the same normalising as above).  The deck so follows the view as it
+turns, and the eye's height carries on from the last planet frame without
+a step (measured on `p2-ascent`: the drawn height continues the planet's
+to within its own frame-to-frame step, and meets it again when the planet
+comes back).  The hook draws only in a flight view, with the same camera
+record, frame and view mode as when the deck was cached, and only below
+`DECK_TOP`.  The sun stays where it was when the deck was cached, so
+after `DECK_HOLD` (1/48 day, half an hour of game time) the deck fades
+out over the second half of that time rather than be lit by a sun that
+has moved.  A fade alone was the fallback: it was not needed, because
+the camera record gives the orientation directly.
+
+**Painter's order.**  There is no depth buffer: the tree is drawn from
+the far end to the near.  When the planet is sent, the deck is drawn
+inside the planet's own node, straight after the ground, so ships,
+buildings and the game's own low clouds nearer than the planet are drawn
+over it.  The hook has no planet node to draw in, so it adds its own node
+to the top tree at the depth the planet last had.  Anything the game puts
+in a sub-tree (a model's own tree) is ordered only within that sub-tree,
+so the held deck is right against what the top tree holds and can be
+wrong against an object that sits in another tree at a depth near the
+planet's.  Nose up with the horizon gone, nothing but sky is behind it.
+
+**Cost.**  One dome of 512 quads in one draw (it is centred on the eye,
+so the direction each pixel reads is exact however coarse it is), and a
+shader that discards first
+what cannot show (the sky above the deck seen from above, and everything
+within a hair of the deck's height), then reads the two-octave base and
+the cover's three detail octaves only where the base is within their
+reach (0.027) of the threshold: under a full overcast or a clear sky the
+smoothstep is 0 or 1 whatever they add, so the cover is the same and
+three noise reads are saved.  Where there is no cover it stops there; the
+fine noise is one octave, and none where it is below a pixel.
+
+Measured on `p2-ascent` at 1600x1200 (Apple M4, a scratch build that
+skipped the deck on every other frame, so the two halves share the load):
+the deck adds 0.8 to 1.3 ms to the median frame on the pad and 1.5 to
+1.7 ms on the climb, over a target of 0.5 ms.  Of that, about 0.3 ms is
+the cost of a full-screen pass at all (it stays when every fragment is
+discarded), about 0.55 ms the two base reads that make the deck the same
+cover as the planet's, and about 0.27 ms the fine octave.  Going lower
+needs a different design (the base read per vertex with an exact read
+only near the threshold, or the deck drawn at a lower resolution), not a
+further cut to this one.
 
 ## The game's own clouds and the intro
 

@@ -17,6 +17,7 @@
 #include "../m68000.h"
 #include "../fixups.h"
 #include "procfx.h"
+#include "screen.h"
 
 /* ---- shared building blocks ------------------------------------------
  *
@@ -332,6 +333,7 @@ int flat_planets = 0;
 	"uniform vec4 uClRot, uClCover;\n" \
 	"const float CL_K = 6.0, CL_H = " PF_STR (CLOUD_DECK_H) ", CL_T = " PF_STR (CLOUD_DECK_T) ";\n" \
 	"const float CL_W = 1.5, CL_E = 0.02, CL_B = 0.1;\n" \
+	"const float CL_FINE_K = 1500.0, CL_FINE_DRIFT = 25.0;\n" \
 	"vec3 cl_q (vec3 q) {\n" \
 	"	q = normalize (q);\n" \
 	"	return vec3 (uClRot.x * q.x - uClRot.y * q.z, q.y, uClRot.y * q.x + uClRot.x * q.z);\n" \
@@ -431,7 +433,7 @@ static const char planet_cl_glsl[] = "#define PF_CLOUDS\n" CLOUD_GLSL
  * uniforms a program lacks are at -1, which GL ignores */
 enum { U_LO, U_HI, U_RIM, U_LOOK, U_SEED, U_SOFT, U_CL_COVER, U_CL_TINT, U_CL_ROT, U_CL_SEED,
        U_CL_EYE, U_CL_SUN, U_N };
-static struct PlanetProg { GLuint prog; int failed; GLint u[U_N]; } pp_base, pp_cl;
+static struct PlanetProg { GLuint prog; int failed; GLint u[U_N]; } pp_base, pp_cl, pp_deck;
 
 static struct PlanetProg *planet_prog_get (struct PlanetProg *g, const char *name, const char *src)
 {
@@ -465,6 +467,16 @@ void procfx_planet_clouds (const float cover[4], const float tint[3], const floa
 	memcpy (cl_stage + 17, sun, 3 * sizeof (float));
 }
 
+static void cloud_uniforms (const struct PlanetProg *g, const float cl[20])
+{
+	glUniform4fv (g->u[U_CL_COVER], 1, cl);
+	glUniform3fv (g->u[U_CL_TINT], 1, cl + 4);
+	glUniform4fv (g->u[U_CL_ROT], 1, cl + 7);
+	glUniform3fv (g->u[U_CL_SEED], 1, cl + 11);
+	glUniform3fv (g->u[U_CL_EYE], 1, cl + 14);
+	glUniform3fv (g->u[U_CL_SUN], 1, cl + 17);
+}
+
 int procfx_planet_begin (const float lo[4], const float hi[4], float soft,
 			 const float rim[4], const float look[3], unsigned int seed)
 {
@@ -484,12 +496,7 @@ int procfx_planet_begin (const float lo[4], const float hi[4], float soft,
 	glUniform3fv (g->u[U_LOOK], 1, look);
 	glUniform3f (g->u[U_SEED], seed & 0xff, (seed >> 8) & 0xff, (seed >> 16) & 0xff);
 	glUniform1f (g->u[U_SOFT], soft);
-	glUniform4fv (g->u[U_CL_COVER], 1, cl);
-	glUniform3fv (g->u[U_CL_TINT], 1, cl + 4);
-	glUniform4fv (g->u[U_CL_ROT], 1, cl + 7);
-	glUniform3fv (g->u[U_CL_SEED], 1, cl + 11);
-	glUniform3fv (g->u[U_CL_EYE], 1, cl + 14);
-	glUniform3fv (g->u[U_CL_SUN], 1, cl + 17);
+	cloud_uniforms (g, cl);
 	return 1;
 }
 
@@ -507,6 +514,84 @@ void procfx_planet_attr (double c, double mu, const double m[3])
 }
 
 void procfx_planet_end (void)
+{
+	glUseProgram (0);
+}
+
+/* The sky deck (docs/hd/clouds.md): the same clouds seen from the ground
+ * or the air.  Each fragment follows its model direction, gl_TexCoord[0],
+ * from the eye to the deck sphere: from below to where it leaves it, from
+ * above to where it first meets it (a miss, the most of the sky from
+ * above, goes first, and so does all of it within a hair of the deck's
+ * height).  The cover there is the orbit view's, cl_cover (q, 5), whose
+ * three detail octaves (at most 0.027 in all) are read only where the
+ * two-octave base is within their reach of the threshold: elsewhere the
+ * smoothstep is already 0 or 1, so the result is the same.  Where there
+ * is no cover, nothing more is done.  Overhead a finer
+ * noise (one octave at CL_FINE_K, drifting CL_FINE_DRIFT times the base's
+ * reshaping, gone once a cell is under a pixel) breaks the margins into
+ * separate clouds and shades their bases, darker where thick; it only
+ * moves cover that is neither clear nor full, so full cover stays one
+ * deck.  Lit as the orbit view lights it, a dim neutral at night; the
+ * thin cloud towards the sun brightens.  From below the deck thins into
+ * the air's colour with distance; from above only its lit grazing band
+ * shows (none at night, as from orbit), with the cap's own rim, fading
+ * out from 1.05R to 1.2R.  Within CL_T of the deck it gives way, so
+ * crossing it has no step.  gl_Color.a: deck_hook's fade. */
+static const char deck_glsl[] = CLOUD_GLSL
+	"uniform vec3 uClTint, uClEye, uClSun;\n"
+	"uniform vec4 uRim;\n"
+	"uniform float uSoft;\n"
+	"void main () {\n"
+	"	vec3 v = normalize (gl_TexCoord[0].xyz), e = uClEye, pc;\n"
+	"	float rd = 1.0 + CL_H, b = dot (e, v), c = dot (e, e) - rd*rd, h = b*b - c;\n"
+	"	float w = uClCover.w * min (abs (length (e) - rd) / CL_T, 1.0) * gl_Color.a;\n"
+	"	if (w < 0.004 || (c > 0.0 && (h <= 0.0 || b >= 0.0))) discard;\n"
+	"	float t = c < 0.0 ? sqrt (max (h, 0.0)) - b : -b - sqrt (max (h, 0.0));\n"
+	"	vec3 q = normalize (e + v * t), sn = normalize (uClSun);\n"
+	"	vec3 p = cl_q (q) * CL_FINE_K + uClSeed + vec3 (uClRot.zw, 0.0) * CL_FINE_DRIFT;\n"
+	"	float px = length (fwidth (p)), fine = 1.0 - smoothstep (0.3, 1.0, px), n = cl_base (q, pc);\n"
+	"	n = n > uClCover.x + uClCover.y + 0.027 ? uClCover.w\n"
+	"	  : n < uClCover.x - uClCover.y - 0.027 ? uClCover.z * uClCover.w : cl_cover (q, 5);\n"
+	"	if (n <= 0.0) discard;\n"
+	"	float u = n / uClCover.w, m = 0.0, s = dot (q, sn);\n"
+	"	float lit = smoothstep (-uSoft, uSoft, s + sqrt (2.0 * CL_H));\n"
+	"	if (fine > 0.0) m = (pf_noise (p) - 0.5) * fine;\n"
+	"	float a = mix (u, smoothstep (0.0, 1.0, clamp (u + 8.0 * m * u * (1.0 - u), 0.0, 1.0)), fine);\n"
+	"	vec3 col = uClTint * mix (vec3 (0.5, 0.55, 0.65), vec3 (0.97), smoothstep (-0.3, 0.7, s));\n"
+	"	if (c < 0.0) {\n"
+	"		float f = smoothstep (0.0, 0.06, t);\n"
+	"		col *= mix (1.0, 0.55, clamp (0.5 * u + 2.5 * m + 0.2, 0.0, 1.0));\n"
+	"		col += uClTint * 0.3 * (1.0 - a) * pow (max (dot (v, sn), 0.0), 6.0);\n"
+	"		col = mix (col * 0.08, mix (col, uRim.rgb, 0.5 * f), lit);\n"
+	"		a *= 1.0 - 0.6 * f;\n"
+	"	} else {\n"
+	"		float mu = max (-dot (v, q), 0.0);\n"
+	"		col = mix (col, uRim.rgb, uRim.a * 0.6 * pow (1.0 - mu, 4.0));\n"
+	"		a *= lit * (1.0 - smoothstep (1.05, 1.2, length (e)));\n"
+	"	}\n"
+	"	a *= w;\n"
+	"	gl_FragColor = vec4 (col, a);\n"
+	"}\n";
+
+int procfx_deck_begin (const float air[4], float soft)
+{
+	float cl[20];
+	struct PlanetProg *g;
+
+	memcpy (cl, cl_stage, sizeof cl);
+	memset (cl_stage, 0, sizeof cl_stage);
+	if (cl[3] <= 0.0f || flat_clouds || classic_ui || pixel_art
+	    || !(g = planet_prog_get (&pp_deck, "cloud deck", deck_glsl)))
+		return 0;
+	glUseProgram (g->prog);
+	glUniform4fv (g->u[U_RIM], 1, air);
+	glUniform1f (g->u[U_SOFT], soft);
+	cloud_uniforms (g, cl);
+	return 1;
+}
+
+void procfx_deck_end (void)
 {
 	glUseProgram (0);
 }
@@ -691,10 +776,12 @@ void procfx_forget (void)
 	if (sky_prog) glDeleteProgram (sky_prog);
 	if (pp_base.prog) glDeleteProgram (pp_base.prog);
 	if (pp_cl.prog) glDeleteProgram (pp_cl.prog);
+	if (pp_deck.prog) glDeleteProgram (pp_deck.prog);
 	if (end_prog) glDeleteProgram (end_prog);
 	if (corona_prog) glDeleteProgram (corona_prog);
 	sky_prog = end_prog = corona_prog = 0;
 	sky_failed = end_failed = corona_failed = 0;
 	memset (&pp_base, 0, sizeof pp_base);
 	memset (&pp_cl, 0, sizeof pp_cl);
+	memset (&pp_deck, 0, sizeof pp_deck);
 }

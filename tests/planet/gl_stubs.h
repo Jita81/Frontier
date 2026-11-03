@@ -77,6 +77,7 @@ void glColor4f (GLfloat r, GLfloat g, GLfloat b, GLfloat a) { (void) r; (void) g
 void glColor4ub (GLubyte r, GLubyte g, GLubyte b, GLubyte a) { (void) r; (void) g; (void) b; (void) a; }
 void glTexCoord2dv (const GLdouble *v) { pixel_sum += (v[0] == v[0]) + (v[1] == v[1]); }
 void glTexCoord2d (GLdouble s, GLdouble t) { (void) s; (void) t; }
+void glTexCoord3dv (const GLdouble *v) { pixel_sum += (v[0] == v[0]) + (v[2] == v[2]); }
 void glVertex3d (GLdouble x, GLdouble y, GLdouble z) { (void) x; (void) y; (void) z; vertex_count++; }
 void glVertex3dv (const GLdouble *v) { (void) v[2]; vertex_count++; }
 void glBlendFunc (GLenum a, GLenum b) { (void) a; (void) b; }
@@ -103,6 +104,8 @@ void procfx_planet_attr (double c, double mu, const double m[3])
 }
 void procfx_planet_bind (int unit, unsigned int tex) { (void) unit; glBindTexture (GL_TEXTURE_2D, tex); }
 void procfx_planet_end (void) { }
+int procfx_deck_begin (const float air[4], float soft) { (void) air; (void) soft; return 0; }
+void procfx_deck_end (void) { }
 void procfx_planet_clouds (const float cover[4], const float tint[3], const float rot[4],
 			   const float seed[3], const float eye[3], const float sun[3])
 {
