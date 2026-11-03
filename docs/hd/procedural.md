@@ -325,7 +325,8 @@ the core.
 
 The cloud is the game's five nested discs; `hyper_glow` draws each as four
 alpha steps (cover 0.6, 0.44 and 0.3, then a halo gone by 1.3x the radius),
-so they read as bands at about the old single soft disc's brightness.  The
+so they read as bands at about the old single soft disc's brightness (the
+intro's glows keep the single soft disc: banded, they read as hard rings).  The
 original's circle draw skips a disc whose size word `d2` (its diameter in
 ST pixels, the word `Nu_DrawBlob` and `Nu_DrawCircle` both read) is `$3f0`
 or more (fe2.s:6560), so its cloud is gone once you are close; HD drew
