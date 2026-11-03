@@ -1990,39 +1990,46 @@ static unsigned int hull_model_key (void);
 extern int flat_exhaust;	/* --flat-exhaust (main.c) */
 
 /* HD engine exhaust (C5): 0 for the game's flat teardrop, else bit 31 and
- * a flicker byte. Only ships get it: the game's own table, the model words
+ * the flicker. Only ships get it: the game's own table, the model words
  * above the missiles' ($a-$10) and below the stations' and ports' ($50 on),
  * so chimney flares keep the base look; in the intro (exhaust_intro) the
  * parts with a hull_models[] row that is not a building's, or an EXHAUST
- * row of hull_intro_fx. The flicker is seeded by the object's record and
- * the game's clock (A6+524, which stands still while paused; it runs in
- * the intro too), so a frame draws the same in every run; in the intro by
- * the part and its plume's place in the frame as well, as a scene's ships
- * share its record. */
+ * row of hull_intro_fx. --flat-exhaust and --flat-fx keep the flat fill.
+ * The flicker (exhaust_hd) is two bytes hashed from the object's record,
+ * the plume's place among its record's plumes this frame (twin engines;
+ * a scene's ships in the intro, with the part's word w) and two ticks of
+ * the game's clock (A6+524 >> 12, about 4 frames at 1x; it stands still
+ * while paused), now's and the next, and the way between them (bits 4-11):
+ * a frame draws the same in every run. */
 static unsigned int hull_frame_no;	/* the engine's frames, for hull_anim_bind and the plumes */
+static unsigned int exhaust_hd (unsigned int w)
+{
+	static unsigned int frame, rec, order;
+	unsigned int r = STMemory_ReadLong (GetReg (REG_A6) - 212), t = STMemory_ReadLong (__DL5eb6_a6_base + 524) >> 4;
+
+	if (frame != hull_frame_no || rec != r) frame = hull_frame_no, rec = r, order = 0;
+	r ^= hull_mix (w ^ ++order << 16);
+	return 0x80000000u | (t & 0xff) << 16 | (hull_mix (r ^ hull_mix ((t >> 8) + 1)) & 0xff) << 8 |
+		(hull_mix (r ^ hull_mix (t >> 8)) & 0xff);
+}
 static unsigned int exhaust_intro (void)
 {
-	static unsigned int frame, order;
 	unsigned int w = hull_intro_fx_part (), k = 0x80000000u | HULL_TAB_INTRO | HULL_TAB_SCENE | w;
 	float sc, off[2];
 
 	if (!w || (hull_intro_fx (w, NULL) != HULL_FX_EXHAUST &&
 		   (!hull_key_listed (k) || HULL_BUILDING (hull_class_of_key (k, &sc, off)))))
 		return 0;
-	if (frame != hull_frame_no) frame = hull_frame_no, order = 0;
-	order++;
-	return 0x80000000u | (hull_mix (STMemory_ReadLong (GetReg (REG_A6) - 212) ^
-		hull_mix (w ^ order << 16 ^ STMemory_ReadLong (__DL5eb6_a6_base + 524) >> 12)) & 0xff);
+	return exhaust_hd (w);
 }
 static unsigned int exhaust_put (void)
 {
-	unsigned int key = flat_exhaust || use_renderer != R_GL ? 0 : hull_model_key ();
+	unsigned int key = flat_exhaust || flat_fx || use_renderer != R_GL ? 0 : hull_model_key ();
 	unsigned int m = HULL_KEY_MODEL (key);
 
 	if (HULL_KEY_OK (key) && (key & HULL_TAB_INTRO)) return exhaust_intro ();
 	if (!HULL_KEY_OK (key) || m < 0x12 || m > 0x4e) return 0;
-	return 0x80000000u | (hull_mix (STMemory_ReadLong (GetReg (REG_A6) - 212) ^
-		hull_mix (STMemory_ReadLong (__DL5eb6_a6_base + 524) >> 12)) & 0xff);
+	return exhaust_hd (0);
 }
 
 #define TD_STRETCH	1.3333333333
@@ -2030,26 +2037,34 @@ static unsigned int exhaust_put (void)
 
 /* One layer of the HD plume: the teardrop from a point on its axis, alpha a
  * out to a ring 85% of the way to the rim and 0 at the rim, so the body
- * keeps the game's width and only its edge is soft. */
-static void exhaust_fan (GLfloat cp[4][3], const GLfloat mid[3], float r, float g, float b, float a)
+ * keeps the game's width and only its edge is soft; the ring's alpha falls
+ * by the fraction tail of a toward the pointed tail (4t(1-t) runs from 0
+ * at the tail to 1 at the engine). */
+static void exhaust_fan (GLfloat cp[4][3], const GLfloat mid[3], const float *c, float a, float tail)
 {
 	GLdouble rim[TD_BEZIER_STEPS + 1][3], ring[TD_BEZIER_STEPS + 1][3];
+	float ra[TD_BEZIER_STEPS + 1], t;
 	int i, k;
 
 	for (i = 0; i <= TD_BEZIER_STEPS; i++) {
-		eval_bezier (rim[i], i * (1.0f / TD_BEZIER_STEPS), cp);
+		t = i * (1.0f / TD_BEZIER_STEPS);
+		eval_bezier (rim[i], t, cp);
 		for (k = 0; k < 3; k++) ring[i][k] = mid[k] + 0.85 * (rim[i][k] - mid[k]);
+		ra[i] = a * (1.0f - tail * (1.0f - 4.0f * t * (1.0f - t)));
 	}
 	glBegin (GL_TRIANGLE_FAN);
-	glColor4f (r, g, b, a);
+	glColor4f (c[0], c[1], c[2], a);
 	glVertex3fv (mid);
-	for (i = 0; i <= TD_BEZIER_STEPS; i++) glVertex3dv (ring[i]);
+	for (i = 0; i <= TD_BEZIER_STEPS; i++) {
+		glColor4f (c[0], c[1], c[2], ra[i]);
+		glVertex3dv (ring[i]);
+	}
 	glEnd ();
 	glBegin (GL_QUAD_STRIP);
 	for (i = 0; i <= TD_BEZIER_STEPS; i++) {
-		glColor4f (r, g, b, a);
+		glColor4f (c[0], c[1], c[2], ra[i]);
 		glVertex3dv (ring[i]);
-		glColor4f (r, g, b, 0.0f);
+		glColor4f (c[0], c[1], c[2], 0.0f);
 		glVertex3dv (rim[i]);
 	}
 	glEnd ();
@@ -2145,28 +2160,43 @@ void Nu_DrawTeardrop (void **data)
 	}
 
 	if (hd) {
-		/* the halo: the game's outline and colour, soft to its rim; then
-		 * a core toward white, half as wide and 80% (+-8% flicker) as
-		 * long, from the engine end: the outline scaled about the engine
-		 * (by len along the axis, by half across), so it stays inside it. */
-		GLfloat core[4][3], mid[3];
-		float c[3] = { (unsigned char) r / 255.0f, (unsigned char) g / 255.0f, (unsigned char) b / 255.0f };
-		float len = 0.8f * (1.0f + 0.08f * ((float) (hd & 0xff) / 127.5f - 1.0f));
+		/* Four soft layers, each the game's outline scaled about the
+		 * engine end by s along the axis and w across (w <= sqrt (s)
+		 * keeps it inside): the fringe, the whole outline in the colour
+		 * deepened, fading to the tail; the body in the game's colour;
+		 * then, added, the core toward white and a warm nozzle spot.
+		 * Thrust th, 0 idle to 1 full burn, from the plume's length over
+		 * its half-width (about 1 idle, 8 full: the game's own proxy)
+		 * sets the core's length and the flicker's depth (exhaust_hd). */
+		GLfloat lay[4][3], mid[3];
+		float col[4][3], th = log2f (len_dir / half_w) / 3.0f, f = (hd >> 16 & 0xff) / 256.0f;
+		float fl = ((hd & 0xff) * (1.0f - f) + (hd >> 8 & 0xff) * f) / 127.5f - 1.0f;
+		float s[4] = { 1.0f, 0.8f, 0.0f, 0.2f }, w[4] = { 1.0f, 0.75f, 0.45f, 0.4f };
+		float a[4] = { 0.75f, 0.8f, 0.9f, 0.0f }, tail[4] = { 0.45f, 0.35f, 0.2f, 0.0f };
 
+		th = th > 0.0f ? (th < 1.0f ? th : 1.0f) : 0.0f;
+		s[2] = (0.45f + 0.35f * th) * (1.0f + (0.03f + 0.09f * th) * fl);
+		a[3] = 0.5f + 0.4f * th;
+		for (i = 0; i < 3; i++) {
+			col[1][i] = (unsigned char) (i == 0 ? r : i == 1 ? g : b) / 255.0f;
+			col[0][i] = 0.75f * col[1][i] * col[1][i];
+			col[2][i] = 0.3f * col[1][i] + 0.7f;
+			col[3][i] = 1.0f - 0.1f * i;
+		}
 		glPushAttrib (GL_COLOR_BUFFER_BIT | GL_CURRENT_BIT | GL_LIGHTING_BIT);
 		glEnable (GL_BLEND);
 		glShadeModel (GL_SMOOTH);
 		glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-		for (i = 0; i < 3; i++) mid[i] = ctrlpoints[0][i] + 0.6f * dir[i];
-		exhaust_fan (ctrlpoints, mid, c[0], c[1], c[2], 0.8f);
-		for (i = 0; i < 3; i++) {
-			core[0][i] = core[3][i] = eng[i] - len * dir[i];
-			core[1][i] = core[0][i] + TD_STRETCH * len * dir[i] + 0.5f * ppd[i];
-			core[2][i] = core[0][i] + TD_STRETCH * len * dir[i] - 0.5f * ppd[i];
-			mid[i] = eng[i] - 0.4f * len * dir[i];
+		for (k = 0; k < 4; k++) {
+			for (i = 0; i < 3; i++) {
+				lay[0][i] = lay[3][i] = eng[i] - s[k] * dir[i];
+				lay[1][i] = lay[0][i] + TD_STRETCH * s[k] * dir[i] + w[k] * ppd[i];
+				lay[2][i] = lay[0][i] + TD_STRETCH * s[k] * dir[i] - w[k] * ppd[i];
+				mid[i] = eng[i] - 0.4f * s[k] * dir[i];
+			}
+			if (k == 2) glBlendFunc (GL_SRC_ALPHA, GL_ONE);
+			exhaust_fan (lay, mid, col[k], a[k], tail[k]);
 		}
-		glBlendFunc (GL_SRC_ALPHA, GL_ONE);
-		exhaust_fan (core, mid, 0.3f * c[0] + 0.7f, 0.3f * c[1] + 0.7f, 0.3f * c[2] + 0.7f, 0.9f);
 		glPopAttrib ();
 		return;
 	}
@@ -3286,7 +3316,7 @@ static const char hull_fs5[] =
 	"	vec2 jx = dFdx (vUV.xy), jy = dFdy (vUV.xy);\n"
 	"	float e = dot (jx, jx) + dot (jy, jy), det = abs (jx.x * jy.y - jx.y * jy.x);\n"
 	"	float fa = uG > 0.0 ? 1.0 - smoothstep (uG, 1.5 * uG, e / max (det, 1e-4 * e + 1e-30)) : 1.0;\n"
-	"	float fd = (1.0 - smoothstep (0.015, 0.06, sqrt (max (dot (jx, jx), dot (jy, jy))))) * fa;\n"
+	"	float fp = sqrt (max (dot (jx, jx), dot (jy, jy))), fd = (1.0 - smoothstep (0.015, 0.06, fp)) * fa;\n"
 	"	float tone = mix (1.0, a.b * a.a * 2.0, fd) * mix (1.0, a2.b * a2.a * 2.0, 0.5 * fa);\n"
 	"	vec3 L = normalize (vLT.xyz), V = normalize (vVT.xyz);\n"
 	"	float mx = max (max (vCol.r, vCol.g), vCol.b), mn = min (min (vCol.r, vCol.g), vCol.b);\n"
@@ -3312,10 +3342,12 @@ static const char hull_fs5[] =
 	"	col = mix (col, vec3 (dot (col, vec3 (0.3, 0.59, 0.11))), 0.3 * max (ws, 0.0));\n"
 	"#endif\n"
 	"	if (uB.w > 0.0) {\n"
-	"		float ga = b.r * fd * (0.6 + 0.4 * (1.0 - abs (V.z)));\n"
-	"		float y = dot (col, vec3 (0.3, 0.59, 0.11)), sl = max (dot (uB.rgb, vec3 (0.3, 0.59, 0.11)), 0.05);\n"
-	"		col = mix (col, y * uB.rgb / sl, 0.55 * ga);\n"
-	"		col *= 1.0 - 0.3 * (1.0 - smoothstep (0.0, 0.15, vLT.w));\n"
+	"		float gm = clamp (2.5 * b.r, 0.0, 1.0), sl = dot (uB.rgb, vec3 (0.3, 0.59, 0.11));\n"
+	"		float ga = gm * fd * (0.6 + 0.4 * (1.0 - abs (V.z))) * smoothstep (0.02, 0.12, sl);\n"
+	"		col *= mix (1.0, 0.42 + b.r, gm * (1.0 - smoothstep (0.005, 0.016, fp)));\n"
+	"		float y = dot (col, vec3 (0.3, 0.59, 0.11));\n"
+	"		col = mix (col, min (y * uB.rgb / max (sl, 0.02), vec3 (1.0)), 0.55 * ga);\n"
+	"		col *= 1.0 - 0.3 * fd * (1.0 - smoothstep (0.0, 0.15, vLT.w));\n"
 	"	}\n"
 	"	float top = max (max (col.r, col.g), col.b);\n"
 	"	if (top > 0.85) col *= (0.85 + 0.15 * (1.0 - exp ((0.85 - top) / 0.15))) / top;\n"
@@ -3830,13 +3862,19 @@ static int hull_marking (const int rgb[3])
 
 /* a port's wall takes its storeys (hull.c, paint_storeys) from its foot,
  * the lowest of its corners in the model's frame (v runs up the model's y,
- * as hull_obj_tan lays it), and its panes from a column at its one end, a
- * whole number of panes (a sixteenth of a tile) across it, stretched by at
- * most a thirty-second of a tile over its width; so no pane is cut at
- * either end */
-static void hull_storey_fit (struct HullFrame *f, int n)
+ * as hull_obj_tan lays it), and its panes from a column at its one end.
+ * It is stretched to a whole number of panes (a sixteenth of a tile)
+ * across, by at most half a pane over its width (a wall narrower than a
+ * pane takes one, twice over at half a pane, more on a sliver), and of
+ * storeys up when over half a storey high, by at most half a storey (the
+ * game's own lit windows on a tower then sit one to each of its storeys);
+ * so no pane or storey is cut at an edge. The grounding (hull_gnd) is the
+ * height over the model's ground, its y = 0, in tiles (t: a tile in model
+ * units), not over the wall's own foot, so a wall stacked on another is
+ * not darkened at its foot mid-facade. */
+static void hull_storey_fit (struct HullFrame *f, int n, const float w[][3], float t)
 {
-	float lo[2] = { 1e30f, 1e30f }, hi[2] = { -1e30f, -1e30f }, k;
+	float lo[2] = { 1e30f, 1e30f }, hi[2] = { -1e30f, -1e30f }, k[2], e;
 	int i, j;
 
 	for (i = 0; i < n; i++)
@@ -3844,12 +3882,14 @@ static void hull_storey_fit (struct HullFrame *f, int n)
 			if (f->uv[i][j] < lo[j]) lo[j] = f->uv[i][j];
 			if (f->uv[i][j] > hi[j]) hi[j] = f->uv[i][j];
 		}
-	k = hi[0] - lo[0];
-	k = k > 0 ? (floorf (k * 16 + 0.5f) > 1 ? floorf (k * 16 + 0.5f) : 1) / (16 * k) : 1;
+	e = (hi[0] - lo[0]) * 16;
+	k[0] = e > 0 ? (floorf (e + 0.5f) > 1 ? floorf (e + 0.5f) : 1) / e : 1;
+	e = (hi[1] - lo[1]) * 4;
+	k[1] = e >= 0.5f ? floorf (e + 0.5f) / e : 1;
 	for (i = 0; i < n; i++) {
-		f->uv[i][0] = (f->uv[i][0] - lo[0]) * k;
-		f->uv[i][1] -= lo[1];
-		hull_gnd[i] = f->uv[i][1];
+		f->uv[i][0] = (f->uv[i][0] - lo[0]) * k[0];
+		f->uv[i][1] = (f->uv[i][1] - lo[1]) * k[1];
+		hull_gnd[i] = w[i][1] / t;
 	}
 }
 
@@ -3921,7 +3961,7 @@ static int hull_paint5 (double p[][3], int n, const struct HullCtx *cx, int host
 		hull_end ();
 		return 0;
 	}
-	if (cls == HC_BUILDING) hull_storey_fit (hf, n);
+	if (cls == HC_BUILDING) hull_storey_fit (hf, n, cx->w, hull_classes[cls].panel * sc);
 #ifdef HULL_SHADERS
 	if (hull_program5 () && hull_begin5 (cls, calm)) {
 		hull_wear_face (cx, n, hull_classes[cls].panel * sc);
