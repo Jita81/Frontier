@@ -2681,7 +2681,8 @@ struct HullCtx {
 				 * hull_bay_outside); the face changes shape against its
 				 * model in a way the tile cannot follow, so it is flat
 				 * (bit 2, hull_anim_bind); a ship's part that is not
-				 * its hull, flat (bit 3) */
+				 * its hull, flat (bit 3); a building's facade (bits 4
+				 * to 11, its w in its port's frame: hull_obj_coords) */
 	float w[4][3];
 };
 
@@ -3018,7 +3019,7 @@ static int hull_obj_coords (unsigned int key, unsigned int seed, unsigned int a6
 {
 	double M[9], Mo[9], q = 0;
 	float wo[4][3], sc, off[2];
-	int o[3], oo[3], i, j, k, wok, a;
+	int o[3], oo[3], i, j, k, wok, a, cls;
 
 	if (!hull_model_frame (key, M, o, Mo, oo)) return 0;
 	for (i = 0; i < n; i++) {
@@ -3041,7 +3042,8 @@ static int hull_obj_coords (unsigned int key, unsigned int seed, unsigned int a6
 	/* a ship's part from another model (the missiles on its pylons) is
 	 * not its hull: flat, like a missile in flight. The buildings' parts
 	 * (the hangar's doors and walls) are theirs. */
-	if (!HULL_BUILDING (hull_class_of_key (key, &sc, off)) && (a = hull_part_word (key)) >= 0) {
+	cls = hull_class_of_key (key, &sc, off);
+	if (!HULL_BUILDING (cls) && (a = hull_part_word (key)) >= 0) {
 		if (hull_log_on ())
 			hull_log_face (key, 0xff000000u | a, NULL, "a part from another model (a missile on a pylon), not hull, drawn flat");
 		return wok | 8;
@@ -3056,6 +3058,20 @@ static int hull_obj_coords (unsigned int key, unsigned int seed, unsigned int a6
 			       "changes shape against its model, drawn flat while it does" :
 			       "moves against its model, the tile bound to it");
 	if (a & HULL_ANIM_FLAT) wok |= 4;
+	/* a port's building is mapped in the port's frame, whose ground is its
+	 * y = 0 (a part's own y = 0 can be well over or under it), and known
+	 * by where its part stands on the port, in cells of two tiles: the
+	 * facade it takes (hull_paint5) in bits 4 to 11 */
+	if (cls == HC_BUILDING) {
+		unsigned int h = key & 0xffff;
+		for (j = 0; j < 3; j += 2) {
+			double t = 0;
+			for (k = 0; k < 3; k++) t += Mo[3*j+k] * ((double) o[k] - oo[k]);
+			h = hull_mix (h ^ (unsigned int) (int) floor (t / 131072.0));
+		}
+		memcpy (w, wo, n * sizeof wo[0]);
+		wok |= (h & 255) << 4;
+	}
 	return wok;
 }
 
@@ -3316,6 +3332,10 @@ static const char hull_fs5[] =
 	"{\n"
 	"	vec4 a = texture2D (tA, vUV.xy), b = texture2D (tB, vUV.xy);\n"
 	"	vec4 a2 = texture2D (tA, vUV.zw, 4.0), b2 = texture2D (tB, vUV.zw, 4.0);\n"
+	"	if (uB.w >= 4.0) {	/* a roof: none of the storeys' tile */\n"
+	"		a = a2 = vec4 (0.5, 0.5, 0.5, 1.0);\n"
+	"		b = b2 = vec4 (0.0, 0.1, uQ.y, 0.0);\n"
+	"	}\n"
 	"	vec2 jx = dFdx (vUV.xy), jy = dFdy (vUV.xy);\n"
 	"	float e = dot (jx, jx) + dot (jy, jy), det = abs (jx.x * jy.y - jx.y * jy.x);\n"
 	"	float fa = uG > 0.0 ? 1.0 - smoothstep (uG, 1.5 * uG, e / max (det, 1e-4 * e + 1e-30)) : 1.0;\n"
@@ -3344,14 +3364,25 @@ static const char hull_fs5[] =
 	"	col *= mix (vec3 (1.0), vec3 (1.04, 1.0, 0.92), max (-ws, 0.0));\n"
 	"	col = mix (col, vec3 (dot (col, vec3 (0.3, 0.59, 0.11))), 0.3 * paint * max (ws, 0.0));\n"
 	"#endif\n"
-	"	if (uB.w > 0.0) {\n"
+	"	if (uB.w >= 4.0) {\n"
+	"		vec2 r = vUV.xy * 4.0, s = 0.5 - abs (fract (r) - 0.5), f = fwidth (r);\n"
+	"		float h = fract (sin (dot (floor (r), vec2 (12.9898, 78.233)) + uB.w * 61.0) * 43758.5453);\n"
+	"		float sm = (1.0 - smoothstep (0.02, 0.02 + f.x, s.x) * smoothstep (0.02, 0.02 + f.y, s.y))\n"
+	"			 * (1.0 - smoothstep (0.005, 0.02, fp));\n"
+	"		float pa = smoothstep (0.5, 2.0, 0.025 / max (fwidth (d), 1e-5)), pe = smoothstep (0.02, 0.025, d);\n"
+	"		col = mix (col, vec3 (dot (col, vec3 (0.3, 0.59, 0.11))), 0.25) * 0.88;\n"
+	"		col *= 1.0 + fd * (0.06 * (h - 0.5) - 0.08 * sm + pa * (0.1 * (1.0 - pe) - 0.08 * (pe - smoothstep (0.025, 0.05, d))));\n"
+	"	} else if (uB.w > 0.0) {\n"
 	"		float gm = clamp (2.5 * b.r, 0.0, 1.0), sl = dot (uB.rgb, vec3 (0.3, 0.59, 0.11));\n"
+	"		if (uB.w >= 3.0) gm = max (gm, 0.55);	/* curtain wall */\n"
+	"		else if (uB.w >= 2.0) gm *= step (0.5, fract (vUV.x * 8.0));	/* punched */\n"
 	"		float ga = gm * fd * (0.6 + 0.4 * (1.0 - abs (V.z))) * smoothstep (0.02, 0.12, sl);\n"
 	"		col *= mix (1.0, 0.42 + b.r, gm * (1.0 - smoothstep (0.005, 0.016, fp)));\n"
 	"		float y = dot (col, vec3 (0.3, 0.59, 0.11));\n"
 	"		col = mix (col, min (y * uB.rgb / max (sl, 0.02), vec3 (1.0)), 0.55 * ga);\n"
 	"		col *= 1.0 - 0.3 * fd * (1.0 - smoothstep (0.0, 0.15, vLT.w));\n"
 	"	}\n"
+	"	if (uB.w > 0.0) col *= 0.96 + 0.16 * fract (uB.w);\n"
 	"	float top = max (max (col.r, col.g), col.b);\n"
 	"	if (top > 0.85) col *= (0.85 + 0.15 * (1.0 - exp ((0.85 - top) / 0.15))) / top;\n"
 	"	vec3 H = normalize (L + V);\n"
@@ -3579,10 +3610,7 @@ static int hull_begin5 (int cls, int calm)
 	glUniform4f (hull_uloc5[0], c->bump * (calm ? 0.7f : 1.0f), c->gloss, c->shine, c->ao);
 	glUniform4f (hull_uloc5[1], c->tint, hull_cls[cls].grime, calm ? 0.5f : 1.0f, calm ? 0.0f : 1.0f);
 	glUniform1f (hull_uloc5[2], c->graze);
-	if (cls == HC_BUILDING) {	/* the sky the glass takes, the game's own */
-		unsigned int sk = MainRGBPalette[fe2_bgcol];
-		glUniform4f (hull_uloc5[3], (sk & 255) / 255.0f, (sk >> 8 & 255) / 255.0f, (sk >> 16 & 255) / 255.0f, 1);
-	} else glUniform4f (hull_uloc5[3], 0, 0, 0, 0);
+	glUniform4f (hull_uloc5[3], 0, 0, 0, 0);	/* a building's: hull_paint5 */
 	hull_on = 2;
 	hull_cur = cur;
 	return 1;
@@ -3864,18 +3892,19 @@ static int hull_marking (const int rgb[3])
 }
 
 /* a port's wall takes its storeys (hull.c, paint_storeys) from its foot,
- * the lowest of its corners in the model's frame (v runs up the model's y,
- * as hull_obj_tan lays it), and its panes from a column at its one end.
- * It is stretched to a whole number of panes (a sixteenth of a tile)
- * across, by at most half a pane over its width (a wall narrower than a
- * pane takes one, twice over at half a pane, more on a sliver), and of
+ * the lowest of its corners in the port's frame (v runs up its y, as
+ * hull_obj_tan lays it), and its panes from a column at its one end.
+ * It is stretched to a whole number of panes (a sixteenth of a tile over
+ * ds, the building's pane density; a roof, ds 0, is only moved) across,
+ * by at most half a pane over its width (a wall narrower than a pane
+ * takes one, twice over at half a pane, more on a sliver), and of
  * storeys up when over half a storey high, by at most half a storey (the
  * game's own lit windows on a tower then sit one to each of its storeys);
  * so no pane or storey is cut at an edge. The grounding (hull_gnd) is the
- * height over the model's ground, its y = 0, in tiles (t: a tile in model
- * units), not over the wall's own foot, so a wall stacked on another is
- * not darkened at its foot mid-facade. */
-static void hull_storey_fit (struct HullFrame *f, int n, const float w[][3], float t)
+ * height over the port's ground, its y = 0 (hull_obj_coords), in tiles
+ * (t: a tile in model units), not over the wall's own foot, so a wall
+ * stacked on another is not darkened at its foot mid-facade. */
+static void hull_storey_fit (struct HullFrame *f, int n, const float w[][3], float t, float ds)
 {
 	float lo[2] = { 1e30f, 1e30f }, hi[2] = { -1e30f, -1e30f }, k[2], e;
 	int i, j;
@@ -3885,9 +3914,9 @@ static void hull_storey_fit (struct HullFrame *f, int n, const float w[][3], flo
 			if (f->uv[i][j] < lo[j]) lo[j] = f->uv[i][j];
 			if (f->uv[i][j] > hi[j]) hi[j] = f->uv[i][j];
 		}
-	e = (hi[0] - lo[0]) * 16;
-	k[0] = e > 0 ? (floorf (e + 0.5f) > 1 ? floorf (e + 0.5f) : 1) / e : 1;
-	e = (hi[1] - lo[1]) * 4;
+	e = (hi[0] - lo[0]) * 16 * ds;
+	k[0] = e > 0 ? (floorf (e + 0.5f) > 1 ? floorf (e + 0.5f) : 1) / e * ds : 1;
+	e = (hi[1] - lo[1]) * 4 * (ds > 0);
 	k[1] = e >= 0.5f ? floorf (e + 0.5f) / e : 1;
 	for (i = 0; i < n; i++) {
 		f->uv[i][0] = (f->uv[i][0] - lo[0]) * k[0];
@@ -3896,11 +3925,28 @@ static void hull_storey_fit (struct HullFrame *f, int n, const float w[][3], flo
 	}
 }
 
+/* a building's roof: square to the port's up (not a dome's or an arch's
+ * facet) and 0.15 of a tile (t) or more over its ground, so not its
+ * apron, a pad or a road */
+static int hull_roof (const float w[][3], int n, float t)
+{
+	float a[3], b[3], N[3];
+	int i, q = n == 4;
+
+	for (i = 0; i < n; i++) if (w[i][1] < 0.15f * t) return 0;
+	for (i = 0; i < 3; i++) {
+		a[i] = w[1 + q][i] - w[0][i];
+		b[i] = w[2 + q][i] - w[q][i];
+	}
+	for (i = 0; i < 3; i++) N[i] = a[(i + 1) % 3] * b[(i + 2) % 3] - a[(i + 2) % 3] * b[(i + 1) % 3];
+	return N[1] * N[1] >= 0.97f * (N[0] * N[0] + N[1] * N[1] + N[2] * N[2]);
+}
+
 static int hull_paint5 (double p[][3], int n, const struct HullCtx *cx, int host,
 			const int rgb[3], float st[][2], struct HullFrame *hf)
 {
 	float sc, off[2];
-	int cls = hull_class_of_key (cx->key, &sc, off), i;
+	int cls = hull_class_of_key (cx->key, &sc, off), i, roof, v = cx->wok >> 4;
 	double wpanel = hull_classes[cls].panel * sc;	/* the model's, for the wear */
 	int mx = rgb[0] > rgb[1] ? rgb[0] : rgb[1], mn = rgb[0] < rgb[1] ? rgb[0] : rgb[1];
 	int calm = host && !HULL_BUILDING (cls);
@@ -3941,10 +3987,13 @@ static int hull_paint5 (double p[][3], int n, const struct HullCtx *cx, int host
 	}
 	/* the hangar's floor and ceiling are its deck plating */
 	if (cls == HC_HANGAR && cx->wok && hull_obj_axis (cx->w, n) == HULL_DECK_AXIS) cls = HC_DECK;
-	/* a port's apron and roofs, a face too small for a storey or two (a
-	 * sign board, a kiosk) and a face with no model frame stay flat */
-	if (cls == HC_BUILDING && (!cx->wok || hull_obj_axis (cx->w, n) == HULL_DECK_AXIS ||
-				   hull_obj_span (cx->w, n) < 0.6 * hull_classes[cls].panel * sc)) {
+	/* a port's apron, pads and roads, a face too small for a storey or two
+	 * (a sign board, a kiosk) and a face with no model frame stay flat; a
+	 * roof takes the roof (hull_roof) */
+	roof = cls == HC_BUILDING && cx->wok && hull_obj_axis (cx->w, n) == HULL_DECK_AXIS &&
+	       hull_roof (cx->w, n, hull_classes[cls].panel * sc);
+	if (cls == HC_BUILDING && !roof && (!cx->wok || hull_obj_axis (cx->w, n) == HULL_DECK_AXIS ||
+					    hull_obj_span (cx->w, n) < 0.6 * hull_classes[cls].panel * sc)) {
 		hull_end ();
 		return 0;
 	}
@@ -3965,13 +4014,25 @@ static int hull_paint5 (double p[][3], int n, const struct HullCtx *cx, int host
 		hull_end ();
 		return 0;
 	}
-	if (cls == HC_BUILDING) hull_storey_fit (hf, n, cx->w, hull_classes[cls].panel * sc);
+	/* a building's pane density: 1, 3/4 or 5/4 (hull_obj_coords, v) */
+	if (cls == HC_BUILDING) hull_storey_fit (hf, n, cx->w, hull_classes[cls].panel * sc,
+						 roof ? 0 : 1 + (v / 3 % 3 == 1 ? -0.25f : v / 3 % 3 == 2 ? 0.25f : 0));
 #ifdef HULL_SHADERS
 	if (hull_program5 () && hull_begin5 (cls, calm)) {
 		if (!flat_wear) hull_wear_face (cx, n, wpanel);
+		if (cls == HC_BUILDING) {	/* the sky the glass takes, the game's own; the
+						 * facade (1 to 3) or roof (4), and the tone */
+			unsigned int sk = MainRGBPalette[fe2_bgcol];
+			glUniform4f (hull_uloc5[3], (sk & 255) / 255.0f, (sk >> 8 & 255) / 255.0f,
+				     (sk >> 16 & 255) / 255.0f, (roof ? 4 : 1 + v % 3) + ((v >> 4) + 0.5f) / 32);
+		}
 		return 2;
 	}
 #endif
+	if (roof) {	/* no roof but by the shader */
+		hull_end ();
+		return 0;
+	}
 	if (hull_cls[cls].failed) return hull_use (p, n, st);
 	for (i = 0; i < n; i++) {
 		st[i][0] = hf->uv[i][0];
