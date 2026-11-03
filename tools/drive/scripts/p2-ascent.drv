@@ -1,0 +1,96 @@
+# p2-ascent.drv - Phase 2 tour: lift off from an atmospheric surface port and
+# climb straight up through the cloud deck into space.
+#
+# Verifies: clouds2 (W5b) the sky deck seen from the pad, from inside it and
+# from above it, and that the deck hands over to the orbit view of the clouds
+# (procfx PF_CLOUDS) at 1.25R without a jump.
+# Run:  tools/p2shots --routes ascent --base BASE --branch BRANCH
+# Expect: 01 the pad (front view) after 15 s landed, 02 the rear view just
+#         after the climb starts, 03 at the deck (d/R about 1.0020),
+#         04 just above it (about 1.004), 05 high (about 1.19, below the
+#         1.25R hand-over), 06 space (about 1.39).  The rear view looks
+#         straight down once the nose is up.
+# The d/R figures were read with FE2_CLDBG on an unloaded machine; the game
+# clock follows wall time, so a busy machine moves them a little.
+# Each shot pauses the game (Esc) and resumes it at 1x (Shift+F1); the
+# pointer is parked off the controls so no hover tip is drawn.
+# Log markers: padtime..padend (landed, for frame timing), climb..climbend.
+
+wait 6000
+key space
+wait 2000
+key 2             # start position 2: landed at a surface port with an atmosphere
+wait 11000
+mouse 2 120
+log padtime
+wait 15000
+log padend
+sdlkey esc
+wait 600
+shot 01-pad
+sdlkey f1 shift
+mouse 57 193      # comms: ask for launch clearance
+wait 300
+click 200
+wait 2500
+mouse 171 57
+wait 300
+click 200
+wait 3000
+mouse 263 193     # lift off
+wait 300
+click 200
+wait 2000
+mouse 2 120
+wait 7000
+press right       # pitch the nose up (right button + mouse)
+move 0 -8 50 20
+release right
+wait 300
+press right
+move 0 -8 50 20
+release right
+wait 300
+press right
+move 0 8 150 20
+release right
+wait 300
+press right
+move 0 8 100 20
+release right
+wait 300
+mouse 8 193       # the view icon: rear view, straight down once climbing
+wait 300
+click 200
+wait 2500
+mouse 2 120
+wait 300
+sdlkey esc
+wait 600
+shot 02-low
+sdlkey f1 shift
+log climb
+keydown return    # full thrust
+wait 8400
+sdlkey esc
+wait 600
+shot 03-deck
+sdlkey f1 shift
+wait 2800
+sdlkey esc
+wait 600
+shot 04-above
+sdlkey f1 shift
+sdlkey f2 shift   # 10x
+wait 12000
+sdlkey esc
+wait 600
+shot 05-high
+sdlkey f1 shift
+sdlkey f2 shift
+wait 5000
+sdlkey esc
+wait 600
+shot 06-space
+log climbend
+quit
