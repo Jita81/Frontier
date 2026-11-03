@@ -1992,14 +1992,34 @@ extern int flat_exhaust;	/* --flat-exhaust (main.c) */
 /* HD engine exhaust (C5): 0 for the game's flat teardrop, else bit 31 and
  * a flicker byte. Only ships get it: the game's own table, the model words
  * above the missiles' ($a-$10) and below the stations' and ports' ($50 on),
- * so chimney flares and the intro's plumes keep the base look. The flicker
- * is seeded by the object's record and the game's clock (A6+524, which
- * stands still while paused), so a frame draws the same in every run. */
+ * so chimney flares keep the base look; in the intro (exhaust_intro) the
+ * parts with a hull_models[] row that is not a building's, or an EXHAUST
+ * row of hull_intro_fx. The flicker is seeded by the object's record and
+ * the game's clock (A6+524, which stands still while paused; it runs in
+ * the intro too), so a frame draws the same in every run; in the intro by
+ * the part and its plume's place in the frame as well, as a scene's ships
+ * share its record. */
+static unsigned int hull_frame_no;	/* the engine's frames, for hull_anim_bind and the plumes */
+static unsigned int exhaust_intro (void)
+{
+	static unsigned int frame, order;
+	unsigned int w = hull_intro_fx_part (), k = 0x80000000u | HULL_TAB_INTRO | HULL_TAB_SCENE | w;
+	float sc, off[2];
+
+	if (!w || (hull_intro_fx (w, NULL) != HULL_FX_EXHAUST &&
+		   (!hull_key_listed (k) || HULL_BUILDING (hull_class_of_key (k, &sc, off)))))
+		return 0;
+	if (frame != hull_frame_no) frame = hull_frame_no, order = 0;
+	order++;
+	return 0x80000000u | (hull_mix (STMemory_ReadLong (GetReg (REG_A6) - 212) ^
+		hull_mix (w ^ order << 16 ^ STMemory_ReadLong (__DL5eb6_a6_base + 524) >> 12)) & 0xff);
+}
 static unsigned int exhaust_put (void)
 {
 	unsigned int key = flat_exhaust || use_renderer != R_GL ? 0 : hull_model_key ();
 	unsigned int m = HULL_KEY_MODEL (key);
 
+	if (HULL_KEY_OK (key) && (key & HULL_TAB_INTRO)) return exhaust_intro ();
 	if (!HULL_KEY_OK (key) || m < 0x12 || m > 0x4e) return 0;
 	return 0x80000000u | (hull_mix (STMemory_ReadLong (GetReg (REG_A6) - 212) ^
 		hull_mix (STMemory_ReadLong (__DL5eb6_a6_base + 524) >> 12)) & 0xff);
@@ -2637,7 +2657,6 @@ struct HullCtx {
 /* this frame's triangles and quads carry a HullCtx: 1 for styles 0 to 4,
  * 2 for style 5 (with the face in the model's frame) */
 static int hull_ctx;
-static unsigned int hull_frame_no;	/* the engine's frames, for hull_anim_bind */
 static int hull_logging = -1;
 
 static int hull_log_on (void)
@@ -2743,6 +2762,18 @@ unsigned int hull_intro_part (void)
 	unsigned int key = hull_model_key ();
 
 	return key & HULL_TAB_SCENE ? key & 0xffff : 0;	/* 0 for the base intro */
+}
+
+/* hull.h: the part word for the intro's effects; its record 72's parts keep
+ * the record's key for the plating */
+unsigned int hull_intro_fx_part (void)
+{
+	unsigned int key = hull_record_key ();
+	int w;
+
+	if (!(key & HULL_TAB_INTRO) || hull_intro_base ()) return 0;
+	if (HULL_INTRO_SCENE (key & 0xffff)) return hull_intro_part ();
+	return (key & 0xffff) == 72 && (w = hull_part_word (key | HULL_TAB_SCENE)) >= 0 ? w : 0;
 }
 
 static int hull_model_unit (unsigned int key);
@@ -5820,7 +5851,6 @@ static int circle_slices (double size, double z)
 #define A6_HYPER_LEFT	722	/* long: transit time left */
 #define A6_HYPER_TOTAL	13882	/* long: the transit's time */
 #define HYPERCLOUD	0xba	/* the cloud's model word (hull_model_key) */
-#define HYPERCLOUD_INTRO	0xd6	/* the intro's, in its scenes (hull_intro_part) */
 #define BLOB_HYPER	0x80000000u	/* on a blob's colour, a circle's tag word: one of the cloud's */
 #define BLOB_SKY	0x40000000u	/* on a blob's colour: one of the background stars (procfx) */
 
@@ -5833,7 +5863,7 @@ static int hyper_hd (void)
 static unsigned int hyper_tag (void)
 {
 	return hyper_hd () && (hull_model_key () == (0x80000000u | HYPERCLOUD) ||
-			       hull_intro_part () == HYPERCLOUD_INTRO) ? BLOB_HYPER : 0;
+			       hull_intro_fx (hull_intro_fx_part (), NULL) == HULL_FX_CLOUD) ? BLOB_HYPER : 0;
 }
 
 /* A circle's tag word: BLOB_HYPER; CIRCLE_LIGHT when it is put while a
@@ -6419,6 +6449,7 @@ void Nu_DrawPoint (void **data)
 void Nu_PutLine ()
 {
 	if (use_renderer == R_OLD) return;
+	if (use_renderer == R_GL && fx_laser_line ()) return;	/* an intro laser's beam: fx draws it */
 	put_fx ();
 	znode_wrlong (NU_LINE);
 	znode_wrvertex (GetReg (REG_A0)+4);
