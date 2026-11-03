@@ -2623,7 +2623,7 @@ static int hull_use (double p[][3], int n, float st[][2])
  * view takes to draw, every 300 frames.
  */
 struct HullCtx {
-	unsigned int key, seed;
+	unsigned int key, seed, oseed;	/* oseed: the object's own (hull_obj_seed) */
 	short light[3];
 	short wok;		/* style 5: w holds the face in the model's frame (bit 0)
 				 * and the face is out of a docking bay's box (bit 1,
@@ -2657,6 +2657,31 @@ static void hull_latch (void)
 }
 
 static inline int st_readable (unsigned int addr, unsigned int len);
+extern int flat_wear;	/* --flat-wear (main.c) */
+
+/* the object's own random seed, the long at +118 of its record (as the
+ * planets and stars use it): fixed for one ship, its parts and its whole
+ * life, and another for the next ship of the same model; 0 if unreadable.
+ * FE2_HULL_LOG prints each record, model and seed when first seen. */
+static unsigned int hull_obj_seed (unsigned int key)
+{
+	static unsigned int seen[256][2];
+	static int nseen;
+	unsigned int a6 = GetReg (REG_A6), rec, s;
+	int i;
+
+	if (a6 > MEM_SIZE || !st_readable (a6 - 212, 4)) return 0;
+	rec = STMemory_ReadLong (a6 - 212);
+	if (rec > MEM_SIZE || !st_readable (rec + 118, 4)) return 0;
+	s = STMemory_ReadLong (rec + 118);
+	if (!hull_log_on () || !HULL_KEY_OK (key) || nseen == 256) return s;
+	for (i = 0; i < nseen; i++)
+		if (seen[i][0] == rec && seen[i][1] == s) return s;
+	seen[nseen][0] = rec;
+	seen[nseen++][1] = s;
+	fprintf (stderr, "hull: wear record %06x model %u seed %08x\n", rec, key & 0xffff, s);
+	return s;
+}
 
 /*
  * The model of the object being drawn, from the 68k's state: a6 is the
@@ -3008,6 +3033,7 @@ static void hull_put_ctx (int n)
 	if (HULL_KEY_OK (key) && hull_log_on ()) hull_log_model (key);
 	znode_wrlong (key);
 	znode_wrlong (seed);
+	if (!flat_wear) znode_wrlong (hull_obj_seed (key));
 	for (k = 0; k < 3; k++) znode_wrword (lt[k]);
 	if (hull_ctx == 2) {
 		unsigned int va[4] = { a0, a1, a2, a3 };
@@ -3024,6 +3050,7 @@ static void hull_rdctx (void **data, struct HullCtx *cx, int n)
 
 	cx->key = znode_rdlong (data);
 	cx->seed = znode_rdlong (data);
+	cx->oseed = flat_wear ? 0 : znode_rdlong (data);
 	for (k = 0; k < 3; k++) cx->light[k] = znode_rdword (data);
 	cx->wok = 0;
 	if (hull_ctx == 2) {
@@ -3043,7 +3070,7 @@ static void hull_rdctx (void **data, struct HullCtx *cx, int n)
  * style 5 is not on, so the stream is the game's own then.
  */
 static struct {
-	unsigned int key;
+	unsigned int key, oseed;
 	short light[3], ok;
 	float M[9];
 	int o[3];
@@ -3064,6 +3091,7 @@ static void hull_put_cctx (void)
 	ok = HULL_KEY_OK (key) && hull_key_listed (key) && hull_model_frame (key, M, o, NULL, NULL);
 	if (HULL_KEY_OK (key) && hull_log_on ()) hull_log_model (key);
 	znode_wrlong (key);
+	if (!flat_wear) znode_wrlong (hull_obj_seed (key));
 	for (k = 0; k < 3; k++) znode_wrword (lt[k]);
 	znode_wrword (ok);
 	if (ok) {
@@ -3080,6 +3108,7 @@ static void hull_rdcctx (void **data)
 	hull_cc_on = 0;
 	if (hull_ctx != 2) return;
 	hull_cc.key = znode_rdlong (data);
+	hull_cc.oseed = flat_wear ? 0 : znode_rdlong (data);
 	for (k = 0; k < 3; k++) hull_cc.light[k] = znode_rdword (data);
 	hull_cc.ok = znode_rdword (data);
 	if (hull_cc.ok) {
@@ -3122,8 +3151,14 @@ static int hull_decal_host (void **data)
 static const char hull_vs[] =
 	"#version 120\n"
 	"varying vec4 vUV, vEd, vVT, vLT, vCol;\n"
+	"#ifdef WEAR\n"
+	"varying vec4 vOb;\n"
+	"#endif\n"
 	"void main ()\n"
 	"{\n"
+	"#ifdef WEAR\n"
+	"	vOb = gl_MultiTexCoord4;\n"
+	"#endif\n"
 	"	gl_Position = ftransform ();\n"
 	"	vUV = gl_MultiTexCoord0; vEd = gl_MultiTexCoord1;\n"
 	"	vVT = gl_MultiTexCoord2; vLT = gl_MultiTexCoord3;\n"
@@ -3193,6 +3228,12 @@ static const char hull_fs[] =
  * face keeps its plating instead of a flat clipped white), and the highlight is the glint of the bumps
  * (what a flat face would not have) with a faint broad sheen, less of both
  * on a face that is bright already.
+ * Wear (hull_wear_face, not with --flat-wear): each object's own broad
+ * patches of grime and of paler, sun-faded plating, from two octaves of
+ * value noise in the model's frame (vOb: a cell is 0.9 of a tile, some 4
+ * to 6 plates, offset by the object's seed), so it rides with the hull,
+ * runs on across its faces and differs from ship to ship; +-11% at most,
+ * leaning paler (the -2.6) so a hull is never darker on average.
  */
 static const char hull_fs5[] =
 	"#version 120\n"
@@ -3200,6 +3241,9 @@ static const char hull_fs5[] =
 	"uniform vec4 uP, uQ;\n"
 	"uniform float uG;\n"
 	"varying vec4 vUV, vEd, vVT, vLT, vCol;\n"
+	"#ifdef WEAR\n"
+	"varying vec4 vOb;\n"
+	"#endif\n"
 	"void main ()\n"
 	"{\n"
 	"	vec4 a = texture2D (tA, vUV.xy), b = texture2D (tB, vUV.xy);\n"
@@ -3226,6 +3270,12 @@ static const char hull_fs5[] =
 	"	col *= (1.0 - 0.6 * g) / (1.0 - 0.6 * uQ.y * w);\n"
 	"	col *= mix (vec3 (1.0), vec3 (1.10, 0.97, 0.82), uQ.x * g);\n"
 	"	col = mix (col, vec3 (lum * 1.15 * tone * ratio * ao), 0.75 * b.a * uQ.w * w);\n"
+	"#ifdef WEAR\n"
+	"	float ws = clamp (6.0 * pf_fbm (vOb.xyz, 2) - 2.6, -1.0, 1.0) * vOb.w * w;\n"
+	"	col *= 1.0 + 0.11 * ws;\n"
+	"	col *= mix (vec3 (1.0), vec3 (1.04, 1.0, 0.92), max (-ws, 0.0));\n"
+	"	col = mix (col, vec3 (dot (col, vec3 (0.3, 0.59, 0.11))), 0.3 * max (ws, 0.0));\n"
+	"#endif\n"
 	"	float top = max (max (col.r, col.g), col.b);\n"
 	"	if (top > 0.85) col *= (0.85 + 0.15 * (1.0 - exp ((0.85 - top) / 0.15))) / top;\n"
 	"	vec3 H = normalize (L + V);\n"
@@ -3243,12 +3293,16 @@ static int hull_prog_failed;
 static struct { GLuint t[2]; float grime; } hull_set[HP_N][2];
 static int hull_cur;		/* the set bound now, in hull_on == 2 */
 
-static GLuint hull_compile (GLenum type, const char *src)
+/* pre: NULL, or what replaces src's first line (its #version) and WEAR
+ * defined after it (the wear, hull_fs5) */
+static GLuint hull_compile (GLenum type, const char *src, const char *pre)
 {
 	GLuint sh = glCreateShader (type);
 	GLint ok = 0;
+	const char *s[3] = { pre, "#define WEAR\n", strchr (src, '\n') + 1 };
 
-	glShaderSource (sh, 1, &src, NULL);
+	if (pre) glShaderSource (sh, 3, s, NULL);
+	else glShaderSource (sh, 1, &src, NULL);
 	glCompileShader (sh);
 	glGetShaderiv (sh, GL_COMPILE_STATUS, &ok);
 	if (!ok) {
@@ -3263,13 +3317,13 @@ static GLuint hull_compile (GLenum type, const char *src)
 
 /* hull_vs with a fragment shader, tA on unit 0 and tB on unit 1; 0 if it
  * does not compile or link */
-static GLuint hull_link (const char *fs_src)
+static GLuint hull_link (const char *fs_src, int wear)
 {
 	GLuint vs, fs, prog = 0;
 	GLint ok = 0;
 
-	vs = hull_compile (GL_VERTEX_SHADER, hull_vs);
-	fs = vs ? hull_compile (GL_FRAGMENT_SHADER, fs_src) : 0;
+	vs = hull_compile (GL_VERTEX_SHADER, hull_vs, wear ? "#version 120\n" : NULL);
+	fs = vs ? hull_compile (GL_FRAGMENT_SHADER, fs_src, wear ? procfx_noise_glsl : NULL) : 0;
 	if (fs) {
 		prog = glCreateProgram ();
 		glAttachShader (prog, vs);
@@ -3296,7 +3350,7 @@ static GLuint hull_link (const char *fs_src)
 static GLuint hull_program (void)
 {
 	if (hull_prog || hull_prog_failed) return hull_prog;
-	hull_prog = hull_link (hull_fs);
+	hull_prog = hull_link (hull_fs, 0);
 	if (!hull_prog) {
 		fprintf (stderr, "GL: --hull-style %d needs GLSL 1.20, using the plain plating\n", hull_style);
 		hull_prog_failed = 1;
@@ -3328,10 +3382,10 @@ static GLuint hull_program5 (void)
 		q = strstr (dbg, "	gl_FragColor = vec4 (col, vCol.a);");
 		if (q) {
 			strcpy (q, "	gl_FragColor = vec4 (fa, uG / 3.0, clamp (e / max (det, 1e-4 * e + 1e-30) / 8.0, 0.0, 1.0), vCol.a);\n}\n");
-			hull_prog5 = hull_link (dbg);
+			hull_prog5 = hull_link (dbg, 0);
 		}
 	} else
-	if (!getenv ("FE2_HULL_FIXED")) hull_prog5 = hull_link (hull_fs5);
+	if (!getenv ("FE2_HULL_FIXED")) hull_prog5 = hull_link (hull_fs5, !flat_wear);
 	if (!hull_prog5) {
 		fprintf (stderr, "GL: hull style 5 %s, using the per-class plating without the shader\n",
 			 getenv ("FE2_HULL_FIXED") ? "told FE2_HULL_FIXED" : "needs GLSL 1.20");
@@ -3453,9 +3507,32 @@ static int hull_begin5 (int cls, int calm)
 	return 1;
 }
 
+/* style 5 wear: the face's corners in wear cells of the model's frame,
+ * offset by the object's seed, and 1 (0: no model frame, no wear) */
+static float hull_wob[4][4];
+
+static void hull_wear_at (const float w[3], unsigned int oseed, double panel, float ob[4])
+{
+	unsigned int h = hull_mix (oseed ^ 0x9e3779b9u);
+	int k;
+
+	for (k = 0; k < 3; k++) ob[k] = (float) (w[k] / (0.9 * panel) + 0.173 * ((h >> (10 * k)) & 1023));
+	ob[3] = 1;
+}
+
+static void hull_wear_face (const struct HullCtx *cx, int n, double panel)
+{
+	int i;
+
+	for (i = 0; i < n; i++)
+		if (cx->wok & 1) hull_wear_at (cx->w[i], cx->oseed, panel, hull_wob[i]);
+		else hull_wob[i][3] = 0;
+}
+
 /* the shader's per-vertex data: see hull_vs */
 static void hull_attr (const struct HullFrame *f, int i)
 {
+	if (hull_cur >= 1000 && !flat_wear) glMultiTexCoord4fv (GL_TEXTURE4, hull_wob[i]);
 	if (hull_cur >= 1000)
 		glMultiTexCoord4f (GL_TEXTURE0, f->uv[i][0], f->uv[i][1], f->mu[i][0], f->mu[i][1]);
 	else
@@ -3774,7 +3851,10 @@ static int hull_paint5 (double p[][3], int n, const struct HullCtx *cx, int host
 		return 0;
 	}
 #ifdef HULL_SHADERS
-	if (hull_program5 () && hull_begin5 (cls, calm)) return 2;
+	if (hull_program5 () && hull_begin5 (cls, calm)) {
+		hull_wear_face (cx, n, hull_classes[cls].panel * sc);
+		return 2;
+	}
 #endif
 	if (hull_cls[cls].failed) return hull_use (p, n, st);
 	for (i = 0; i < n; i++) {
@@ -3833,6 +3913,7 @@ static int hull_paint (double p[][3], int n, int have_ctx, const struct HullCtx 
  * grey signs) and an unlisted model's stay flat.
  */
 static struct HullPlane hull_cplane;
+static double hull_cpanel;	/* its class's panel, for the wear */
 static int hull_cmode;		/* 2 shader, 1 fixed function */
 static GLdouble (*hull_cdoor)[3];	/* a door's contour, for its edge */
 static int hull_cdoor_n;
@@ -3859,6 +3940,17 @@ static void CALLBACK hull_tess_vertex (GLvoid *vertex, GLvoid *poly_data)
 		glMultiTexCoord4f (GL_TEXTURE1, 1000, 1000, 1000, 1000);
 		glMultiTexCoord4f (GL_TEXTURE2, vt[0], vt[1], vt[2], 0);
 		glMultiTexCoord4f (GL_TEXTURE3, hull_cplane.lt[0], hull_cplane.lt[1], hull_cplane.lt[2], 0);
+		if (!flat_wear) {
+			float wc[3], ob[4];
+			int j, k;
+			for (j = 0; j < 3; j++) {	/* w = M (v - o), as hull_plane_obj */
+				wc[j] = 0;
+				for (k = 0; k < 3; k++)
+					wc[j] += hull_cc.M[3*j+k] * ((k == 2 ? -e[k] : e[k]) - hull_cc.o[k]);
+			}
+			hull_wear_at (wc, hull_cc.oseed, hull_cpanel, ob);
+			glMultiTexCoord4fv (GL_TEXTURE4, ob);
+		}
 	} else
 #endif
 		glTexCoord2f (uv[0], uv[1]);
@@ -3915,6 +4007,7 @@ static int hull_complex_begin (GLdouble c[][3], int n, void **data)
 	}
 	for (k = 0; k < 9; k++) M[k] = hull_cc.M[k];
 	for (k = 0; k < 3; k++) light[k] = hull_cc.light[k];
+	hull_cpanel = hull_classes[cls].panel * sc;
 	if (!hull_plane_obj ((const double (*)[3]) c, n, M, hull_cc.o, light,
 			     hull_classes[cls].panel * sc, off, &hull_cplane))
 		return 0;

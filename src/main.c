@@ -57,6 +57,7 @@ int flat_lights = 0;	/* --flat-lights: no halo round the game's lights (gl.c) */
 int flat_lasers = 0;	/* --flat-lasers: every laser one plain ribbon, as before bolts and hot cores */
 int flat_missiles = 0;	/* --flat-missiles: a missile's plume only near its smoke, as before */
 int flat_hud_hits = 0;	/* --flat-hud-hits: one red hit flash, no critical tint (hddamage.c) */
+int flat_wear = 0;	/* --flat-wear: every ship of a model plated alike (gl.c) */
 int flat_sight = 0;	/* --flat-sight: the thin HD gun sight and brackets, as before (hdinst.c) */
 int flat_exhaust = 0;	/* --flat-exhaust: the game's flat engine plumes (gl.c) */
 int flat_starfield = 0;	/* --flat-starfield: the game's plain background stars (procfx.c) */
@@ -230,6 +231,8 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --size w h            Start at specified window size.\n"
 			   "  --old-renderer        Start with the old renderer.\n"
                "  --flat-hulls          Flat ship faces, no hull plating.\n"
+               "  --flat-wear           Every ship of a model plated alike (no wear\n"
+               "                        of its own).\n"
                "  --flat-sky            The game's flat Milky Way band (no star clouds).\n"
                "  --flat-starfield      The game's plain background stars (no magnitude or colour).\n"
                "  --flat-planets        Hard light zones and flat atmosphere rings.\n"
@@ -271,6 +274,8 @@ void Main_ReadParameters(int argc, char *argv[])
 		use_renderer = R_OLD;
 	  else if (!strcmp(argv[i], "--flat-hulls"))
 		flat_hulls = 1;
+	  else if (!strcmp(argv[i], "--flat-wear"))
+		flat_wear = 1;
 	  else if (!strcmp(argv[i], "--flat-sky"))
 		flat_sky = 1;
 	  else if (!strcmp(argv[i], "--flat-starfield"))
