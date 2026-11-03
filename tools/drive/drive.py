@@ -388,7 +388,8 @@ def main():
     p.add_argument("--args", default="", help="extra game arguments, one string "
                    "(--size 640 480 is added unless it sets --size)")
     p.add_argument("--lib", default=os.path.join(HERE, "libfe2drive.dylib"))
-    p.add_argument("--pos", default="1300,640", help="SDL_VIDEO_WINDOW_POS")
+    p.add_argument("--pos", default=os.environ.get("SDL_VIDEO_WINDOW_POS", "1840,30"),
+                   help="SDL_VIDEO_WINDOW_POS (default: that variable, else the right screen edge)")
     p.add_argument("--quiet", action="store_true", help="do not echo the game log")
     p.add_argument("--compare", nargs=2, metavar=("RUN_A", "RUN_B"),
                    help="compare the shots of two run directories and exit")
