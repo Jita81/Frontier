@@ -64,6 +64,7 @@ ifeq ($(TARGET_OS),Darwin)
 else
 	LIBS += -lGL -lGLU
 endif
+	SRCOBJS += props.o
 else
 	SRCOBJS += soft.o
 ifeq ($(TARGET_OS),Darwin)
@@ -126,12 +127,15 @@ gen: $(patsubst %.c,%.o,$(wildcard gen/*.c)) $(OBJS)
 # TakeException), so a change to it must rebuild the core
 $(patsubst %.c,%.o,$(wildcard gen/*.c)) fe2.s.o: $(CORE_STAMP) host.h
 
+# props.c reads engine variables at their label addresses too
+$(HOST_OBJDIR)src/props.o: fixups.h
+
 $(HOST_OBJS): $(HOST_OBJDIR)%.o: %.c $(HOST_STAMP) host.h
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(HOST_CFLAGS) -c -o $@ $<
 
-# gl.c, bindings.c, hdface.c, hdback.c, hdstill.c, fx.c and hddamage.c read engine variables at their label addresses (P-2)
-$(HOST_OBJDIR)src/gl.o $(HOST_OBJDIR)src/shadows.o $(HOST_OBJDIR)src/bindings.o $(HOST_OBJDIR)src/hdface.o $(HOST_OBJDIR)src/hdback.o $(HOST_OBJDIR)src/hdstill.o $(HOST_OBJDIR)src/fx.o $(HOST_OBJDIR)src/hddamage.o: fixups.h
+# gl.c, bindings.c, hdface.c, hdback.c, hdstill.c, fx.c, hddamage.c and hdinst.c read engine variables at their label addresses (P-2)
+$(HOST_OBJDIR)src/gl.o $(HOST_OBJDIR)src/shadows.o $(HOST_OBJDIR)src/bindings.o $(HOST_OBJDIR)src/hdface.o $(HOST_OBJDIR)src/hdback.o $(HOST_OBJDIR)src/hdstill.o $(HOST_OBJDIR)src/fx.o $(HOST_OBJDIR)src/hddamage.o $(HOST_OBJDIR)src/hdinst.o: fixups.h
 
 $(CORE_STAMP): FORCE
 	@mkdir -p $(@D)

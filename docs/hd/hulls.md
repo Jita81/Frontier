@@ -251,6 +251,7 @@ Models (`hull_models[]`, by the whole type word and its table;
 | 80 | orbital station outside, close up | station |
 | 82 | launch structure | station |
 | 84 | docking bay seen through the slot | hangar; its faces out of the bay's box (the station's outside) station |
+| 88 | large cross-armed orbital station, its slot tunnel too | station |
 | 288, 290, 294 | hangar interior and its parts | hangar |
 | 96 | a surface port: its buildings, apron, roads and signs | building (walls only, see below) |
 
@@ -283,7 +284,24 @@ one and a half tiles across its biggest face.
 
 Traffic met in the three routes was the listed ships only; none of the
 new words was met in flight, so the proof is shipyard close-ups. The
-other orbital station types (86, 88) were not met.
+other orbital station types (86, 88) were not met here; B5 met 88.
+
+**B5, the large orbital station (88).** Route:
+`tools/drive/scripts/p2-stations.drv`. From start 2 (landed at a surface
+port of the fourth planet) it buys a ship with an autopilot, lifts off,
+targets the orbital station beside that planet on the system map and
+lets the autopilot dock at 100x (the game slows itself near the
+station). `FE2_HULL_LOG=1` names it `model 88 -> class station`, unit
+2^16. 88 is a long central shaft with broad arms swept out to either
+side and lattice trusses at its ends; the slot and its tunnel are faces
+of 88 itself, and docking goes on to the hangar words 288, 290 and 294
+already listed, so 88 needs no bay row (84 has one because it is a
+separate model). Scale x1, set by eye: at 800 m and in the slot the
+shaft and the tunnel walls show several panels across each face, read as
+plating rather than paving; the broad arm faces still read mostly flat
+in the approach frames (seen at a grazing angle; not checked further).
+The small station's route (start docked, launch, turn back) names the
+same models with the same classes as base.
 
 - **Adding a model:** add one line.
 - **Adding a class:**
@@ -300,9 +318,13 @@ Not listed, so drawn flat:
   left it out;
 - game table 12 and 10 (unit 2^7, 34-byte stubs), met only during a
   lift-off; not identified;
-- game table 86 and 88 (units 2^13 and 2^16): by the backdrop code's
-  orbital range (`hdback.c`, port models 84 to 88) the other orbital
-  station types, but no census route reached one, so they are not listed;
+- game table 86 (unit 2^13): by the backdrop code's orbital range
+  (`hdback.c`, port models 84 to 88) the remaining orbital station type,
+  thought to be the one at a station orbiting a moon (not seen). B5's
+  route could not target such a station (the system map would not
+  recentre on the inner planet to pick its moon's station), so it is not
+  listed; a route would first fly to that planet under autopilot, then
+  target the station from close in;
 - game table 176 (unit 2^0), seen beside the bay, and 98 and 148 (ground,
   around a surface port); not identified;
 - the intro's 4 (the title), 12, 34 (the banner), 36, 38, 40 to 54 (its
@@ -325,8 +347,6 @@ after the table for a part of record N.
 | 86 | the green ship, in several scenes | civilian, panels x2 |
 | 130 | the ship of modules | freighter, panels x6 |
 | 212 | the large ship of the first space scene | armour, panels x2 |
-| 214 | the hypercloud's discs | the game's hypercloud glow (`hyper_tag`, `HYPERCLOUD_INTRO`) |
-| 114, 116 | the fireball's circles | the explosion fireball (`fx.c`, `I_FIRE`, as model 188, drawn young: the scene's record has no clock) |
 
 - **Classes are by role.** Comparing the first 40 header bytes of every
   intro model with every game model finds twins only for 90, 192, 194,
@@ -338,10 +358,39 @@ after the table for a part of record N.
 - **Planets and stars:** the intro's planet is a circle (90, a twin of a
   game circle), and its sun a set of circles, not the game's planet or
   star objects, so the HD planet and the star corona do not draw them.
-- **Lasers and plumes:** the scenes' beams and engine plumes are not
-  matched to a model and keep their look; so does the orange fireball of
-  the credits scene, after the HD one, whose model is not identified (only
-  the first, 114/116, is).
+- **Effects (B15):** the intro's clouds, fireballs and beams are parts
+  too, named by a small table of their own (`hull.c`, `intro_fx`, read by
+  `hull_intro_fx`), apart from `hull_models[]`. Its key is
+  `hull_intro_fx_part` (`gl.c`): the part word in the scenes and also in
+  record 72 (the credits and the start menu), whose parts are the scenes'
+  words while its plating keeps the record's key. Every word below was
+  found by logging each line, teardrop, blob and circle put on the idle
+  intro with its record, part word and colour (a scratch logger, not in
+  the tree).
+
+| intro word | what | HD path |
+|---|---|---|
+| 214 | the hypercloud's discs (blue) | the game's hypercloud glow (`hyper_tag`, `BLOB_HYPER`); in the scenes since #65, in record 72 new |
+| 94 | an orange cloud a ship leaves | the hypercloud glow |
+| 96 | a pale cloud a ship comes out of | the hypercloud glow |
+| 114, 116 | the fireball's circles, in a scene and in the credits | the explosion fireball (`fx.c`, `put_model`, as model 188) |
+| 80, 92, 132 | red beams (ground and space) | a red pulse laser, look 1: travelling bolts with a muzzle glow in the beam's colour (`fx_laser_line`) |
+| 86's plumes | the green ship's engines | the HD plume (halo, white core, flicker; `exhaust_intro`) |
+
+- **Plumes:** a part's plume is HD when its word has a `hull_models[]`
+  row that is not a building's (86 is the only such ship with a plume) or
+  an `EXHAUST` row of `intro_fx` (none yet). The flicker is seeded by the
+  record, the word, the plume's place in the frame and the game's clock,
+  so two ships of one scene do not flicker in step and a replay draws the
+  same.
+- **Left flat:** 144's orange teardrops (on a part not listed: flames,
+  not a ship's engine), the red beams with no part word in records 56 and
+  68 (part -1, the record's own model), 126's circles beside the fireball
+  and the lines and circles not listed above.
+- **Clock:** in the intro (bit 5 of 598(a6) set, not the death camera's
+  state `$58` at 704(a6), and not `--flat-fx`) fx's clock is 20 ms per
+  drawn 3D frame, not the wall clock, so a fireball's age and a bolt's
+  travel are the same in every run.
 - **Off:** `--classic-ui`, `--flat-hulls`, `--flat-fx`, `--pixel-*`
   (`hull_intro_base`: a scene's key is then its record's, as in the base,
   never marked `HULL_TAB_SCENE`, so the rows above are not reached and
@@ -349,13 +398,20 @@ after the table for a part of record N.
 - **Lights:** #57's halo tests the record's key (`hull_record_key`), as in
   the base, so a part whose word is in the stars' range keeps its halo.
 - **Gate:** `fx.c`'s `put_model` tests the intro first (bit 5 of 598(a6)
-  set and `hull_intro_part` 114 or 116), then the flight and death-camera
-  gate, so the intro does not depend on 42(a6) and a death-camera record is
-  never read as an intro part. The fireball takes the explosions' layered
-  look (weapons.md).
-- **No carry-over:** a fireball is drawn from its circle at once; nothing
-  is added to fx's list of live effects, so nothing reaches the menu or a
-  game started from it.
+  set and `hull_intro_fx` FIRE, or LASER in an intro frame, for
+  `hull_intro_fx_part`); any other part falls through to the flight and
+  death-camera gate, as in the base, so the intro does not depend on
+  42(a6) and the death camera (bit 5 set too, but the game's table, so no
+  intro part) keeps its blasts and smoke. The intro frame is latched in
+  `fx_frame_begin` (bit 5 set and 704(a6) not `$58`), never re-read at
+  draw time; the game data pointer cannot latch it, as it names the
+  intro's table only while a model is drawn. The fireball takes the
+  explosions' layered look (weapons.md).
+- **No carry-over:** a fireball is drawn from its circle at once and a
+  beam's bolt and glow live 90 ms of the intro's clock, and a change of
+  scene empties fx's ring; on the newgame tape no pixel of the first
+  flight frames moves by more than 24 of 255 against the base (run to run
+  noise, no beam or glow).
 
 ## A surface port's buildings
 
@@ -411,6 +467,59 @@ The class's graze (2.30, the station's) fades a wall seen edge on to its
 own colour, and the footprint fade does the same far away, so the
 windows do not shimmer from the air.
 
+## Wear: each ship its own (B12, slice 1)
+
+Two ships of one model used to carry the same plating to the texel. Style
+5 now lays a broad, low-frequency wear over each object: patches of warm
+grime and of paler, sun-faded plating, a few plates across, that differ
+from ship to ship and stay put on the hull.
+
+- **The key.** The object record's long at `+118` (the same per-object
+  seed `procfx.c` and `planet.c` read as `OBJ_SEED`). At put time
+  `hull_obj_seed` (`gl.c`) reads the record through `a6-212`, as the model
+  key does, and puts the seed into the znode stream as one more long after
+  the face's context (`hull_put_ctx`, `hull_put_cctx` for complex shapes).
+  A part drawn for a ship carries the ship's record, so the whole ship
+  shares one seed. Confirmed with `FE2_HULL_LOG=1`, which logs each new
+  record and seed once (`hull: wear record ... model ... seed ...`): in the
+  traffic route three ships of one model came from three records with
+  three different seeds, and each logged once in about a minute of frames,
+  so the seed holds for the object's life. The player's ship has its own.
+  The station and its hangar and deck share one record's seed (one object),
+  and one small object type was seen to set its seed once, as it was made.
+  Reads are bounds-checked; an unreadable record gives seed 0.
+- **The noise.** Two octaves of the procedural library's value noise
+  (`pf_fbm`, the same "hash without sine" as the skies), in the model's
+  own frame: the face's corners as the bays and decals use them
+  (`w = M(v - o)`), divided by 0.9 of the class's tile (`panel`), which is
+  some 4 to 6 plates, plus an offset hashed from the seed. It is passed as
+  a fifth texture coordinate (`hull_wear_at`), so the wear rides with the
+  hull, runs on across face edges with no seam and does not move as the
+  ship or the view turns. No game RNG and no clock.
+- **The bounds.** `ws = clamp(6 fbm - 2.6, -1, 1)` times the face's
+  weathering (`uQ.z`: half on a decal's host, 40% on a painted face, and it
+  fades with the plating far away). The colour is scaled by `1 + 0.11 ws`;
+  grime (`ws < 0`) also takes a slight warm tint (1.04, 1, 0.92) and fade
+  (`ws > 0`) loses up to 30% of its saturation. So a pixel moves at most
+  11% either way, and the bias leans the mean paler: on the player's ship
+  in the external view, plated pixels went +0.7% to +1.0% in mean
+  luminance, with the 5th to 95th percentile of the per-pixel ratio 0.93
+  to 1.09; the station's body moved -0.3%, inside the flight route's own
+  run-to-run noise.
+- **Where.** Style 5 with its shader only: every plated class (ships,
+  stations, hangar, deck, buildings). A face with no model frame gets
+  none. Styles 0 to 4, and style 5 in fixed function, have no object frame
+  to hold a seam-free pattern, so they get no wear.
+- **The intro.** Its scene objects take wear like any other, but every
+  scene record logged carried the same seed, so the intro's ships are worn
+  the same way each time it plays, and two of one model there would look
+  alike.
+- **Off.** `--flat-wear` puts nothing extra in the stream, sends no fifth
+  coordinate and compiles the shader from its original single source, so
+  frames are those of the build before the wear (the landed route, which
+  repeats bit for bit, gave identical frames). `--flat-hulls` draws no
+  plating at all, so no wear either (identical frames too).
+
 ## Switches
 
 | switch | effect |
@@ -418,6 +527,7 @@ windows do not shimmer from the air.
 | `--hull-style 5` | the per-class material (default) |
 | `--hull-style 0..4` | the earlier looks, unchanged pixel for pixel: 0 fixed-function plating (`art/hull/plating.lum`), 1 big seeded texture, 2 panels, 3 bump and weathering, 4 a seeded profile per model (its own table, by the low byte of the word, as it always was) |
 | `--flat-hulls` | no plating at all: the game's flat faces exactly (buildings too) |
+| `--flat-wear` | every ship of a model plated alike: no per-object wear, the frames before the wear exactly |
 | `--flat-buildings` | a surface port's buildings flat, everything else as it is: the frames before the building class, exactly |
 | Ctrl+Shift+H | steps 5, off, 0, 1, 2, 3, 4, 5 |
 | `FE2_HULL_TILE=path` | every class takes this raw square grey tile (64 to 2048 a side, a power of two, 128 = x1.0), to try a tile without a rebuild; set but empty, every class bakes its seeded plating |
@@ -604,7 +714,8 @@ Known limits:
   290 door's fixed edge stays at the same tile coordinate through the
   slide and through the closed door's origin jump), not yet by eye.
 - Some of the intro's parts (76, 206 and others above) are not identified
-  and are flat.
+  and are flat. Of its effects, 144's flames, the part -1 beams of records
+  56 and 68 and 126's circles keep the base look (above).
 - A surface port's buildings are told from its ground and signs only by
   facing, shape and size (the port is one model): a roof that is not
   level, a wall under 0.6 of a tile, or a large sign board of its own

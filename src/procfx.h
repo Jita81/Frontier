@@ -57,6 +57,18 @@ unsigned int procfx_starfield_put (void);
 float procfx_starfield_look (unsigned int tag, float rgb[3], float *glow);
 /* --flat-planets: the planets' exact light zones and flat atmosphere discs */
 extern int flat_planets;
+/* --flat-clouds: no clouds on any world (docs/hd/clouds.md) */
+extern int flat_clouds;
+/* the cloud deck is a sphere at R (1 + CLOUD_DECK_H); CLOUD_DECK_T is the
+ * band either side of it.  The shader takes both from here. */
+#define CLOUD_DECK_H	0.002
+#define CLOUD_DECK_T	(CLOUD_DECK_H / 4.0)
+/* Before procfx_planet_begin: the next planet's clouds (cover: threshold,
+ * edge softness, haze floor, on; rot: cos, sin of the drift, evolution
+ * offset; eye and sun in model space, the eye in units of R).  Only
+ * stages them: begin takes them and clears the stage. */
+void procfx_planet_clouds (const float cover[4], const float tint[3], const float rot[4],
+			   const float seed[3], const float eye[3], const float sun[3]);
 
 /* Layer 3: around one textured planet.  lo, hi: each light zone's cos(sun) range
  * (9, 9 for none); soft: half width of the blend at a boundary; rim: the
@@ -100,6 +112,8 @@ void procfx_corona_end (void);
 /* a layer's program: the shared noise library plus body, its main();
  * 0, after a note on stderr, when it does not compile (skies.c too) */
 unsigned int procfx_program (const char *name, const char *body);
+/* the noise library (pf_hash, pf_noise, pf_fbm) with its #version line */
+extern const char *const procfx_noise_glsl;
 
 /* change_vidmode, before the GL context goes */
 void procfx_forget (void);

@@ -210,3 +210,58 @@ byte for byte the same (checked on every bake of four full drives, about
 
 Memory: one byte a texel per raster kept (256 KB a face, 1 MB a ground
 patch), in up to 48 slots, plus the padded scratch buffers.
+
+## What is drawn: land biomes
+
+`src/worlds.c` (W2, slice 1) gives the land of a terran world three tones:
+lush, dry, and tundra and rock. Only `PS_LAND` texels of a body drawn with
+a terran model (`psurf_terran_temp`, the body kind from the model word)
+take them. Water, beaches, ice, craters, 'other' codes and every
+non-terran world are drawn as before, byte for byte.
+
+What a texel's biome follows, all on its unit direction on the body (so
+the cube faces, the ground patch and the landed patch agree):
+
+- **Latitude.** The game's polar caps sit on the model's y axis, so the
+  latitude is |y|, wobbled by a little seeded noise. Near the poles the
+  land turns to tundra and grey rock; round the equator it leans dry.
+- **Temperature.** The body's surface temperature in kelvin (the object
+  word at +182, the one the planet dump prints) moves both bands: a hot
+  world's dry band widens toward the poles and its polar band thins out;
+  a cold world's tundra reaches toward the equator. 288 K is the middle.
+- **Moisture.** A low-frequency value noise, seeded by the planet's own
+  seed (the same `psurf_seed` the coasts use), makes dry and lush regions
+  across every latitude.
+
+Measured share of the sphere (byte under 96 tundra and rock, over 160
+dry): 240 K, 51% tundra and rock, 6% dry; 288 K, 23% and 20%; 325 K,
+none and 68%.
+
+The bounds:
+
+- Each tone is a hue shift of the texel's own palette colour (toward
+  green for lush, toward tan for dry, toward grey for tundra and rock), at
+  the palette colour's own brightness (so where two biomes meet across a
+  narrow lush band no darker crease shows), and
+  each channel moves by at most a quarter of the palette colour's
+  brightest channel (checked over every 12-bit colour, every biome byte
+  and every beach weight: at most a quarter plus 0.75 of an 8-bit level of
+  rounding). The night and twilight zones stay as dark as the game draws
+  them, and a world's land keeps its own hue on average (a green world's
+  mean land hue moves by 5° to 13°).
+- Across the beach rim the biome gives way to the sand, so the two
+  together stay within the same quarter.
+
+Cost: the biome is sampled every 16 texels of a raster and interpolated,
+and kept per patch (the same centre, axes, size, seed and temperature), in
+48 slots like the coast maps. A patch that falls within two steps of one
+biome byte (the landed patch) keeps one byte and no map, and is one
+palette expansion. Colours are worked out once per (code, biome byte) a
+bake.
+
+Memory: a varying patch keeps one byte a texel (256 KB a face, 1 MB a
+ground patch), a uniform one none; with the 48 slots full of varying
+ground patches that is at most 48 MB beside the coast maps, freed on a
+video mode change. Rasters under 16 texels a side get no biome.
+
+`--flat-biomes` turns the biomes off with the sea depth and the beaches.
