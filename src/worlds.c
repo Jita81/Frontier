@@ -536,6 +536,78 @@ static void tone (const unsigned char *sh, int w, const float *d, unsigned char 
 	}
 }
 
+/* W7: a gas giant's fine bands. Its band coordinate at d is the latitude
+ * (the poles sit on the model's y axis) in bands, waved by two octaves of
+ * seeded noise so the edges wander. */
+#define W_GBANDS	12.0	/* bands a radian: about 38 pole to pole */
+#define W_GSTEP		0.05f	/* a band's brightness step, at most, a side */
+#define W_GPULL		0.3f	/* its pull of hue toward one of the giant's colours, at most */
+#define W_GMAX		0.08f	/* the two together, at most, a side: shares of the brightest channel */
+#define W_GEDGE		0.45f	/* share of a band its soft edge takes */
+#define W_GSTRIDE	8	/* texels between band samples, interpolated between */
+#define W_GLEV		32	/* steps a band, for its edge */
+
+static double band_at (const double d[3], unsigned int seed)
+{
+	return W_GBANDS * (asin (fmax (-1.0, fmin (1.0, d[1]))) + 0.07 * (vnoise (d, 3.0, seed ^ 0x6a5u) - 0.5)
+		+ 0.025 * (vnoise (d, 11.0, seed ^ 0x1f3du) - 0.5));
+}
+
+/* The bands over the colours p of a giant's codes: per band a seeded step,
+ * belts and zones in turn, and a pull toward the hue (not the brightness)
+ * of one of its own colours; blended across a soft edge, and faded out
+ * where a band would be under about three texels. Each texel looks its
+ * colour up by band, code and step of the edge. 0 if n does not suit. */
+static int giant_bake (unsigned char *rgb, const unsigned char *codes, const struct PPatch *pt,
+		       unsigned int seed, const unsigned char p[16][3])
+{
+	static float g[(1024 / W_GSTRIDE + 1) * (1024 / W_GSTRIDE + 1)], row[1024 / W_GSTRIDE + 1][2], dl[65][16][3];
+	static unsigned char lut[64][16][W_GLEV][3];
+	int n = pt->n, gn = n / W_GSTRIDE + 1, j, c, k, x, y, i;
+	float fade = 1.0f - smooth (0.35, 0.7, W_GBANDS * 2.0 * pt->half / n);
+
+	if (n % W_GSTRIDE || gn < 2 || gn > 1024 / W_GSTRIDE + 1) return 0;
+	for (j = 0; j < 65; j++) {
+		const unsigned char *o = p[(int) (15.99f * hash3 (j & 63, 2, 0, seed))];
+		float st = ((j & 1) ? W_GSTEP : -W_GSTEP) * (0.4f + 0.6f * hash3 (j & 63, 0, 0, seed));
+		float w = W_GPULL * hash3 (j & 63, 1, 0, seed), yo = 0.299f * o[0] + 0.587f * o[1] + 0.114f * o[2];
+		for (c = 0; c < 16; c++) {
+			const unsigned char *a = p[c];
+			float ya = 0.299f * a[0] + 0.587f * a[1] + 0.114f * a[2], l = fmaxf (a[0], fmaxf (a[1], a[2]));
+			for (k = 0; k < 3; k++) {
+				float v = st * a[k] + (yo >= 1.0f ? w * (o[k] * ya / yo - a[k]) : 0.0f);
+				dl[j][c][k] = fade * fmaxf (-W_GMAX * l, fminf (W_GMAX * l, v));
+			}
+		}
+	}
+	for (j = 0; j < 64; j++)
+		for (c = 0; c < 16; c++)
+			for (i = 0; i < W_GLEV; i++) {
+				float t = fmaxf (0.0f, ((i + 0.5f) / W_GLEV - 1.0f + W_GEDGE) / W_GEDGE);
+				t = t * t * (3.0f - 2.0f * t);
+				for (k = 0; k < 3; k++)
+					lut[j][c][i][k] = (unsigned char) fmaxf (0.0f, fminf (255.0f,
+						p[c][k] + dl[j][c][k] + (dl[j+1][c][k] - dl[j][c][k]) * t + 0.5f));
+			}
+	for (y = 0; y < gn; y++)
+		for (x = 0; x < gn; x++) {
+			double a = (2.0 * x * W_GSTRIDE + 1.0 - n) * pt->half / n, b = (2.0 * y * W_GSTRIDE + 1.0 - n) * pt->half / n;
+			double d[3], r = sqrt (1.0 + a*a + b*b);
+			for (k = 0; k < 3; k++) d[k] = (pt->c[k] + a * pt->u[k] + b * pt->v[k]) / r;
+			g[y*gn + x] = W_GLEV * (64.0f + (float) band_at (d, seed));	/* kept positive */
+		}
+	for (y = 0; y < n; y++) {
+		const float *q = g + y / W_GSTRIDE * gn, fy = (float) (y % W_GSTRIDE) / W_GSTRIDE;
+		for (x = 0; x < gn; x++) row[x][0] = q[x] + (q[x + gn] - q[x]) * fy;
+		for (x = 0; x < gn - 1; x++) row[x][1] = (row[x + 1][0] - row[x][0]) / W_GSTRIDE;
+		for (x = 0; x < n; x++, rgb += 3) {
+			unsigned int u = (unsigned int) (row[x / W_GSTRIDE][0] + row[x / W_GSTRIDE][1] * (x % W_GSTRIDE));
+			memcpy (rgb, lut[u / W_GLEV % 64][(codes[y*n + x] >> 2) & 15][u % W_GLEV], 3);
+		}
+	}
+	return 1;
+}
+
 void worlds_bake (unsigned char *rgb, const unsigned char *codes, const struct PPatch *pt,
 		  struct PSurf *s, const unsigned char pal[16][3])
 {
@@ -559,6 +631,8 @@ void worlds_bake (unsigned char *rgb, const unsigned char *codes, const struct P
 		shade (pal[k], w, p[k]);
 		if (land[k] && one >= 0) tone_d (pal[k], one, air, bd[k][0]), tone (p[k], w, bd[k][0], p[k]);
 	}
+	if (e && psurf_gas_giant (s) && giant_bake (rgb, codes, pt, psurf_seed (s), (const unsigned char (*)[3]) p))
+		return;
 	if ((!e || !e->w) && !bm) {
 		for (i = 0; i < n*n; i++, rgb += 3) memcpy (rgb, p[(codes[i] >> 2) & 15], 3);
 		return;

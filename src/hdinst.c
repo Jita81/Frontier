@@ -30,7 +30,7 @@
  * middle, then the view).  Each is drawn as crisp bars with a soft dark
  * outline, legible over a star or a world; a pulse or mining laser's shot
  * (the recharge word rising, which only they set) opens the straight
- * ticks a pixel and tints them its hue for the first eighth of the
+ * ticks a pixel and tints them its hue for the first quarter of the
  * recharge, so it stands still while the game is paused.
  *
  * Lock boxes.  Over a 3D view in flight (the GL renderer leaves the view
@@ -375,8 +375,8 @@ static void mask_parts (const unsigned char *raster)
 	if (ticks_col >= 0 || marker_col >= 0) hdtext_skip (sight_mask);
 	/* the class of the view's laser (bits 3-6 of its type, as fx.c reads it) */
 	fire_cls = view < 4 && ship && ship < 0x100000 ? (STMemory_ReadByte (ship + 168 + view) & 0xff) >> 3 & 15 : 0;
-	if (ticks_col >= 0 && fire_cls >= 1 && fire_cls <= 3 && rech && w <= rech && (rech - w) * 8 < rech)
-		fire = 1 - (rech - w) * 8.0f / rech;
+	if (ticks_col >= 0 && fire_cls >= 1 && fire_cls <= 3 && rech && w <= rech && (rech - w) * 4 < rech)
+		fire = 1 - (rech - w) * 4.0f / rech;
 }
 
 void hdinst_mask (const unsigned char *raster)
@@ -856,9 +856,11 @@ static void lift (void)
 }
 
 /* A bar of the sight or a bracket, w its core's width: pass 0 a faint glow,
- * 1 a soft dark outline (alpha o) a little past each end, 2 the crisp core
- * (alpha a).  Each pass is drawn for every bar before the next, so no
- * outline covers a neighbouring core. */
+ * 1 a soft dark outline (alpha o, rim wider than the core; the brackets'
+ * is narrower, a crisp line over a bright hull) a little past each end,
+ * 2 the crisp core (alpha a).  Each pass is drawn for every bar before the
+ * next, so no outline covers a neighbouring core. */
+static float rim = 2.6f;
 static void bar (float x0, float y0, float x1, float y1, float w, int pass, float a, float o)
 {
 	float r = R, g = G, b = B, dx = (x1 - x0) * SX, dy = (y1 - y0) * SY;
@@ -870,7 +872,7 @@ static void bar (float x0, float y0, float x1, float y1, float w, int pass, floa
 	if (pass != 1) return;
 	R = G = B = 0.02f;
 	seg (x0 - (x1 - x0) * e, y0 - (y1 - y0) * e, x1 + (x1 - x0) * e, y1 + (y1 - y0) * e,
-	     w + 2.6f * K, 1.6f * K, o);
+	     w + rim * K, 1.6f * K, o);
 	R = r, G = g, B = b;
 }
 
@@ -911,12 +913,14 @@ static void parts (const unsigned int *pal, int pass)
 		bar (fmaxf (edges[i].x0, ex), fmaxf (edges[i].y0, ey),
 		     fminf (edges[i].x1, ST_W - ex), fminf (edges[i].y1, VIEW_H - ey), w, pass, 0.35f, 0.25f);
 	}
+	rim = 1.4f;
 	for (i = 0; i < n_brackets; i++) {	/* each arm half a core past the corner */
 		float x = brackets[i].x, y = brackets[i].y, hw = w * 0.5f;
 		float h = brackets[i].h, v = brackets[i].v;
-		if (h) bar (x - (h > 0 ? hw : -hw) / SX, y, x + h, y, w, pass, 1, .55f);
-		if (v) bar (x, y - (v > 0 ? hw : -hw) / SY, x, y + v, w, pass, 1, .55f);
+		if (h) bar (x - (h > 0 ? hw : -hw) / SX, y, x + h, y, w, pass, 1, .45f);
+		if (v) bar (x, y - (v > 0 ? hw : -hw) / SY, x, y + v, w, pass, 1, .45f);
 	}
+	rim = 2.6f;
 }
 
 void hdinst_draw (const unsigned int *pal, const unsigned int *ctrl_pal)
