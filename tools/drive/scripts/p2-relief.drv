@@ -1,0 +1,66 @@
+# p2-relief.drv - Phase 2 tour: the start system's rocky moon close up on
+# the system map (W4 regression check).
+#
+# Verifies: W4 (crater bowls and ground relief) keys airless bodies only,
+# so a rocky body (model word $7e) is drawn exactly as before W4.
+# Run:  tools/p2shots --routes relief --base BASE --branch BRANCH
+# Expect: 01 the map zoomed in seven times on the moon, day side to the
+#         left, the terminator down the middle; 02 zoomed in twice more;
+#         03 the same view 0.5 s later. Base and branch alike in all three
+#         (the dark discs on the moon are the model's own polygons, not
+#         PS_CRATER circles).
+# Start 1 (landed), new game only. Each shot pauses the game (Esc); the
+# pointer is parked off the controls so no hover tip is drawn.
+
+wait 6000
+key space
+wait 2000
+key 1             # start position 1: landed
+wait 11000
+# F2, F2: the system map; pick the rocky moon, then zoom in (F7).
+sdlkey f2
+wait 2500
+sdlkey f2
+wait 2500
+mouse 178 55
+wait 300
+click 200
+wait 1500
+sdlkey f7
+wait 1500
+sdlkey f7
+wait 1500
+sdlkey f7
+wait 1500
+sdlkey f7
+wait 1500
+sdlkey f7
+wait 1500
+sdlkey f7
+wait 1500
+sdlkey f7
+wait 1500
+mouse 2 120
+wait 300
+sdlkey esc
+wait 500
+shot 01-map-x7
+sdlkey f1 shift
+wait 300
+sdlkey f7
+wait 1500
+sdlkey f7
+wait 1500
+mouse 2 120
+wait 300
+sdlkey esc
+wait 500
+shot 02-map-x9
+sdlkey f1 shift
+wait 500
+sdlkey esc
+wait 500
+shot 03-map-x9-0.5s
+sdlkey f1 shift
+wait 300
+quit

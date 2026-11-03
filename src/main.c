@@ -51,6 +51,7 @@ extern enum RENDERERS use_renderer;
 int delta_x, delta_y, abs_delta_x, abs_delta_y;
 int flat_fx = 0;	/* --flat-fx: no HD weapon effects (fx.c); both renderers link this */
 int flat_biomes = 0;	/* --flat-biomes: flat seas and land, no coasts or biomes (worlds.c) */
+int flat_relief = 0;	/* --flat-relief: no crater bowls or ground relief on airless bodies (worlds.c) */
 int flat_explosions = 0;	/* --flat-explosions: the base explosions, other HD weapon effects kept */
 int flat_buildings = 0;	/* --flat-buildings: a surface port's buildings unplated (hull.c) */
 int flat_lights = 0;	/* --flat-lights: no halo round the game's lights (gl.c) */
@@ -239,6 +240,8 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --flat-starfield      The game's plain background stars (no magnitude or colour).\n"
                "  --flat-planets        Hard light zones and flat atmosphere rings.\n"
                "  --flat-biomes         Flat seas and land: no sea depth, beaches or biomes.\n"
+               "  --flat-relief         Airless bodies without crater bowls and ground\n"
+               "                        relief.\n"
                "  --flat-stars          No corona round the stars.\n"
                "  --flat-sunglow        No glow round the sun down in a planet's air.\n"
                "  --flat-buildings      A surface port's buildings without plating\n"
@@ -288,6 +291,8 @@ void Main_ReadParameters(int argc, char *argv[])
 		flat_planets = 1;
 	  else if (!strcmp(argv[i], "--flat-biomes"))
 		flat_biomes = 1;
+	  else if (!strcmp(argv[i], "--flat-relief"))
+		flat_relief = 1;
 	  else if (!strcmp(argv[i], "--flat-stars"))
 		flat_stars = 1;
 	  else if (!strcmp(argv[i], "--flat-sunglow"))

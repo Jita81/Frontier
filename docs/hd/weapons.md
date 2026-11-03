@@ -43,6 +43,7 @@ it.
 | 10, 12, 14, 16 | homing, smart, naval and nuclear missiles | a flame off the tail every frame the body is drawn: near-white nozzle, a flame in the type's hue, flicker; longer, wider and hotter from homing to nuclear (see Missiles) |
 | 188 | explosion circles | one layered fireball per blob, by age and size (see Explosions) |
 | 194 | smoke blobs | noise puffs that spread and thin with age |
+| 200 | ECM pulse, energy bomb | one translucent shell round the ship that grows and fades over the countdown: ECM blue-white, the bomb a hotter white-orange with a second, brighter rim (see ECM and energy bomb) |
 
 ## Lasers
 
@@ -268,12 +269,82 @@ same folder wraps it). Checked this way at 1600x1200: two replays give
 byte-identical frames (32 of 32, HD and `--flat-fx`), where two base
 replays differ in 29 of 32; `--flat-fx` is byte-identical to base; a laser
 bolt shows on the same three frames as base at 1x; paused frames 2.6 s
-apart are identical; at 10x the bolt shows on the frames after each shot,
-as on base.
+apart are identical; the ECM slice's build gives the same 32 frames as the
+build before it. This route does not run at 10x: from 10x up a bolt is
+drawn on three frames, where base drew it on two (see 10x and up below).
+
+**10x and up.** At 10x a frame is 200 ms of game time and fx's clock steps
+its 50 ms cap, so a 90 ms bolt is drawn at 0 and 50 ms and gone on the third
+frame; a pulse laser fires every fourth frame there (one shot each 200 ms of
+fx's clock, measured), and the first frame's bolt is still at the muzzle,
+mostly below the view, so base showed a bolt on about one frame in four.
+Now, while the last running frame stepped 100 ms of game time or more, a
+bolt is kept for three frames and run in even steps (35% and 70% of its
+life on the second and third), so it shows on two frames in four and still
+reaches the hit. Its frames are counted only on frames where the game's
+clock moves, and the rate is the one the game ran at before a pause, so a
+paused bolt holds still. At 1x nothing changes (20 ms a frame: the bolt's
+five frames as before). Beams, plasma, blooms and flares are unchanged;
+`--flat-lasers` and `--flat-fx` turn it off.
+
+## ECM and energy bomb
+
+The game draws an ECM pulse or an energy bomb as model 200 (fe2.s L44480): a
+copy of the firing ship's record put twice a frame, each copy randomly turned
+and drawn as three complex-polygon patches on a sphere of about 49000 units
+round the ship. The copy carries the word at +284 of the firing ship's record
+at +116, so the kind is in +117's flags. fx reads (never writes) the record
+being put:
+
+| Offset | What | Measured |
+|---|---|---|
+| +116 | the high byte of the same copied word | `$00` on the ECM pulse (not the kind) |
+| +117 | flags | `$20` (bit 5) on the ECM pulse, measured; bit 6 (`$40`) the bomb, read from the game's code (no bomb was fired) |
+| +118 | a long that differs per object | fx's key for the shell |
+| +283 | countdown | the ECM's was seen at 2, then 1, stepping once a second of game time; the bomb's starts at 7 (game code) |
+
+`fx_tag_for` tags model 200 when it sees the first patch: the shell's centre
+is the object's origin in eye space (the longs at -16(a6), -12(a6) and
+-8(a6)), and its radius the distance to a patch corner, measured once per
+object (the patches' corners differ by a few per cent and the game turns
+them while paused). One line in `src/gl.c` (`Nu_DrawComplexSNext`, through
+`fx_shell`) drops every vertex of a tagged patch, so neither copy's patches
+are drawn, and fx draws one shell per object per frame instead: an additive,
+camera-facing disc with a procedural texture, a rim round a faint inside.
+
+The shell follows a phase that runs from 0 to 1 over the countdown on the
+game's clock: it starts mid-way through the first second (the countdown is
+only seen once it is running) and re-aims at each step of the countdown.
+Its radius grows from 10% to 100% of the sphere, fast at first; its
+brightness falls with the phase's remainder to the power 1.5, so it is gone
+at the end. Pause holds it; under time acceleration it runs on the
+game's clock (at 1x the ECM pulse is drawn on 62 frames, at 10x on six). No random
+numbers and no wall clock.
+
+It must not hide ships. The inside is faint (at most 12% of the rim); the
+brightness is capped as a glow's is; the on-screen radius is clamped softly
+to about 45% of the view's height; and it fades as its edge nears the
+camera: full while its radius is under 70% of the camera's distance, gone
+when it reaches the camera. The ECM is blue-white; the
+bomb is white-orange with a second, near-white rim turned the other way,
+brighter and thicker. `--flat-fx` turns it off and the game's patches are
+drawn as before.
+With the camera inside the shell (a ship's own ECM seen from its cockpit)
+the same rim, on the same phase and cap, is drawn over the 3D view, centred,
+running out from just inside the view's edges to past its corners; it fades
+in from nothing as the shell's edge passes the camera, so there is no pop.
+
+The route: `tools/drive/scripts/p2-ecm.drv` starts a new landed game, sells
+the beam laser for the cash, fits the ECM system, takes the external view
+and fires three pulses: one at 1x, one paused part-way for 3 s, one at 10x.
+Its second shot, `02-ecm-paused`, is taken in the pause, since a shot can
+take longer to capture than a 1x pulse lasts.
+Record it with `--pace` and a timeout of 400 s as the Combat FX lab route;
+the tape is game data and lives outside git.
 
 ## Base look kept (fallback)
 
-- Mines (6/8), shield (192), ECM and bomb (200).
+- Mines (6/8), shield (192).
 - An explosion's lines, blobs and debris triangles; smoke circles (sparks);
   the missile's own body, lines and circles (drawn as they were).
 - `PutTwinklyCircle` and `PutPoint` have no hooks: probes showed only models
@@ -330,3 +401,30 @@ Missile flames, checked on a fired homing missile in the external view: the
 long axis stayed on the model z axis over 35 frames while the camera turned,
 and the tail held; paused, the flame stays and holds still; with
 `--flat-missiles` the same paused frame has no plume (no smoke near it).
+
+ECM and energy bomb, on a tape of the `p2-ecm.drv` route (scratch dbgshot
+build, 1600x1200, base | branch | `--flat-fx`): base draws large flat cyan
+patches round the ship; the branch draws one blue-white ring that grows
+from small to past the ship's width and fades, the ship
+visible through it, and the building behind it. It is bright and small at
+the start, faint at about 70% of the phase and gone before the end. Over 150
+frames sampled through the three pulses (every fifth): two replays give
+byte-identical frames; `--flat-fx` is byte-identical to base; the branch
+differs from base on 56, all inside the 3D view. Paused for 150 frames (3 s),
+the shell's phase holds at 0.53 and the 30 sampled frames are one image,
+where base's randomly turned patches give a new image almost every frame. At
+10x the pulse is drawn on six frames (phase 0 to 0.83 in even steps).
+`--old-renderer` is byte-identical to base (150 of 150); with `--classic-ui`
+and with `--pixel-art --pixel-faces --pixel-text` the frames that differ
+differ only inside the 3D view, the panels are identical. The bomb was not
+fired (too dear for a new game): its look was checked with the kind forced
+in a scratch build only. The oracle is unchanged.
+
+10x bolts, on a scratch tape of the Combat FX lab start that fires the front
+laser at 1x and then at 10x: at 1x each bolt is drawn on its five frames as
+on base; at 10x on three running frames (0, 35% and 70% of its life) where
+base drew two (0 and 56%), and the bolt is on screen on two frames of each
+four where base showed it on one (its first frame is at the muzzle, below
+the view, on both). With only two frames it would still show on one, so the
+floor is three. With `--flat-lasers` or `--flat-fx` the frames are
+byte-identical to base run with the same flag (21 of 21).

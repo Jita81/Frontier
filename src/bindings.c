@@ -441,8 +441,6 @@ int bindings_in_flight_view (int x, int y)
 	return ok;
 }
 
-#define DEATH_CAMERA	0x58	/* 704(a6): fx.c's death camera, held through the start menu */
-
 /* Every HD flight overlay (instruments, sight, lock brackets, damage)
  * gates on this, never on bindings_in_flight_view alone: after a death the
  * player stays set and the start menu can pass the flight test. */
