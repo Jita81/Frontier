@@ -71,5 +71,8 @@ int psurf_classify (struct PSurf *s, const unsigned char *codes, int n,
  * with. */
 unsigned int psurf_seed (struct PSurf *s);
 int psurf_temperate (struct PSurf *s);
+/* W2 (worlds.c): the surface temperature in kelvin of a terran body, -1
+ * for any other body or when unknown. */
+int psurf_terran_temp (struct PSurf *s);
 
 #endif /* _PLANET_H */

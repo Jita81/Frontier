@@ -47,6 +47,14 @@ int procfx_sky_begin (const float m[9], const double proj[16], const int vp[4]);
  * in window coordinates */
 void procfx_sky_feather (const double (*v)[3], int n);
 void procfx_sky_end (void);
+/* --flat-starfield: every background star as the game draws it */
+extern int flat_starfield;
+/* Put side, in Nu_PutBlob: 0 when the blob is not one of the sky object's
+ * stars, else a tag (bit 16 set, then two hash bytes) fixed to the star */
+unsigned int procfx_starfield_put (void);
+/* Draw side: the tag's colour and magnitude on the game's grey rgb; returns
+ * the point size factor, with the strength of a soft glow in *glow */
+float procfx_starfield_look (unsigned int tag, float rgb[3], float *glow);
 /* --flat-planets: the planets' exact light zones and flat atmosphere discs */
 extern int flat_planets;
 
@@ -92,6 +100,8 @@ void procfx_corona_end (void);
 /* a layer's program: the shared noise library plus body, its main();
  * 0, after a note on stderr, when it does not compile (skies.c too) */
 unsigned int procfx_program (const char *name, const char *body);
+/* the noise library (pf_hash, pf_noise, pf_fbm) with its #version line */
+extern const char *const procfx_noise_glsl;
 
 /* change_vidmode, before the GL context goes */
 void procfx_forget (void);
