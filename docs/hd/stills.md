@@ -231,7 +231,8 @@ land as before.
   The lock's acquire zoom starts with boxes larger than the 3D view: while a box's
   corners are off screen, its corner brackets are drawn clamped just inside the view
   (above the speed strip at the bottom), not as bare edge-to-edge lines. A box cut off
-  on one side only keeps a faint line on that edge.
+  on one side only keeps a faint line on that edge. The brackets stay while the missile
+  pylons are in the bay in place of the scanner: the flight-view test lets them through.
 - The status panel's laser heat was not seen rising in play. The start ship's pulse
   laser cools faster than it heats, so its heat stays near 0. The hot states were
   checked with `FE2_HD_GAUGES` only.

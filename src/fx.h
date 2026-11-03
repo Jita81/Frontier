@@ -5,6 +5,7 @@
 extern int flat_fx;	/* --flat-fx: none of this, the base HD look */
 extern int flat_explosions;	/* --flat-explosions: the base explosions only */
 extern int flat_lasers;	/* --flat-lasers: every laser one steady ribbon */
+extern int flat_missiles;	/* --flat-missiles: plumes only near smoke */
 
 /* Put side (ST memory is only read).  fx_tag_for: 1 when the object being
  * drawn has effects; tag (kind, aux, rec) then goes in front of its
