@@ -1,7 +1,6 @@
 # p2-landed-ice.drv - Phase 2 tour: landed at a surface port on an ice moon.
 #
-# Verifies: landed views on ice: sky, ground, the port's pad and buildings
-# (and, with --props, the ice spires round the port).
+# Verifies: landed views on ice: sky, ground, the port's pad and buildings.
 # Run:  tools/p2shots --routes landed-ice --base BASE --branch BRANCH
 # Expect: 01 the cockpit view from the pad, 02-03 the next two views of the
 #         view cycle (the ship from outside), each paused.
