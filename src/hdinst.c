@@ -25,8 +25,9 @@
  * over is still read; a label over the sight is moved clear of it.
  *
  * Lock boxes.  Over a 3D view in flight (the GL renderer leaves the view
- * clear in the ST screen; the scanner was drawn lately, so not a map; not
- * a station page, which hdback has a picture behind)
+ * clear in the ST screen; the scanner was drawn lately, or the game says a
+ * flight view is up, as with the missile pylons in the bay, so not a map;
+ * not a station page, which hdback has a picture behind)
  * the target's boxes are the only straight lines but the sight's and the
  * labels'.  A line runs on across a glyph's cell and across pixels another
  * layer took out, as the game drew those over it, so a corner hidden under
@@ -51,6 +52,7 @@
 #include "hdtext.h"
 #include "hdinst.h"
 #include "hdback.h"
+#include "bindings.h"
 
 #define ST_W		320
 #define ST_H		200
@@ -497,9 +499,10 @@ static void boxes (const unsigned char *raster, unsigned char *out)
 	unsigned char boxcol[256], full[256][2];
 	int nh, nv, i, j, eh, ev, clear = 0, n_runs;
 
-	/* a flight view: the scanner drawn lately (not a map's), and no
-	 * picture behind the page (a station's) */
-	if (since > 8 || hdback_active ()) return;
+	/* a flight view: the scanner drawn lately (not a map's) or, with the
+	 * missile pylons in the bay instead, the game's own flight-view test;
+	 * and no picture behind the page (a station's) */
+	if ((since > 8 && !bindings_in_flight_view (0, 0)) || hdback_active ()) return;
 	for (i = 0; i < ST_W * VIEW_H; i++) clear += raster[i] == 255;
 	if (clear * 10 < ST_W * VIEW_H * 7) return;
 	/* the cells hdtext found glyphs in */
