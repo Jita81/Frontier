@@ -254,7 +254,7 @@ void Main_ReadParameters(int argc, char *argv[])
                "  --flat-lasers         Every laser one steady ribbon (no bolts or hot cores).\n"
                "  --flat-missiles       A missile's flame only near its smoke trail (as before).\n"
                "  --flat-hud-hits       One red flash for every hit, no critical hull tint.\n"
-               "  --flat-sight          The thin HD gun sight, its ticks found as one (as before).\n"
+               "  --flat-sight          The thin HD sight and the old lock brackets (as before).\n"
                "  --flat-exhaust        The game's flat engine plumes (no HD exhaust).\n"
                "  --flat-shadows        No soft shadow under a landed ship.\n"
                "  --hull-style N        Hull look, 0 plating, 1 big texture, 2 panels,\n"
