@@ -245,8 +245,12 @@ The bounds:
   narrow lush band no darker crease shows), and
   each channel moves by at most a quarter of the palette colour's
   brightest channel (checked over every 12-bit colour, every biome byte
-  and every beach weight: at most a quarter plus 0.75 of an 8-bit level of
-  rounding). The night and twilight zones stay as dark as the game draws
+  and every beach weight, rim bytes 129 to 255: at most a quarter plus
+  0.75 of an 8-bit level of rounding). A land texel never takes byte 128,
+  which reads as open sea: before W12 slice 1 the outermost rim texels
+  (0 < t < 1/254) rounded to it and lost their sand and biome (336, 285
+  and 13 texels over the six faces and two ground patches of three test
+  worlds); now they start at 129. The night and twilight zones stay as dark as the game draws
   them, and a world's land keeps its own hue on average (a green world's
   mean land hue moves by 5° to 13°).
 - Across the beach rim the biome gives way to the sand, so the two
@@ -265,3 +269,48 @@ ground patches that is at most 48 MB beside the coast maps, freed on a
 video mode change. Rasters under 16 texels a side get no biome.
 
 `--flat-biomes` turns the biomes off with the sea depth and the beaches.
+
+## What is drawn: airless regolith and crater rays
+
+`src/worlds.c` (W12, slice 1) gives an airless body, seen from orbit, a
+fine grey regolith speckle, and soft bright rays from its own craters.
+
+- **What keys it.** The body kind from the model word: `$7a`, `$7c` or
+  `$80` (`psurf_airless` in `src/planet.c`). Rocky, corrosive, terran and
+  every other body are drawn as before, byte for byte. Every code of the
+  body takes it, water and ice included (an airless body has none).
+- **The speckle.** Two octaves of the same value noise the coasts use, on
+  the texel's unit direction, seeded by the planet's own seed
+  (`psurf_seed`): cells of 1/64 and 1/21 radian, zero mean, moving the
+  texel's brightness by at most ±5% and ±3.75% (±8.75% together). Each
+  octave fades out (smoothstep from 0.35 to 0.7 cells a texel) where the
+  raster's texel is too coarse to hold it, so the 512² faces and the 1024²
+  ground patch draw the same speckle and a coarse raster never aliases it.
+- **Grey.** The colour moves a fifth of the way to its own luminance, then
+  takes the gain: one multiply a colour, applied to every light zone's
+  palette, so it is albedo and the zones light it as they light the rest.
+- **The rays.** From each of the model's crater circles (`psurf_craters`:
+  the parsed circles of class `PS_CRATER`, no second parse), 4 to 7 rays,
+  seeded by the planet seed and the crater's index in the body's list (so
+  every face agrees). A ray leaves the rim at a seeded angle and reaches 2
+  to 4 crater radii; it is a quarter of a radius wide at the rim and
+  narrows to a fifth of that at its tip, and brightens by up to 0.2 at the
+  rim, fading with the square of the distance along it. Only craters
+  within reach of a raster are looked at.
+
+Measured on the harness's three airless test bodies (a disc lit at 0.5,
+600 px): mean disc luminance 119.8, 105.5, 100.8 before; 120.6, 106.0,
+101.2 after (+0.7%, +0.5%, +0.4%). A face and the ground patch over the
+same ground (the same texel size, different grids) differ by 0.19 of an
+8-bit level on average.
+
+Cost: the gain is sampled on a grid of about three texels (two at the
+least, 32 at the most: 0.75 of a fine cell) and interpolated, in the
+biome cache. First bake of an airless face, raster included, went from
+about 0.7 ms to about 7 ms (5 to 12 ms on a busy host); a 1024² ground
+patch 2 radians across from about 1.5 ms to about 27 ms, under the 61 ms
+a terran ground patch already takes for its coasts. Later light zones
+reuse the map. The grid array is static (1 MB) instead of on the stack.
+
+`--flat-biomes` turns all of this off: `worlds_bake` expands the codes
+with the plain palette, as for the biomes.

@@ -64,6 +64,7 @@ ifeq ($(TARGET_OS),Darwin)
 else
 	LIBS += -lGL -lGLU
 endif
+	SRCOBJS += props.o
 else
 	SRCOBJS += soft.o
 ifeq ($(TARGET_OS),Darwin)
@@ -125,6 +126,9 @@ gen: $(patsubst %.c,%.o,$(wildcard gen/*.c)) $(OBJS)
 # host.h holds inlines the core calls at every jump (ExceptionsPending,
 # TakeException), so a change to it must rebuild the core
 $(patsubst %.c,%.o,$(wildcard gen/*.c)) fe2.s.o: $(CORE_STAMP) host.h
+
+# props.c reads engine variables at their label addresses too
+$(HOST_OBJDIR)src/props.o: fixups.h
 
 $(HOST_OBJS): $(HOST_OBJDIR)%.o: %.c $(HOST_STAMP) host.h
 	@mkdir -p $(@D)

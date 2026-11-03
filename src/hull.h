@@ -125,6 +125,14 @@ int hull_key_listed (unsigned int key);
  * or start menu) the model word of the part being put, its own (hull_models'
  * key less the table); 0 anywhere else */
 unsigned int hull_intro_part (void);
+/* gl.c, at a put: the intro's part word for its effects, hull_intro_part's
+ * and also in its credits and start menu (record 72, whose parts are the
+ * scenes' words); 0 anywhere else and under the base-look flags */
+unsigned int hull_intro_fx_part (void);
+/* What the intro draws a part as (by hull_intro_fx_part's word), and for a
+ * laser its look (fx.c's looks[], 0-9) in *look when look is not NULL */
+enum { HULL_FX_NONE, HULL_FX_CLOUD, HULL_FX_FIRE, HULL_FX_LASER, HULL_FX_MISSILE, HULL_FX_EXHAUST };
+int hull_intro_fx (unsigned int word, int *look);
 /* 1 if the face (n corners in the model's frame) of a docking bay's model
  * lies partly out of the bay: it is the station's outside around the slot */
 int hull_bay_outside (unsigned int key, const float w[][3], int n);

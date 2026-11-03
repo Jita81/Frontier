@@ -74,5 +74,10 @@ int psurf_temperate (struct PSurf *s);
 /* W2 (worlds.c): the surface temperature in kelvin of a terran body, -1
  * for any other body or when unknown. */
 int psurf_terran_temp (struct PSurf *s);
+/* W12 (worlds.c): 1 if the body is airless (model word $7a, $7c or $80);
+ * and its crater circles, up to max: unit centre in cr[i][0..2], angular
+ * radius in radians in cr[i][3]. Returns how many. */
+int psurf_airless (struct PSurf *s);
+int psurf_craters (struct PSurf *s, double (*cr)[4], int max);
 
 #endif /* _PLANET_H */
