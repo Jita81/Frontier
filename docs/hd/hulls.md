@@ -520,15 +520,21 @@ a quarter desaturated and 0.88 as bright, carries faint seams on a
 quarter-tile grid, a seeded patching of a few percent per cell, and a
 parapet at its edge (a light band, an inner shadow), all fading with
 distance and footprint so it reads as one flat tone from the air. Each
-building picks a facade from `hull_mix` of its model key and where its
-part stands on the port, in cells of two tiles (the part's origin in the
-port's frame, so landed it is exact): ribbon, punched or curtain wall;
-a pane density of 1, 3/4 or 5/4; a tone within 4 percent either way.
-No RNG, no clock, no view enters it, so a building keeps its facade
-every frame.
-Neighbours in one cell share it. Everything is the shader's: no image
-and no geometry are added, and `--flat-buildings` still draws the
-game's own colours.
+building picks a facade from `hull_mix` of its model key and where the
+port's models place it: the chain of sub-object commands that link its
+part under the port (each frame keeps the address of its command at
+-202), so one model placed twice is two buildings. A part placed by a
+model of scale 2^10 or under is a piece of that model's building and
+shares its facade. The facades are ribbon, punched or curtain wall; a
+pane density of 1, 3/4 or 5/4; a tone within 4 percent either way.
+No RNG, no clock and no view enters it, and no position either (the
+part's origin in the port's frame is rebuilt each frame from the 68k's
+view-space integers and drifts with distance), so a building keeps its
+facade every frame, on the ground and in flight: over both lift-offs
+not one part changed facade, where keying on two-tile cells of that
+origin changed 3 of 73 parts on one port and 21 of 216 on the other.
+Everything is the shader's: no image and no geometry are added, and
+`--flat-buildings` still draws the game's own colours.
 
 Seeded ground props round a port (trees, shrubs, ice spires; W11b, #81)
 were tried and removed at the operator's call: props are not terrain and
