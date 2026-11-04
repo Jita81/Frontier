@@ -350,14 +350,28 @@ after the table for a part of record N.
 | 86 | the green ship, in several scenes | civilian, panels x2 |
 | 130 | the ship of modules | freighter, panels x6 |
 | 212 | the large ship of the first space scene | armour, panels x2 |
+| 138 | the city's large hall with stacks | building, panels x4 |
+| 160, 166, 168, 170, 172, 174, 176, 178, 184 | the city's low boxes, blocks, halls and tower | building, panels x1 (storeys on the offices' lit window rows) |
 
 - **Classes are by role.** Comparing the first 40 header bytes of every
   intro model with every game model finds twins only for 90, 192, 194,
   214, 220, 222 and 224; none of the intro's ships is a game ship, so each
   takes the class of the game's ships of its size and role.
-- **Flat:** the ground, the city, its buildings and the parts not
+- **Flat:** the ground and what lies on it (156, 164 roads and fields,
+  162 the river, 146 trees, 134 the pylons and the bridge deck, which
+  share one word), the houses (158), signs (202), lit window strips (46),
+  the stacks (144), 154 (a low maze-like block in the city, but also the
+  surface detail of a large ship in records 66 to 70, so a row would plate
+  that ship), the scenes' own models (40 to 54) and the parts not
   identified (76, 206, 124 to 128, 190, 218 to 222, 220 and 222 being
-  twins of game models that are not listed either).
+  twins of game models that are not listed either). `--flat-buildings`
+  draws the city's buildings flat too.
+- **Buildings' frame:** a part has no climb, so its storeys and its foot
+  shading count from the part's own origin, not the ground: for 166 to 174
+  (origin at the middle or above the walls) the foot shading falls mid-wall
+  or over the whole wall, and 172's and 174's roofs stay flat (no face of
+  theirs is above the origin). The shading is at most 30 % and forcing it
+  off changes the close city frames only slightly.
 - **Planets and stars:** the intro's planet is a circle (90, a twin of a
   game circle), and its sun a set of circles, not the game's planet or
   star objects, so the HD planet and the star corona do not draw them.
@@ -536,6 +550,35 @@ origin changed 3 of 73 parts on one port and 21 of 216 on the other.
 Everything is the shader's: no image and no geometry are added, and
 `--flat-buildings` still draws the game's own colours.
 
+The ground (B7b). On words 96 and 98 a complex shape is the port's
+ground when its colour is grey (its channels within 24 of each other),
+its plane is within 3 degrees of level (|N.y| at least 0.9986 of |N|,
+Newell's normal of its contour in the model's frame) and every point of
+its contour lies within 0.02 of a tile of the model's foot: the apron,
+the roads and the taxi strips. Signs and their lettering stand upright,
+roofs and the low blocks are well above the foot, and the hills slope
+(|N.y| 0.82 to 0.97, climbing tiles), so none of them pass; the pad and
+its painted numbers are another word (32) and never reach this test. A
+green or blue shape at the foot (the terran port's grass and lakes, the
+airless port's gardens under its domes) is level too, but it is not
+paved, so it is left out by its colour: slab joints on grass or water
+would be wrong, and a look of its own is a later step. The ground is
+drawn by a small shader in the model's frame, in building tiles (one
+tile some four storeys): a fine value-noise grain of a few percent,
+slabs a third of a tile across with thin dark joints and a faint tone of
+their own, and broad worn patches. Each scales the shape's own colour,
+so its hue is kept and its mean stays about the same, and each fades as
+its cells shrink toward a pixel, so the far apron is the game's grey. It
+does not touch the decal chain (a host stays a host, its lettering is
+drawn as before), adds no geometry, and depends on no clock, RNG or
+view. `--flat-pads` draws the ground flat, exactly as before. On the
+airless port little passes: the wide grey round its pad is not one of
+word 98's complex shapes (a tint of every accepted shape left it
+untouched), so it stays flat, and its level shapes are mostly gardens. In-run
+pairs at 1600x1200, the shader toggled against flat every 30 frames
+(ABBAABBA), measured it at +0.35 ms a frame landed and -0.17 ms on the
+lift-off (median of the paired cycles), inside the 0.5 ms rule.
+
 Seeded ground props round a port (trees, shrubs, ice spires; W11b, #81)
 were tried and removed at the operator's call: props are not terrain and
 make no sense in a base. The effort on a port goes into its buildings.
@@ -703,7 +746,8 @@ are listed in `hull_models[]` at x1, each with a class of its own.
 | `--hull-style 0..4` | the earlier looks, unchanged pixel for pixel: 0 fixed-function plating (`art/hull/plating.lum`), 1 big seeded texture, 2 panels, 3 bump and weathering, 4 a seeded profile per model (its own table, by the low byte of the word, as it always was) |
 | `--flat-hulls` | no plating at all: the game's flat faces exactly (buildings too) |
 | `--flat-wear` | every ship of a model plated alike: no per-object wear, the 3D view of the build before the wear exactly |
-| `--flat-buildings` | a surface port's buildings flat, everything else as it is: the frames before the building class, exactly |
+| `--flat-buildings` | a surface port's buildings and the intro city's flat, everything else as it is: the frames before the building class, exactly |
+| `--flat-pads` | a port's apron, roads and taxi strips (words 96 and 98) flat grey, everything else as it is: the frames before the ground shader, exactly |
 | Ctrl+Shift+H | steps 5, off, 0, 1, 2, 3, 4, 5 |
 | `FE2_HULL_TILE=path` | every class takes this raw square grey tile (64 to 2048 a side, a power of two, 128 = x1.0), to try a tile without a rebuild; set but empty, every class bakes its seeded plating |
 | `FE2_HULL_FIXED=1` | style 5 without its shader (the fixed-function path below) |
