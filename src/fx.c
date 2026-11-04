@@ -544,18 +544,24 @@ static void embers (const float *v, float R, float a, float k, int mis, unsigned
 #define A6_DEATH_T	722
 #define OBJ_OWNER	236
 static float death_t (void) { return 1 - fminf ((unsigned int) STMemory_ReadLong (A6 + A6_DEATH_T) / 248550.0f, 1); }
+static float bloom_at[2];	/* the blast on screen, -1 to 1 */
+static unsigned int bursts_seen, bloom_seen;	/* the frame the bursts ran; the frame they set bloom_at */
 static float bloom (void)
 {
 	float t = death_t ();
-	return flat_explosions || rb (A6 + A6_STATE) != DEATH_CAMERA || t <= 0.2f || t >= 0.8f ? 0 : 0.35f * sinf (5.236f * (t - 0.2f));
+	return flat_explosions || bloom_seen != n_frames || rb (A6 + A6_STATE) != DEATH_CAMERA || t <= 0.2f || t >= 0.8f ? 0 : 0.35f * sinf (5.236f * (t - 0.2f));
 }
-static float bloom_at[2];	/* the blast on screen, -1 to 1 */
 static void death_bursts (const float *v, float R, float k, float g, unsigned int seed)
 {
 	float t = death_t ();
 	int j, c, n = 2 + (hashf (seed, 99) < 0.5f);
-	bloom_at[0] = fminf (fmaxf (v[0] / (-v[2] * 0.32975f * vp_w / vp_h), -1), 1);
-	bloom_at[1] = fminf (fmaxf (v[1] / (-v[2] * 0.32975f), -1), 1);
+	if (bursts_seen == n_frames) return;	/* a blob of it had them this frame */
+	bursts_seen = n_frames;
+	if (v[2] < 0) {	/* in front of the eye: the bloom has a place on screen */
+		bloom_at[0] = fminf (fmaxf (v[0] / (-v[2] * 0.32975f * vp_w / vp_h), -1), 1);
+		bloom_at[1] = fminf (fmaxf (v[1] / (-v[2] * 0.32975f), -1), 1);
+		bloom_seen = n_frames;
+	}
 	for (j = 0; j < n; j++) {
 		float b = (t - 0.1f - 0.18f * j - 0.1f * hashf (seed, 100 + j)) / 0.3f, m = R * (1 + hashf (seed, 104 + j));
 		float z = 2 * hashf (seed, 108 + j) - 1, ph = 6.283f * hashf (seed, 112 + j), s = sqrtf (1 - z * z), p[3];
@@ -626,10 +632,10 @@ int fx_circle (const int *iv, unsigned int d2, int r, int g, int b)
 	}
 	if ((fl & 2) && !n) shock_ring (v, R * (mis ? 0.9f : 1.3f), a / 0.25f);
 	fireball (v, R, a, k, mis, c8 (g), spin);
-	if ((fl & 2) && !n) {	/* the event's sprays */
-		embers (v, top, a, k, mis, seed);
-		if (rb (A6 + A6_STATE) == DEATH_CAMERA && rb (cur.rec + OBJ_OWNER) == 0xff) death_bursts (v, last, k, c8 (g), seed);
-	}
+	if ((fl & 2) && !n) embers (v, top, a, k, mis, seed);	/* the event's sprays */
+	/* the player's own, by its record: bit 2 is off when another blew up beside it */
+	if (!cur.aux && rb (A6 + A6_STATE) == DEATH_CAMERA && rb (cur.rec + OBJ_OWNER) == 0xff)
+		death_bursts (v, last, k, c8 (g), seed);
 	relight (l);
 	return 1;
 }

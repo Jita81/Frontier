@@ -161,11 +161,12 @@ edge. It is drawn with the explosion, so in the painter's 3D view (no depth
 test) a nearer hull drawn after it covers it.
 
 Every explosion event (the same test as the ring) throws embers: n =
-round(8 + 16k) seeded sparks, 5 for a missile's. Ember i flies out along a
+round(8 + 16k) seeded sparks, 5 for a missile's; the intro's fireball has no
+ring or embers, by design (`cur.aux` sets fl = 0). Ember i flies out along a
 seeded direction (flattened by half in depth) as
-pos = start + dir * reach * (1 - (1 - u)^2), where u is its own age (the
-explosion's age over its lifetime, which is 0.6 to 1 of the ember lifetime
-L) and reach is (2.5 + 3k) blob radii scaled by a seeded half to whole
+pos = start + dir * reach * (1 - (1 - u)^2), where u is the ember's age: the
+explosion's age over the ember's own life, a seeded 0.6 to 1 of L, and
+reach is (2.5 + 3k) blob radii scaled by a seeded half to whole
 (1.25 to 2.5 radii at k = 0, up to 5.5 at k = 1; 0.75 to 1.5 for a
 missile's). L is 0.5 + 0.2k of the explosion's life (0.35
 for a missile's), so every ember is gone by 50% of life for a fighter, 70%
@@ -177,11 +178,13 @@ GLOW_CAP * (1 - u^2). The seed is word +126 and byte +93 of the record, so a
 replay throws the same embers; nothing reads the game RNG or the clock.
 
 The player's own death (`704(a6)` = `$58` and byte +236 = `$ff`, the owner
-byte of the player's explosion) gets more. The death timer `722(a6)` is set
-to `$3cae6` when the death starts and run down by the frame step
-`14446(a6)` every frame (L63b9c); when it would go below zero the game goes
-to the game-over screen without writing it. fx reads t = 1 - timer/$3cae6,
-0 to 1 across the death camera:
+byte of the player's explosion) gets more, keyed by that record and not by
+the event test, so a blast started beside it just before does not take its
+bursts: once a frame, on the record's first blob with fire. The death
+timer `722(a6)` is set to `$3cae6` when the death starts and run down by the
+frame step `14446(a6)` every frame (L63b9c); when it would go below zero the
+game goes to the game-over screen without writing it. fx reads
+t = 1 - timer/$3cae6, 0 to 1 across the death camera:
 - Two or three seeded secondary bursts (a fireball and embers, no ring),
   1 to 2 blob radii off the first blob, 0.7 of its size, starting at
   t = 0.1, 0.28, 0.46 (plus a seeded 0 to 0.1) and each lasting 0.3 of t.
@@ -189,7 +192,9 @@ to the game-over screen without writing it. fx reads t = 1 - timer/$3cae6,
   over the 3D view (2.5 view-heights across), centred on the blast, alpha
   0.35 * sin(pi (t - 0.2) / 0.6) from t = 0.2 to 0.8, so at most 0.35 and
   zero well before the game-over screen. It is drawn after the hulls and
-  before the control panel; lighting is switched off and restored.
+  before the control panel; lighting is switched off and restored. It is
+  drawn only on frames where that same test placed it, with the blast in
+  front of the eye (z < 0), so never at a stale place or a flipped one.
 
 The embers, bursts and bloom are part of the HD explosion: `--flat-explosions`
 and `--flat-fx` turn them off with the rest, and there is no new flag.
