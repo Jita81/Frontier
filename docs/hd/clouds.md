@@ -178,7 +178,8 @@ The oracle end line is exact.
 
 ## The game's own clouds and the intro
 
-The intro is not part of this slice.
+The intro's clouds take the same look: see "The intro's clouds" under Low
+clouds.
 
 The game draws its own low clouds as model 198.  A census (a scratch build
 that logged every model-198 primitive with `FE2_HULL_LOG=1`; nothing of it
@@ -198,7 +199,7 @@ frame resolved on every logged primitive.
 
 ## Low clouds
 
-`src/puffs.c` lights model 198 as cumulus: sunlit tops, shaded sides, a
+`src/puffs.c` lights model 198 (and the intro's clouds, below) as cumulus: sunlit tops, shaded sides, a
 darker flat base and soft rims, on the game's own outlines.  Off
 (`puff_on`): the old renderer, `--flat-clouds`, `--classic-ui` and every
 `--pixel-*` flag.  With it off nothing is tagged and the frames are the
@@ -263,6 +264,27 @@ switch is per part of a cloud, so in one record outlines and faces mix;
 the faces' mean is the game's colour, as the outlines' is, and there is
 no step at the switch (frames 8116-8118 and 8126 of the climb).
 
+**The intro's clouds.**  `puff_key` (`gl.c`) is a list of three models, by
+the key `hull_model_key` gives them: 198, and two intro parts, which carry
+`HULL_TAB_INTRO | HULL_TAB_SCENE` off `hull_intro_base`, so the base intro
+(`--classic-ui`, `--flat-hulls`, `--flat-fx`, `--pixel-*`) never matches.
+
+- 186, low puffs in the city and battle scenes: 198's twin, the same
+  proportions and primitive mix (lobes, sheets, faces near), at unit 2^10.
+- 206, the bands over the limb: one dark blue, outlines only, no sheet and
+  no face.  The multiply barely shows on a colour that dark, so its
+  shading is gentle: the bands keep their place and colour.
+
+The tag's M is put in 198's unit (`ldexp` by 2 minus the model's unit, an
+exact no-op for 198), since half a unit (shared edges), 4 units (seed) and
+`FACE_R` are sizes in the model's space: without it shared points were not
+found (specks of sky inside a cloud) and the mottle was too fine.  All
+intro objects read one seed, so two clouds differ only by their shapes'
+centres.  Up is the model's y, as for 198, and that is the scene's up; when
+the camera pitches the sun, which the intro fixes to the eye, moves round
+it and day follows.  The old renderer draws the same shapes flat, so this
+is a restyle, not a regression fixed.
+
 **Guard.**  A shape with a point at or behind the near plane (so one
 round the camera), one whose bound is more than 4 screens or under one
 pixel takes the game's flat fill.
@@ -284,8 +306,7 @@ neither committed):
   climb (the worst coverage, frame 7272: 131.4 to 133.8) and 5.8 on the
   pad front view (196.1 to 190.3).
 - Off, against the base: climb and landed with `--flat-clouds`,
-  `--old-renderer`, `--classic-ui` and `--pixel-art`, and the intro with
-  default flags (no model-198 primitive drawn in it), the same bytes but
+  `--old-renderer`, `--classic-ui` and `--pixel-art`, the same bytes but
   for single frames that differ between two runs of the base too (one to
   three a run, a different frame each run).
 - Two runs of the same tape, lit: no frame differed, 9270 climb and 1804

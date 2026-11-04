@@ -261,7 +261,8 @@ static void change_vidmode ()
 	 * on every SDL_SetVideoMode - when the window goes fullscreen or
 	 * back - and every texture of the old one is gone. Release ours
 	 * while that context is still current, they get made again when
-	 * needed. */
+	 * needed. A new GL id cached in a static is cleared on this path too:
+	 * tools/check-gl-forget fails without it. */
 	planet_forget_textures ();
 	hull_forget_texture ();
 	hdtext_forget ();
@@ -277,6 +278,7 @@ static void change_vidmode ()
 	}
 	procfx_forget ();
 	puff_forget ();
+	skies_forget ();
 	hdtip_forget ();
 	hddamage_forget ();
 	if (screen_tex) {
@@ -1618,9 +1620,10 @@ static struct skies_ring complex_ring_r, ring_r;
  * puff_now when the primitive being drawn is tagged, puff_open while its
  * shape is, its points (GL eye, every contour, before the near clip) in
  * puff_e */
-static int puff_key (void);
-static void puff_put (int kind);
-static int complex_puff, puff_now, puff_open, puff_en;
+static unsigned int puff_key (void);
+static void puff_put (int kind, unsigned int key);
+static unsigned int complex_puff;
+static int puff_now, puff_open, puff_en;
 static GLdouble puff_e[MAX_TESS_VERTICES][3];
 
 static void put_complex_start_4real ()
@@ -1631,7 +1634,7 @@ static void put_complex_start_4real ()
 		znode_wrblock (complex_sky_m, sizeof complex_sky_m);
 	}
 	if (complex_ring) { znode_wrlong (NU_RINGS); znode_wrblock (&complex_ring_r, sizeof complex_ring_r); }
-	if (complex_puff) puff_put (0);
+	if (complex_puff) puff_put (0, complex_puff);
 	put_fx ();
 	znode_wrlong (NU_COMPLEX_START);
 	znode_wrcolor (complex_col_rgb444);
@@ -1799,7 +1802,7 @@ void Nu_ComplexStart ()
 	complex_starts++;
 	complex_sky = procfx_sky_put (complex_sky_m);
 	complex_ring = !complex_sky && skies_ring_put (&complex_ring_r);
-	complex_puff = !complex_sky && !complex_ring && puff_key ();
+	complex_puff = !complex_sky && !complex_ring ? puff_key () : 0;
 }
 void Nu_DrawRings (void **data)
 {
@@ -3142,28 +3145,40 @@ static void hull_read_light (short lt[3])
 	}
 }
 
-/* puffs.c: is the object being put one of the low clouds? */
-static int puff_key (void)
+/* puffs.c: the model when the object being put is one of the low clouds,
+ * else 0.  An intro part carries HULL_TAB_SCENE only off hull_intro_base */
+static unsigned int puff_key (void)
 {
-	return puff_on () && hull_record_key () == 0x800000c6u;
+	static const unsigned int keys[] = {
+		0x800000c6u,					/* the game's */
+		0x80000000u | HULL_TAB_INTRO | HULL_TAB_SCENE | 186,	/* low puffs */
+		0x80000000u | HULL_TAB_INTRO | HULL_TAB_SCENE | 206,	/* limb bands */
+	};
+	unsigned int key = puff_on () ? hull_model_key () : 0, i;
+
+	for (i = 0; i < sizeof keys / sizeof keys[0]; i++)
+		if (key == keys[i]) return key;
+	return 0;
 }
 
 /* NU_PUFF and its tag (skies.h) before a low cloud's complex shape (kind
  * 0) or face (kind 1), in its data so an abort forgets it too.  Nothing,
- * the game's look, when the model's frame cannot be read.  Only reads. */
-static void puff_put (int kind)
+ * the game's look, when key is 0 or the model's frame cannot be read.  M
+ * is put in the game's unit (2^2): puffs.c measures in the model's space,
+ * and the intro's unit is 2^10.  Only reads. */
+static void puff_put (int kind, unsigned int key)
 {
 	struct puff_tag t;
 	double M[9], l;
 	short lt[3];
 	int j;
 
-	if (!hull_model_frame (0x800000c6u, M, t.o, NULL, NULL)) return;
+	if (!hull_model_frame (key, M, t.o, NULL, NULL)) return;
 	t.kind = kind;
-	t.seed = hull_obj_seed (0x800000c6u);
+	t.seed = hull_obj_seed (key);
 	hull_read_light (lt);
 	l = sqrt ((double) lt[0] * lt[0] + (double) lt[1] * lt[1] + (double) lt[2] * lt[2]);
-	for (j = 0; j < 9; j++) t.M[j] = (float) M[j];
+	for (j = 0; j < 9; j++) t.M[j] = (float) ldexp (M[j], 2 - hull_model_unit (key));
 	for (j = 0; j < 3; j++) t.L[j] = l > 0 ? (float) (lt[j] / l) : j == 2;
 	znode_wrlong (NU_PUFF);
 	znode_wrblock (&t, sizeof t);
@@ -4527,7 +4542,7 @@ static void hull_complex_end (void)
 void Nu_PutTriangle ()
 {
 	if (use_renderer == R_OLD) return;
-	if (puff_key ()) puff_put (1);
+	puff_put (1, puff_key ());
 	put_fx ();
 	znode_wrlong (NU_TRIANGLE);
 	znode_wrvertex (GetReg (REG_A0)+4);
@@ -4582,7 +4597,7 @@ void Nu_PutQuad ()
 {
 	if (use_renderer == R_OLD) return;
 	if (use_renderer == R_GL && fx_laser_quad ()) return;	/* a laser beam: fx draws it */
-	if (puff_key ()) puff_put (1);
+	puff_put (1, puff_key ());
 	put_fx ();	/* a missile's body: flat, never plated */
 	znode_wrlong (NU_QUAD);
 	znode_wrvertex (GetReg (REG_A0)+4);
