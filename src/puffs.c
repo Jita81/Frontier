@@ -46,6 +46,11 @@ int puff_on (void)
  * A face (uK.x 0) keeps its colour and takes only the mottle, from its
  * place in the model's space (gl_TexCoord[1]).  uK.y the seed, uK.w the
  * day (the sun above the cloud's horizon): by night only darker.
+ *
+ * A band over the limb (uK.x 3, puff_band) takes neither light nor seed.
+ * Its mottle hangs on the ray to the pixel in the model's frame (uA turns
+ * a window point into it), with 4 octaves, and uG scales the swing about
+ * 1, so the mean stays the band's colour; uG is 0 for every other cloud.
  */
 #define RIM_BINS 32
 #define WRAP 0.6		/* wrap lighting: the shaded side is not black */
@@ -53,6 +58,8 @@ int puff_on (void)
 static const char puff_glsl[] =
 	"uniform vec4 uC, uK, uL;\n"
 	"uniform vec2 uU;\n"
+	"uniform mat3 uA;\n"
+	"uniform float uG;\n"
 	"uniform float uR[32];\n"
 	"#define K_SUN 0.30\n"	/* the sun's swing about the mean */
 	"#define K_TOP 0.12\n"	/* tops over undersides */
@@ -60,6 +67,8 @@ static const char puff_glsl[] =
 	"#define K_MOT 0.16\n"	/* the mottle, +-8% */
 	"#define RIM_PX 3.0\n"	/* the soft edge, pixels */
 	"#define WRAP 0.6\n"
+	"#define BAND_XZ 12.0\n"	/* a band's mottle, per unit of the ray */
+	"#define BAND_Y 24.0\n"	/* flatter across the band than along it */
 	"void main () {\n"
 	"	float f = 1.0, a = 1.0, day = uK.w;\n"
 	"	vec3 p = gl_TexCoord[1].xyz;\n"
@@ -69,19 +78,20 @@ static const char puff_glsl[] =
 	"		if (uK.x < 1.5) {\n"
 	"			float lam = clamp ((dot (vec3 (q, sqrt (1.0 - r2)), uL.xyz) + WRAP) / (1.0 + WRAP), 0.0, 1.0);\n"
 	"			f += day * (K_SUN * (lam - uK.z) + K_TOP * dot (q, uU));\n"
-	"		} else\n"
+	"		} else if (uK.x < 2.5)\n"
 	"			f -= K_MID * (0.5 - r2);\n"
 	"		float t = atan (q.y, q.x) * (16.0 / 3.14159265) + 15.5, i = floor (t);\n"
 	"		float R = max (uR[int (mod (i, 32.0))], uR[int (mod (i + 1.0, 32.0))]);\n"
 	"		a = mix (1.0, mix (0.15, 1.0, smoothstep (0.0, RIM_PX, (R - r) / max (fwidth (r), 1e-5))), uL.w);\n"
-	"		p = vec3 (q * 2.5, 0.0);\n"
+	"		p = uK.x < 2.5 ? vec3 (q * 2.5, 0.0) : normalize (uA * vec3 (gl_FragCoord.xy, 1.0)) * vec3 (BAND_XZ, BAND_Y, BAND_XZ);\n"
 	"	}\n"
-	"	f *= 1.0 + K_MOT * (pf_fbm (p + uK.y, 2) - 0.5);\n"
-	"	gl_FragColor = vec4 (gl_Color.rgb * clamp (f, 0.6, 1.0 + 0.3 * day), a);\n"
+	"	f *= 1.0 + K_MOT * (pf_fbm (p + uK.y, uG > 0.0 ? 4 : 2) - 0.5);\n"
+	"	f = clamp (f, 0.6, 1.0 + 0.3 * day);\n"
+	"	gl_FragColor = vec4 (gl_Color.rgb * (f + uG * (f - 1.0)), a);\n"
 	"}\n";
 
 static GLuint prog;
-static GLint u_c, u_k, u_l, u_u, u_r;
+static GLint u_c, u_k, u_l, u_u, u_r, u_a, u_g;
 static int failed, bound, pending;
 static struct puff_tag cur;
 static float corner[4][3];
@@ -99,6 +109,8 @@ static int puff_bind (void)
 		u_k = glGetUniformLocation (prog, "uK");
 		u_l = glGetUniformLocation (prog, "uL");
 		u_r = glGetUniformLocation (prog, "uR");
+		u_a = glGetUniformLocation (prog, "uA");
+		u_g = glGetUniformLocation (prog, "uG");
 	}
 	glPushAttrib (GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT);
 	glEnable (GL_BLEND);
@@ -247,9 +259,33 @@ static double puff_atan2 (double y, double x)
  * One shape, just before the game's tessellator draws it: its n points e
  * in GL eye space, mv pj vp what gluProject takes them through.  0 when
  * the game's flat fill is to be used: a shape at or behind the near
- * plane, one bigger than 4 screens or too small to see.
+ * plane, one bigger than 4 screens or too small to see (not a band).
  */
 #define MAX_PTS 1024
+/* The camera turns inside the ring of bands, so a direction in the model's
+ * frame stays on a band with no shape's size, seed or tessellation in it.
+ * 0 for any other model; a band too near or too big shades too, rim 0. */
+static int puff_band (const double pj[16], const int vp[4], float rim)
+{
+	double ax = 2 / (vp[2] * pj[0]), ay = 2 / (vp[3] * pj[5]);
+	double bx = (pj[8] - 1 - vp[0] * 2.0 / vp[2]) / pj[0];
+	double by = (pj[9] - 1 - vp[1] * 2.0 / vp[3]) / pj[5];
+	float A[9];
+	int j;
+
+	if (cur.gain == 0 || !puff_bind ()) return 0;
+	for (j = 0; j < 3; j++) {
+		A[j] = (float) (ax * cur.M[3*j]);
+		A[3+j] = (float) (ay * cur.M[3*j+1]);
+		A[6+j] = (float) (bx * cur.M[3*j] + by * cur.M[3*j+1] + cur.M[3*j+2]);
+	}
+	glUniformMatrix3fv (u_a, 1, GL_FALSE, A);
+	glUniform4f (u_k, 3, 0, 0, 1);
+	glUniform4f (u_l, 0, 0, 0, rim);
+	glUniform1f (u_g, cur.gain);
+	return 1;
+}
+
 int puff_shape (const double (*e)[3], int n, const double mv[16], const double pj[16], const int vp[4])
 {
 	static double win[MAX_PTS][2];
@@ -265,7 +301,7 @@ int puff_shape (const double (*e)[3], int n, const double mv[16], const double p
 	for (i = 0; i < n; i++) {
 		const double *p = e[i];
 		double cw = P[3] * p[0] + P[7] * p[1] + P[11] * p[2] + P[15];
-		if (p[2] > -1.0 || cw <= 0) return 0;
+		if (p[2] > -1.0 || cw <= 0) return puff_band (pj, vp, 0);
 		win[i][0] = vp[0] + vp[2] * 0.5 * (1 + (P[0] * p[0] + P[4] * p[1] + P[8] * p[2] + P[12]) / cw);
 		win[i][1] = vp[1] + vp[3] * 0.5 * (1 + (P[1] * p[0] + P[5] * p[1] + P[9] * p[2] + P[13]) / cw);
 		x0 = fmin (x0, win[i][0]); x1 = fmax (x1, win[i][0]);
@@ -277,7 +313,7 @@ int puff_shape (const double (*e)[3], int n, const double mv[16], const double p
 			C[j] += p[j] / n;
 		}
 	}
-	if ((x1 - x0) * (y1 - y0) > 4.0 * vp[2] * vp[3] || x1 - x0 < 1 || y1 - y0 < 1) return 0;
+	if ((x1 - x0) * (y1 - y0) > 4.0 * vp[2] * vp[3] || x1 - x0 < 1 || y1 - y0 < 1) return puff_band (pj, vp, 0);
 	shapes++;
 	for (l = 0, i = 0; i < n; i++) l += win[i][0] * win[(i+1)%n][1] - win[(i+1)%n][0] * win[i][1];
 	for (i = 0; i < n; i++) {
@@ -325,6 +361,8 @@ int puff_shape (const double (*e)[3], int n, const double mv[16], const double p
 		glUniform4f (u_l, (float) dot3 (L, X), (float) dot3 (L, Y), (float) lz, (float) d);
 		glUniform2f (u_u, ul > 0 ? (float) (ux / ul) : 0, ul > 0 ? (float) (uy / ul) : 1);
 		glUniform1fv (u_r, RIM_BINS, R);
+		glUniform1f (u_g, 0);
+		puff_band (pj, vp, (float) d);
 	}
 	return 1;
 }
@@ -343,6 +381,7 @@ int puff_face (const double (*p)[3], int n)
 	}
 	if (!puff_bind ()) return 0;
 	glUniform4f (u_k, 0, puff_seed (zero), 0, puff_day ());
+	glUniform1f (u_g, 0);
 	return 1;
 }
 

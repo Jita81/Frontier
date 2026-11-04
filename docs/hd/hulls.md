@@ -985,7 +985,7 @@ Known limits:
 - The binding of moving faces was checked from logged corner values (the
   290 door's fixed edge stays at the same tile coordinate through the
   slide and through the closed door's origin jump), not yet by eye.
-- Some of the intro's parts (76, 206 and others above) are not identified
+- Some of the intro's parts (76 and others above) are not identified
   and are flat. Of its effects, 144's flames, the part -1 beams of records
   56 and 68 and 126's circles keep the base look (above).
 - A surface port's buildings are told from its ground and signs only by

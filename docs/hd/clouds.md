@@ -258,8 +258,7 @@ the key `hull_model_key` gives them: 198, and two intro parts, which carry
 - 186, low puffs in the city and battle scenes: 198's twin, the same
   proportions and primitive mix (lobes, sheets, faces near), at unit 2^10.
 - 206, the bands over the limb: one dark blue, outlines only, no sheet and
-  no face.  The multiply barely shows on a colour that dark, so its
-  shading is gentle: the bands keep their place and colour.
+  no face.  They shade by themselves (below, "The bands").
 
 The tag's M is put in 198's unit (`ldexp` by 2 minus the model's unit, an
 exact no-op for 198), since half a unit (shared edges), 4 units (seed) and
@@ -271,13 +270,54 @@ the camera pitches the sun, which the intro fixes to the eye, moves round
 it and day follows.  The old renderer draws the same shapes flat, so this
 is a restyle, not a regression fixed.
 
+**The bands.**  Lit as lobes they took the look only gently, and the dark
+colour was not why.  Their bounds run to many screens, so the screen only
+shows a slice of each lobe, and blue over the base colour 96 ran from 71
+to 114.  In the two shots with the sun below the model's horizon half to
+85% of the pixels did not move at all: by night a lobe only goes darker,
+so the upper half of a +-8% mottle clamps away, and shapes past the guard
+were flat.  The seed made steps of 1-3 levels, up to 8 at an edge: the
+centre of a shape drifts across a multiple of 4 as the game changes its
+detail, on 14 frames from 2131 to 4673 of the idle intro.
+
+So a band takes neither light nor seed.  The camera sits within about 2
+units of the model's origin and the bands on a ring of radius about 210
+around it: it only turns.  `puff_band` hangs the mottle on the ray to the
+pixel in the model's frame, 4 octaves and 6 times the swing (the gain, in
+`puff_tag`, 0 for any other model), about 1, so the mean stays the band's
+colour.  One rule for every shot, no seam between shapes, and a shape past
+the guard shades as the rest.
+
+How the intro is proved: an idle replay of the opening, 9000 frames at
+1600x1200, frame hashes against the base (neither tape nor frames kept).
+
+- Bands, 80 frames of six shots: 95-98% of their pixels now move (32-45%
+  in the two night shots before).  Blue p5/p50/p95 about 80/97/111 in
+  five shots, 77/86/110 in the smallest (a sliver, frames 7178-7296).
+- Steps: at the 14 frames the seed flipped, the change from the frame
+  before is no bigger than its neighbours'.  The mottle follows the pan:
+  the best shift between frames leaves about 0.1 of a level (up to 2 at
+  the fastest pans, 25-40 pixels a frame).  A held frame stays held.
+- Changed frames fall in the cloud footprints: 1441-2401, 4130-4705 and
+  6914-7297, every other frame the same bytes bar noise, so 186 too.  One
+  frame in 96, against 206 drawn magenta and `--flat-clouds`: 4523218
+  changed pixels inside the footprint, 1 outside, by 1 level.
+- `--flat-clouds`, `--old-renderer`, `--classic-ui`, `--flat-hulls` and
+  `--pixel-art`: the same bytes as the base but for 0 to 2 single frames a
+  run, a different one each time, as between two runs of the base.
+- Two runs of the branch: no frame differed.
+- Climb and landed tapes: the same frames differ as between two runs of
+  the base (404-418 and three stretches on the climb), no others.
+- Cost, ABBAABBA: band shots +0.08 ms median, the whole replay 0.
+
 **Guard.**  A shape with a point at or behind the near plane (so one
 round the camera), one whose bound is more than 4 screens or under one
-pixel takes the game's flat fill.
+pixel takes the game's flat fill.  A band shades instead, without the rim.
 
 **Seed.**  The object's seed mixed with the shape's centre in the model's
 space, quantised to 4 units: the mottle stays on the cloud and two clouds
-differ.  Never view space, time, a frame count or `rand`.
+differ.  Never view space, time, a frame count or `rand`.  A band has
+none: the ray alone places its mottle.
 
 **Measured** (1600x1200, scratch builds with frame-hash and frame-time
 hooks, `FE2_HD_BACKDROP=0`; a pad-to-space climb tape and a landed tape,
