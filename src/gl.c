@@ -3570,6 +3570,9 @@ static void hull_make_set (int prof, int level)
 			 hull_profiles[prof].name, level, n, n, (unsigned) (SDL_GetTicks () - t));
 }
 
+static GLuint gnd_prog;	/* a port's ground, gnd_begin */
+static int gnd_failed;
+
 static void hull_forget_shader (void)
 {
 	int p, l;
@@ -3581,7 +3584,9 @@ static void hull_forget_shader (void)
 		}
 	if (hull_prog) glDeleteProgram (hull_prog);
 	if (hull_prog5) glDeleteProgram (hull_prog5);
-	hull_prog = hull_prog5 = 0;
+	if (gnd_prog) glDeleteProgram (gnd_prog);
+	hull_prog = hull_prog5 = gnd_prog = 0;
+	gnd_failed = 0;
 	hull_cur = -1;
 }
 
@@ -4195,8 +4200,6 @@ static const char gnd_fs[] =
 	"	float w = 0.12 * (0.67 * gnd_noise (p * 0.6, 1.3) + 0.33 * gnd_noise (p * 1.22, 7.1) - 0.5) * gnd_fade (f, 2.0);\n"
 	"	gl_FragColor = vec4 (vCol.rgb * (1.0 + g + w + jf * (s + 0.18 * (0.047 - j))), vCol.a);\n"
 	"}\n";
-static GLuint gnd_prog;
-static int gnd_failed;
 static double gnd_tile;		/* the model's building tile */
 
 static void CALLBACK gnd_tess_vertex (GLvoid *vertex, GLvoid *poly_data)
@@ -4232,7 +4235,7 @@ static int gnd_begin (GLdouble c[][3], int n, double tile, const int c8[3])
 	int i, j, k, m = HULL_KEY_MODEL (hull_cc.key);
 	int mx = MAX (c8[0], MAX (c8[1], c8[2])), mn = MIN (c8[0], MIN (c8[1], c8[2]));
 
-	if (flat_pads || classic_ui || pixel_art || gnd_failed	/* as hyper_hd: the base look */
+	if (flat_pads || classic_ui || pixel_art || gnd_failed	/* these keep the base ground */
 	    || (m != 96 && m != 98) || mx - mn >= 24 || !(tile > 0)) return 0;
 	for (i = 0; i <= n; i++) {
 		double *a = w[i & 1], *b = w[!(i & 1)];
@@ -4288,8 +4291,9 @@ static int hull_complex_begin (GLdouble c[][3], int n, void **data)
 	}
 #ifdef HULL_SHADERS
 	if (cls == HC_BUILDING) return gnd_begin (c, n, hull_classes[cls].panel * sc, c8);	/* a port's ground */
+#else
+	if (cls == HC_BUILDING) return 0;
 #endif
-	if (cls == HC_BUILDING) return 0;	/* its hills, signs, grass and water */
 	hull_cpanel = hull_classes[cls].panel * sc;	/* the model's, as hull_paint5 */
 	mx = mn = c8[0];
 	for (k = 1; k < 3; k++) {
