@@ -319,10 +319,11 @@ How the intro is proved: an idle replay of the opening, 9000 frames at
 - `--flat-clouds`, `--old-renderer`, `--classic-ui`, `--flat-hulls` and
   `--pixel-art`: the same bytes as the base but for 0 to 2 single frames a
   run, a different one each time, as between two runs of the base.
-- Two runs of the branch: no frame differed.
+- Two runs of the branch: 0 to 2 single frames, as for the flags.
 - Climb and landed tapes: the same frames differ as between two runs of
   the base (404-418 and three stretches on the climb), no others.
-- Cost, ABBAABBA: band shots +0.08 ms median, the whole replay 0.
+- Cost, ABBAABBA: band shots +0.04 to +0.12 ms median, the whole replay
+  +0.02.
 
 **Guard.**  A shape with a point at or behind the near plane (so one
 round the camera), one whose bound is more than 4 screens or under one
