@@ -2,8 +2,8 @@
 #
 # Verifies: landed views on ice: sky, ground, the port's pad and buildings.
 # Run:  tools/p2shots --routes landed-ice --base BASE --branch BRANCH
-# Expect: 01 the cockpit view from the pad, 02-03 the next two views of the
-#         view cycle (the ship from outside), each paused.
+# Expect: 01 the station hall, not the cockpit, 02-03 the next two views of
+#         the view cycle (the ship from outside), each paused.
 # Each shot pauses the game (Esc) and resumes it at 1x (Shift+F1); the
 # pointer is parked off the controls so no hover tip is drawn.
 
