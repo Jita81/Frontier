@@ -116,6 +116,39 @@ Not built yet (parked).  When it comes back it calls `cl_cover` for its
 cover and `cl_light` for its relief, so it shows the same clouds lit the
 same way.
 
+## Haze on the ground
+
+Low over a world with air, the far ground fades into the sky's colour at
+the horizon.  The planet shader (plain and cloud programs, sphere and
+horizon cap) mixes each ground fragment towards `uHz.rgb` by
+
+    a = w * smoothstep(-0.1, 0.1, c) * (1 - exp(-|m - e| * R / L))
+
+with `m` the fragment and `e` the eye in model space (in R), `c` the
+sun's cosine there (no haze on the night side, so no glow), and `w` = 1 -
+ramp(1.02, `PLANET_SKY_RATIO`, d/R): full in the air, gone by 2R.  The
+colour is the halo's innermost layer, the game's sun-tinted rim (0xeee
+on a terran world by day), kept when the ST draws no halo, so it follows
+the sun and looking down cannot pop it.  The reach L is the 6th column
+of `cloud_look` times R: terran 0.012, ice 0.018, rocky 0.036, corrosive
+0.006 (thick air hazes more, thin less; none without air).  Above
+`AIR_SCALE_H` = 0.001 R of height, L grows with the height, since only
+that part of the view ray is in the air.  Off: `--flat-descent`
+(byte-identical to base).  Nothing changes above 2R, under
+`--old-renderer`, or on the pad (the eye sits on the sphere).
+
+Measured at x = 1400 on a 1600x1200 terran climb, base to haze: a few
+hundred metres up (0.00008 R), the ground just under the horizon
+(78,130,59) to (101,146,86); a few km (0.0014 R) (79,130,60) to
+(182,198,177) at the horizon, (78,130,59) to (135,167,125) below it;
+0.17 R (92,129,80) to (109,139,98); dusk (66,116,46) to (89,131,74);
+night unchanged.  The sky's rows are unchanged in every frame.
+The 3D view's draw time on the lift-off climb (a scratch probe timing
+each frame to `glFinish` in both builds; 12 runs, ABBAABBA then BAAB,
+load 4 to 10): the median of the runs' medians is 9.31 ms for base and
+9.41 ms with the haze, while single runs' medians range 8.8 to 13.6 ms.
+The oracle end line is exact.
+
 ## The game's own clouds and the intro
 
 The intro is not part of this slice.

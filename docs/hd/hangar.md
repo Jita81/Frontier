@@ -42,13 +42,18 @@ It draws only when all of these hold:
    - the page is the plain 3D view or the station-home page (no game
      buttons, no page text over the view, no comms face on it);
    - the console's status is **Docked** or **Landed**.
-3. The 3D view mode byte (A6+706) is 0 (front) or 1 (rear).
+3. The 3D view mode byte (A6+706) is 0: the front view only. The rear
+   view looks back over the port or the bay, so it keeps the game's own
+   3D scene, exactly as with the concourse off.
 4. The space mode byte (A6+536) has bit 0 set, so a 3D view fills the frame.
 
 When 2 fails because a page or a map has opened (hdui returns 0), the
 concourse is gone in that same frame: it never shows behind another
 screen. When the view is still a bare 3D view (a launch has started, or
-the external view is up) it cross-fades out over 0.3 s.
+the external view is up) it cross-fades out over 0.3 s. A switch to or
+from the rear view is a camera cut: the concourse goes, or comes back at
+full strength, in the same frame as the game's view change, and the
+gunsight is drawn in the rear view from that frame on.
 
 The labels are matched by hash (FNV-1a 32 over lowercase letters and
 digits). No game text is in the source.

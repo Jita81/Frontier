@@ -3092,14 +3092,21 @@ static int hull_obj_coords (unsigned int key, unsigned int seed, unsigned int a6
 	if (a & HULL_ANIM_FLAT) wok |= 4;
 	/* a port's building is mapped in the port's frame, whose ground is its
 	 * y = 0 (a part's own y = 0 can be well over or under it), and known
-	 * by where its part stands on the port, in cells of two tiles: the
-	 * facade it takes (hull_paint5) in bits 4 to 11 */
+	 * by where the port's models place it: each part's frame keeps at -202
+	 * the address of the sub-object command that linked it, exact and the
+	 * same every frame, and the chain of them up to the object names the
+	 * part (one model placed twice is two buildings). A part placed by a
+	 * model of scale 2^10 or under (-208) is a piece of that model's
+	 * building and takes its facade. The facade (hull_paint5) in bits 4
+	 * to 11 */
 	if (cls == HC_BUILDING) {
-		unsigned int h = key & 0xffff;
-		for (j = 0; j < 3; j += 2) {
-			double t = 0;
-			for (k = 0; k < 3; k++) t += Mo[3*j+k] * ((double) o[k] - oo[k]);
-			h = hull_mix (h ^ (unsigned int) (int) floor (t / 131072.0));
+		unsigned int f = a6, up, rec = STMemory_ReadLong (a6 - 212), h = key & 0xffff;
+		int piece = 1;
+		for (k = 0; k < 8 && f != rec && st_readable (f - 208, 212) &&
+			    (up = STMemory_ReadLong (f)) != rec && up && st_readable (up - 208, 2); k++, f = up) {
+			if (piece && (short) STMemory_ReadWord (up - 208) <= 10) continue;
+			piece = 0;
+			h = hull_mix (h ^ (STMemory_ReadLong (f - 202) - STMemory_ReadLong (__DL973c_game_data)));
 		}
 		memcpy (w, wo, n * sizeof wo[0]);
 		wok |= (h & 255) << 4;
@@ -4681,6 +4688,8 @@ struct PlanetPrim {
 	int rim;
 	/* the clouds (procfx_planet_clouds): cover, tint, drift, seed */
 	float cl_cover[4], cl_tint[3], cl_rot[4], cl_seed[3];
+	/* the ground's haze reach in R, by the air's kind (cloud_look); 0: none */
+	float hz;
 };
 
 #define PLANET_FACE_RES		512
@@ -5149,15 +5158,16 @@ static double planet_aloft (const struct PlanetPrim *p, double d)
  * little on ice, thin wisps in the colour of the air on rocky ones, a
  * whole veil on corrosive and methane ones, none without air.  Within its
  * kind's range each body's own seed picks how much. */
-static void cloud_look (int model_word, int air, int rim, unsigned int seed,
-			float cover[4], float tint[3])
+static float cloud_look (int model_word, int air, int rim, unsigned int seed,
+			 float cover[4], float tint[3])
 {
-	/* threshold at 0 and 1 of the range, haze floor, opacity, tint to rim */
-	static const float look[4][5] = {
-		{ 0.582f, 0.559f, 0.0f, 1.0f, 0.0f },	/* terran, ocean: 28-35% */
-		{ 0.685f, 0.653f, 0.0f, 1.0f, 0.0f },	/* ice: 9-14% */
-		{ 0.729f, 0.685f, 0.0f, 0.5f, 0.6f },	/* rocky: wisps, 5-10% */
-		{ 0.500f, 0.500f, 0.8f, 1.0f, 0.5f },	/* corrosive, methane: haze */
+	/* threshold at 0 and 1 of the range, haze floor, opacity, tint to rim,
+	 * the ground's haze reach in R (planet_haze: thick air less, thin more) */
+	static const float look[4][6] = {
+		{ 0.582f, 0.559f, 0.0f, 1.0f, 0.0f, 0.012f },	/* terran, ocean: 28-35% */
+		{ 0.685f, 0.653f, 0.0f, 1.0f, 0.0f, 0.018f },	/* ice: 9-14% */
+		{ 0.729f, 0.685f, 0.0f, 0.5f, 0.6f, 0.036f },	/* rocky: wisps, 5-10% */
+		{ 0.500f, 0.500f, 0.8f, 1.0f, 0.5f, 0.006f },	/* corrosive, methane: haze */
 	};
 	const float *l;
 	float u, rgb[3] = { 1, 1, 1 };
@@ -5171,7 +5181,7 @@ static void cloud_look (int model_word, int air, int rim, unsigned int seed,
 	}
 	memset (cover, 0, 4 * sizeof (float));
 	for (i = 0; i < 3; i++) tint[i] = 1.0f;
-	if (k < 0 || !air) return;
+	if (k < 0 || !air) return 0;
 	l = look[k];
 	seed = (seed ^ 0x9e3779b9u) * 0x85ebca6bu;
 	u = ((seed ^ (seed >> 13)) * 0xc2b2ae35u >> 8) / 16777216.0f;
@@ -5184,6 +5194,7 @@ static void cloud_look (int model_word, int air, int rim, unsigned int seed,
 	cover[2] = l[2];
 	cover[3] = l[3];
 	for (i = 0; i < 3; i++) tint[i] += (rgb[i] - 1.0f) * l[4];
+	return l[5];
 }
 
 /* Hand procfx the eye and the sun in model space, the eye in units of R. */
@@ -5203,10 +5214,35 @@ static void cloud_stage (const struct PlanetPrim *p, double d, const double sun[
 	procfx_planet_clouds (p->cl_cover, p->cl_tint, p->cl_rot, p->cl_seed, eye, fs);
 }
 
+/* Aerial haze (docs/hd/clouds.md), 0 in hz[3] for none: the ground fades
+ * as 1 - exp(-dist / L) into the sky's colour at the horizon, the halo's
+ * innermost layer (the rim, kept when the ST draws no halo, so looking
+ * down cannot pop it), weight full in the air and gone by
+ * PLANET_SKY_RATIO; hz[4-6] the eye in model space in R, hz[7] R / L, L
+ * the air's reach stretched once the eye is above its scale height, where
+ * only that part of the view ray is in the air. */
+#define AIR_SCALE_H	0.001
+static void planet_haze (const struct PlanetPrim *p, double d, float hz[8])
+{
+	double up[3], e[3];
+	int i, r, g, b;
+
+	memset (hz, 0, 8 * sizeof (float));
+	if (flat_descent || !(p->hz > 0) || p->rim < 0 || d >= p->R * PLANET_SKY_RATIO)
+		return;
+	split_rgb444b (p->rim, &r, &g, &b);
+	hz[0] = r / 255.0f; hz[1] = g / 255.0f; hz[2] = b / 255.0f;
+	hz[3] = 1 - planet_ramp (1.02, PLANET_SKY_RATIO, d / p->R);
+	for (i = 0; i < 3; i++) up[i] = -p->centre[i] / d;
+	to_model (p, up, e);
+	for (i = 0; i < 3; i++) hz[4+i] = e[i] * d / p->R;
+	hz[7] = fmin (1.0, AIR_SCALE_H / fmax (d / p->R - 1, 1e-9)) / p->hz;
+}
+
 static int planet_smooth_begin (const struct PlanetPrim *p, double d, const struct LightZone *z,
 				int n, double *soft)
 {
-	float lo[4] = { 9, 9, 9, 9 }, hi[4] = { 9, 9, 9, 9 }, rim[4] = { 0, 0, 0, 0 }, look[3];
+	float lo[4] = { 9, 9, 9, 9 }, hi[4] = { 9, 9, 9, 9 }, rim[4] = { 0, 0, 0, 0 }, look[3], hz[8];
 	int i, r, g, b;
 
 	/* half the narrowest inner zone, so every zone still shows */
@@ -5224,7 +5260,8 @@ static int planet_smooth_begin (const struct PlanetPrim *p, double d, const stru
 	look[0] = p->flags & 0x80 ? planet_aloft (p, d) : 0.0;
 	look[1] = 0.25 * planet_space (p, d);
 	look[2] = 0.08f;
-	return procfx_planet_begin (lo, hi, *soft, rim, look, p->seed);
+	planet_haze (p, d, hz);
+	return procfx_planet_begin (lo, hi, *soft, rim, look, hz, p->seed);
 }
 
 /* The whole planet, seen from a distance: a cube sphere. */
@@ -6011,7 +6048,7 @@ void Nu_PutPlanet ()
 		if (STMemory_ReadWord (q) && STMemory_ReadWord (q + 2))
 			air = STMemory_ReadWord (q + 4) & 0xfff;
 	}
-	cloud_look (mw, air >= 0, air, p.seed, p.cl_cover, p.cl_tint);
+	p.hz = cloud_look (mw, air >= 0, air, p.seed, p.cl_cover, p.cl_tint);
 	/* the sun's glow down in the air: the nearest planet's, the sun's
 	 * height over its horizon (light comes from -light, up is -centre) */
 	{
