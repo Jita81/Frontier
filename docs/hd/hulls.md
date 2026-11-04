@@ -56,9 +56,12 @@ and the reading of the model's frame). The art is in `art/hull/`.
      - Tv = n x Tu
      - h = d . (n[cu], n[cv])
 
-     This is isometric on the face, so plates are never stretched. Neighbours
-     facing the same way share the same coordinates. `hull_frame_obj` handles
-     triangles and quads, and `hull_plane_obj` handles complex shapes.
+     This is isometric on a flat face, so plates are not stretched there.
+     Neighbours facing the same way share the same coordinates.
+     `hull_frame_obj` handles triangles and quads, and `hull_plane_obj`
+     handles complex shapes. A curved surface drawn as one complex shape
+     gets one plane, so its plates stretch where it leaves that plane (see
+     the census under B2, slice 2).
    - **Parts.** A part (a door, a lift, a turning dish) takes its own turn
      and origin, with the object's scale. Its tile is bound to it and moves
      with it, so a sliding bay door carries its plates as it opens instead
@@ -250,7 +253,6 @@ Models (`hull_models[]`, by the whole type word and its table;
 | 24 | small spaceplane, crescent wing | civilian, panels x1.5 |
 | 26 | slim light fighter | armour, panels x2 |
 | 38 | small flat kite-shaped hauler | civilian, panels x2 |
-| 64 | waisted hull between two drive pods | freighter, panels x6 |
 | 74 | large triangular arrow hull, heavy hauler | freighter, panels x8 |
 | intro's 72 | the orbital station behind the menu | station |
 | 80 | orbital station outside, close up | station |
@@ -343,29 +345,37 @@ Not listed, so drawn flat:
 ### Census (B2, slice 2)
 
 The words slice 1 left, 24 to 38, 64, 68 and 74 to 78. Nine natural
-sessions (five shipyard stocks, four long saves of different stocks) met
-only 26, 28, 32 and 76, so the rest were opened by forcing the word into
-the shipyard's stock on a scratch build that is not committed. The
-sessions column counts the natural ones. Scale by eye at two scales, the
-biggest face at one to one and a half tiles.
+sessions (five shipyard visits and four long saves, six distinct stocks
+because three of the saves repeat a shipyard's) met only 26, 28, 32 and
+76, so the rest were opened by forcing the word into the shipyard's stock
+on a scratch build that is not committed. The sessions column counts the
+natural ones. Scale by eye at two scales, the biggest face at one to one
+and a half tiles.
 
 | word | shape and role | unit | sessions | class | panels |
 |---|---|---|---|---|---|
 | 24 | small white spaceplane, crescent wing | 2^8 | 0 | civilian | x1.5 |
 | 26 | slim green light fighter | 2^8 | 2 | armour | x2 |
 | 38 | small flat kite-shaped hauler | 2^9 | 0 | civilian | x2 |
-| 64 | waisted hull between two drive pods | 2^10 | 0 | freighter | x6 |
 | 74 | large triangular arrow hull, heavy hauler | 2^10 | 0 | freighter | x8 |
 
-Word 64's own surface is the waisted hull, and that takes the plate; its
-two pods are a part (word 258), drawn flat. Left out, so still flat:
+Curved surfaces: a complex shape gets one plane, so a big curved one can
+streak. Words 26 and 38 have no complex shapes, and word 74's only one is
+a small flat face of 5 sides. Word 24 is nearly all complex shapes, and
+its crescent wing leaves its plane by as much as word 64's waist does, so
+it was flown round and under at grazing angles: seams and rivets hold,
+with a little streaking in a narrow strip at the wing's outer edge in one
+view of the orbit.
+
+Left out, so still flat:
 
 | word | sessions | why |
 |---|---|---|
 | 28, 30 | 1, 0 | deltas whose body is parts (words 226 to 236); the plate sits on the wing alone and reads as crazy paving there, at the one scale tried |
 | 32 | 1 | shared: it also draws the landing pad and the landed ship's markings |
 | 34, 36 | 0 | small stubs (biggest own face 887 units) that draw word 32 as their body |
-| 68 | 0 | word 64's hull with a third pod; read plated in one trial, a second scale not checked |
+| 64 | 0 | waisted hull between two drive pods (a part, word 258): the waist is curved and one plane cannot follow it, so the hull streaks in the flown external view |
+| 68 | 0 | word 64's hull with a third pod; read plated in one trial, a second scale not checked, not flown, so whether it streaks as word 64 does is not known |
 | 76 | 5 | slice 1's stub, drawing other models |
 | 78 | 0 | not reached: forcing it stopped the scratch build in the shipyard |
 
