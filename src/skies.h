@@ -30,6 +30,7 @@ int skies_ring_put (struct skies_ring *r);
 int skies_ring_begin (const struct skies_ring *r, const double proj[16], const int vp[4]);
 void skies_ring_contour (const double (*v)[3], int n);
 void skies_ring_end (void);
+void skies_forget (void);	/* before the GL context goes */
 
 /*
  * puffs.c: the game's own low clouds (model 198) lit as cumulus.  Put

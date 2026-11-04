@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""A GL id cached in a static must not outlive its context (docs/hd/rings.md).
+
+Every `static GLuint` at column 0 of src/*.c must be assigned or memset in a
+function of its own file whose name holds "forget", or change_vidmode itself,
+and change_vidmode must reach that function.  Plain regex over this tree's
+style: a body runs from `{` to the next line starting `}`, or sits on one line.
+--staged reads the git index (the pre-commit hook), not the work tree.
+"""
+import glob, io, os, re, subprocess, sys, tarfile
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+NOISE = re.compile(r'"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|/\*.*?\*/|//[^\n]*', re.S)
+FUNC = re.compile(r'^[A-Za-z_][\w \t*]*?\b(\w*forget\w*|change_vidmode)\s*\([^;{}]*\)\s*\{', re.M)
+DECL = re.compile(r'^static\s+GLuint\s+([^;(]+);', re.M)
+
+def sources(staged):
+	if not staged:
+		return {os.path.relpath(p, ROOT): open(p, errors='replace').read()
+			for p in glob.glob(os.path.join(ROOT, 'src', '*.c'))}
+	git = lambda *a: subprocess.run(['git', *a], cwd=ROOT, check=True, capture_output=True).stdout
+	tar = tarfile.open(fileobj=io.BytesIO(git('archive', git('write-tree').decode().strip(), 'src')))
+	return {m.name: tar.extractfile(m).read().decode(errors='replace')
+		for m in tar if re.fullmatch(r'src/[^/]+\.c', m.name)}
+
+def bodies(text):
+	for m in FUNC.finditer(text):
+		rest = text[m.end():]
+		first = rest.split('\n', 1)[0].rstrip()
+		yield m.group(1), first if first.endswith('}') else rest[:re.search(r'^\}', rest, re.M).start()]
+
+def clears(body, name):
+	return re.search(r'(?<![\w.>])%s\b(\[[^]]*\])*\s*=(?!=)|memset\s*\(\s*&?\s*%s\b' % (name, name), body)
+
+src = {p: NOISE.sub(lambda m: re.sub(r'[^\n]', ' ', m.group()), t)
+	for p, t in sources('--staged' in sys.argv).items()}
+funcs = {p: list(bodies(t)) for p, t in src.items()}
+called, reached = {'change_vidmode'}, 0
+while len(called) != reached:	# a forget calling a forget counts
+	reached = len(called)
+	calls = ''.join(b for fs in funcs.values() for f, b in fs if f in called)
+	called |= {f for fs in funcs.values() for f, b in fs if re.search(r'\b%s\s*\(' % f, calls)}
+bad, ids = [], 0
+for path, text in sorted(src.items()):
+	for m in DECL.finditer(text):
+		for name in re.findall(r'(?:^|,)\s*([A-Za-z_]\w*)', re.sub(r'=[^,]*|\[[^]]*\]', '', m.group(1))):
+			ids += 1
+			by = [f for f, b in funcs[path] if clears(b, name)]
+			why = '' if set(by) & called else 'in no forget' if not by else 'only in %s, not reached from change_vidmode' % by[0]
+			if why: bad.append('%s:%d: %s cleared %s' % (path, text.count('\n', 0, m.start()) + 1, name, why))
+if not ids: bad.append('no static GLuint found: this lint has gone blind')
+for line in bad or ['ok, %d ids' % ids]: print('check-gl-forget:', line)
+sys.exit(1 if bad else 0)

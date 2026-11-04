@@ -50,6 +50,17 @@ ring plane and works in planet radii:
 Everything is seeded from the body's object record (+118), never from the
 game RNG or the clock.  Nothing writes ST memory.
 
+## The GL context
+
+SDL 1.2 makes a new GL context on every `SDL_SetVideoMode`, so F11 leaves any
+program or texture id cached in a static stale: the rings lost their shader
+this way.  `change_vidmode` in gl.c therefore runs the forget functions, here
+`skies_forget`.  `make -f Makefile-C check-gl` and the pre-commit hook run
+`tools/check-gl-forget`: every `static GLuint` at column 0 of `src/*.c` must
+be assigned or memset (deleting it is not enough) in a function of its file
+whose name holds `forget`, or `change_vidmode` itself, and `change_vidmode`
+must reach that function.  Ids held in structs are outside it.
+
 ## Limits
 
 - At the system map's default zoom the body is drawn as a circle, not

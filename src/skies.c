@@ -181,3 +181,11 @@ void skies_ring_end (void)
 	glUseProgram (0);
 	glPopAttrib ();
 }
+
+/* the GL context is about to go: compile again in the next one */
+void skies_forget (void)
+{
+	if (ring_prog) glDeleteProgram (ring_prog);
+	ring_prog = 0;
+	ring_failed = 0;
+}
