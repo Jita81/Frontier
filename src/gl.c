@@ -276,6 +276,7 @@ static void change_vidmode ()
 		galaxy_tex = 0;
 	}
 	procfx_forget ();
+	puff_forget ();
 	hdtip_forget ();
 	hddamage_forget ();
 	if (screen_tex) {
@@ -1193,6 +1194,7 @@ enum NuPrimitive {
 	NU_FX,		/* fx.c's tag for the primitive that follows */
 	NU_RINGS,	/* skies.c: the complex shape that follows is a ring */
 	NU_SHADOW,	/* shadows.c: a landed ship's contact shadow */
+	NU_PUFF,	/* puffs.c: the shape or face that follows is a low cloud's */
 	NU_MAX
 };
 /* the next primitive belongs to a weapon, missile, explosion...: say which (fx.c) */
@@ -1601,6 +1603,14 @@ static float complex_sky_m[9], sky_m[9];
 /* skies.c's rings, the same way */
 static int complex_ring, ring_pending, ring_active;
 static struct skies_ring complex_ring_r, ring_r;
+/* puffs.c's low clouds: complex_puff when Nu_ComplexStart meets one;
+ * puff_now when the primitive being drawn is tagged, puff_open while its
+ * shape is, its points (GL eye, every contour, before the near clip) in
+ * puff_e */
+static int puff_key (void);
+static void puff_put (int kind);
+static int complex_puff, puff_now, puff_open, puff_en;
+static GLdouble puff_e[MAX_TESS_VERTICES][3];
 
 static void put_complex_start_4real ()
 {
@@ -1610,6 +1620,7 @@ static void put_complex_start_4real ()
 		znode_wrblock (complex_sky_m, sizeof complex_sky_m);
 	}
 	if (complex_ring) { znode_wrlong (NU_RINGS); znode_wrblock (&complex_ring_r, sizeof complex_ring_r); }
+	if (complex_puff) puff_put (0);
 	put_fx ();
 	znode_wrlong (NU_COMPLEX_START);
 	znode_wrcolor (complex_col_rgb444);
@@ -1714,6 +1725,8 @@ static void flush_contour ()
 	static GLdouble clipped[MAX_TESS_VERTICES+1][3];
 	int n, i, first = tess_vpos;
 
+	for (i = 0; puff_open && i < contour_n && puff_en < MAX_TESS_VERTICES; i++)
+		memcpy (puff_e[puff_en++], contour_v[i], sizeof puff_e[0]);
 	n = clip_contour_near (contour_v, contour_n, clipped, MAX_TESS_VERTICES+1);
 	contour_n = 0;
 	if (n < 3) return;
@@ -1775,6 +1788,7 @@ void Nu_ComplexStart ()
 	complex_starts++;
 	complex_sky = procfx_sky_put (complex_sky_m);
 	complex_ring = !complex_sky && skies_ring_put (&complex_ring_r);
+	complex_puff = !complex_sky && !complex_ring && puff_key ();
 }
 void Nu_DrawRings (void **data)
 {
@@ -1813,6 +1827,8 @@ void Nu_DrawComplexStart (void **data)
 		gluTessBeginPolygon (tobj, NULL);
 		gluTessBeginContour (tobj);
 		contour_n = 0;
+		puff_open = puff_now;
+		puff_en = 0;
 		if (sky_pending) sky_active = procfx_sky_begin (sky_m, tessProjMatrix, tessViewport);
 		else if (ring_pending) ring_active = skies_ring_begin (&ring_r, tessProjMatrix, tessViewport);
 	} else {
@@ -1847,6 +1863,10 @@ void Nu_DrawComplexEnd (void **data)
 		/* style 5's plating, from the last contour before it goes */
 		int plated = hull_complex_begin (contour_v, contour_n, data);
 		flush_contour ();
+		/* a low cloud's: shaded inside the game's own fill, or flat */
+		if (puff_open && (plated || !puff_shape ((const double (*)[3]) puff_e, puff_en,
+				tessModelMatrix, tessProjMatrix, tessViewport)))
+			puff_end ();
 		gluTessEndContour (tobj);
 		gluTessEndPolygon (tobj);
 		if (plated) hull_complex_end ();
@@ -1861,7 +1881,7 @@ void Nu_DrawComplexEnd (void **data)
 	}
 	if (sky_active) procfx_sky_end ();
 	if (ring_active) skies_ring_end ();
-	sky_pending = sky_active = ring_pending = ring_active = 0;
+	sky_pending = sky_active = ring_pending = ring_active = puff_open = 0;
 }
 
 void Nu_ComplexStartInner ()
@@ -3107,6 +3127,33 @@ static void hull_read_light (short lt[3])
 		lt[1] = -(short) STMemory_ReadWord (a6 - 196);
 		lt[2] = (short) STMemory_ReadWord (a6 - 194);
 	}
+}
+
+/* puffs.c: is the object being put one of the low clouds? */
+static int puff_key (void)
+{
+	return puff_on () && hull_record_key () == 0x800000c6u;
+}
+
+/* NU_PUFF and its tag (skies.h) before a low cloud's complex shape (kind
+ * 0) or face (kind 1), in its data so an abort forgets it too.  Nothing,
+ * the game's look, when the model's frame cannot be read.  Only reads. */
+static void puff_put (int kind)
+{
+	struct puff_tag t;
+	double M[9], l;
+	short lt[3];
+	int j;
+
+	if (!hull_model_frame (0x800000c6u, M, t.o, NULL, NULL)) return;
+	t.kind = kind;
+	t.seed = hull_obj_seed (0x800000c6u);
+	hull_read_light (lt);
+	l = sqrt ((double) lt[0] * lt[0] + (double) lt[1] * lt[1] + (double) lt[2] * lt[2]);
+	for (j = 0; j < 9; j++) t.M[j] = (float) M[j];
+	for (j = 0; j < 3; j++) t.L[j] = l > 0 ? (float) (lt[j] / l) : j == 2;
+	znode_wrlong (NU_PUFF);
+	znode_wrblock (&t, sizeof t);
 }
 
 /* what the draw side needs to know about the triangle or quad just put:
@@ -4406,6 +4453,7 @@ static void hull_complex_end (void)
 void Nu_PutTriangle ()
 {
 	if (use_renderer == R_OLD) return;
+	if (puff_key ()) puff_put (1);
 	put_fx ();
 	znode_wrlong (NU_TRIANGLE);
 	znode_wrvertex (GetReg (REG_A0)+4);
@@ -4441,12 +4489,14 @@ void Nu_DrawTriangle (void **data)
 		float st[3][2];
 		struct HullFrame hf;
 		int tex = hull_paint (p, 3, hull_ctx, &cx, hull_ctx && hull_decal_host (data), rgb, st, &hf);
+		int pf = puff_now && !tex && puff_face ((const double (*)[3]) p, 3);	/* a low cloud's */
+		if (!pf) puff_end ();
 		glBegin (GL_TRIANGLES);
-			if (tex == 1) glTexCoord2fv (st[0]); else if (tex == 2) hull_attr (&hf, 0);
+			if (tex == 1) glTexCoord2fv (st[0]); else if (tex == 2) hull_attr (&hf, 0); else if (pf) puff_corner (0);
 			glVertex3fv (v1);
-			if (tex == 1) glTexCoord2fv (st[1]); else if (tex == 2) hull_attr (&hf, 1);
+			if (tex == 1) glTexCoord2fv (st[1]); else if (tex == 2) hull_attr (&hf, 1); else if (pf) puff_corner (1);
 			glVertex3fv (v2);
-			if (tex == 1) glTexCoord2fv (st[2]); else if (tex == 2) hull_attr (&hf, 2);
+			if (tex == 1) glTexCoord2fv (st[2]); else if (tex == 2) hull_attr (&hf, 2); else if (pf) puff_corner (2);
 			glVertex3fv (v3);
 		glEnd ();
 		if (hull_glow) hull_glow_draw (p, 3);
@@ -4457,6 +4507,7 @@ void Nu_PutQuad ()
 {
 	if (use_renderer == R_OLD) return;
 	if (use_renderer == R_GL && fx_laser_quad ()) return;	/* a laser beam: fx draws it */
+	if (puff_key ()) puff_put (1);
 	put_fx ();	/* a missile's body: flat, never plated */
 	znode_wrlong (NU_QUAD);
 	znode_wrvertex (GetReg (REG_A0)+4);
@@ -4496,14 +4547,16 @@ void Nu_DrawQuad (void **data)
 		struct HullFrame hf;
 		int rgb[3] = { r & 255, g & 255, b & 255 };	/* znode_rdcolor's are signed */
 		int tex = hull_paint (p, 4, hull_ctx, &cx, hull_ctx && hull_decal_host (data), rgb, st, &hf);
+		int pf = puff_now && !tex && puff_face ((const double (*)[3]) p, 4);	/* a low cloud's */
+		if (!pf) puff_end ();
 		glBegin (GL_TRIANGLE_STRIP);
-			if (tex == 1) glTexCoord2fv (st[0]); else if (tex == 2) hull_attr (&hf, 0);
+			if (tex == 1) glTexCoord2fv (st[0]); else if (tex == 2) hull_attr (&hf, 0); else if (pf) puff_corner (0);
 			glVertex3iv (v1);
-			if (tex == 1) glTexCoord2fv (st[1]); else if (tex == 2) hull_attr (&hf, 1);
+			if (tex == 1) glTexCoord2fv (st[1]); else if (tex == 2) hull_attr (&hf, 1); else if (pf) puff_corner (1);
 			glVertex3iv (v2);
-			if (tex == 1) glTexCoord2fv (st[3]); else if (tex == 2) hull_attr (&hf, 3);
+			if (tex == 1) glTexCoord2fv (st[3]); else if (tex == 2) hull_attr (&hf, 3); else if (pf) puff_corner (3);
 			glVertex3iv (v4);
-			if (tex == 1) glTexCoord2fv (st[2]); else if (tex == 2) hull_attr (&hf, 2);
+			if (tex == 1) glTexCoord2fv (st[2]); else if (tex == 2) hull_attr (&hf, 2); else if (pf) puff_corner (2);
 			glVertex3iv (v3);
 		glEnd ();
 		if (hull_glow) hull_glow_draw (p, 4);
@@ -7120,7 +7173,8 @@ NU_DRAWFUNC nu_drawfuncs[NU_MAX] = {
 	&Nu_DrawComplexOval,
 	&fx_draw_tag,
 	&Nu_DrawRings,
-	&shadows_draw
+	&shadows_draw,
+	&puff_draw_tag
 };
 
 /*
@@ -7140,12 +7194,14 @@ static void Nu_DrawPrimitive (void *data)
 		//fprintf (stderr, "%d ", fnum);
 		if (!fnum) return;
 		if (fnum != NU_TRIANGLE && fnum != NU_QUAD) hull_end ();
+		if (fnum != NU_PUFF && fnum != NU_FX && !puff_open)	/* not inside a shape */
+			puff_now = puff_next (fnum == NU_COMPLEX_START ? 0 : fnum == NU_TRIANGLE || fnum == NU_QUAD ? 1 : -1);
 		if (fnum == NU_SUBTREE) {
 			draw_3dview (subtree_root[znode_rdlong (&data)]);
 			continue;
 		}
 		nu_drawfuncs[fnum] (&data);
-		if (fnum != NU_FX) fx_prim_done (fnum == NU_COMPLEX_START ? 1 : fnum == NU_COMPLEX_END ? 2 : 0);
+		if (fnum != NU_FX && fnum != NU_PUFF) fx_prim_done (fnum == NU_COMPLEX_START ? 1 : fnum == NU_COMPLEX_END ? 2 : 0);
 	}
 }
 
@@ -7263,6 +7319,7 @@ static int draw_wide_flight (void)
 	hyper_tunnel ();
 	draw_3dview (znode_start);
 	hull_end ();
+	puff_end ();
 	glDisable (GL_SCISSOR_TEST);
 	wide_3d = 0;
 	glMatrixMode (GL_PROJECTION);
@@ -7391,6 +7448,7 @@ void Nu_DrawScreen ()
 		if (t) hull_log_frame (t);
 	}
 	hull_end ();
+	puff_frame ();
 	fx_frame_end ();	/* beams and flashes that outlive the frame they were put in */
 	if (hangar_faces) hull_hangar_grade ();
 	//fprintf (stderr, "\n");
