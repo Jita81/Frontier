@@ -133,7 +133,6 @@ static const struct {
 	/* B2, slice 2: the rest of the ships that take plating (docs/hd/hulls.md) */
 	{ 24,  HC_CIVIL,	1.5f },	/* small white spaceplane, crescent wing */
 	{ 26,  HC_ARMOUR,	2.0f },	/* slim green light fighter */
-	{ 38,  HC_CIVIL,	2.0f },	/* small flat kite-shaped hauler */
 	{ 74,  HC_FREIGHT,	8.0f },	/* large triangular arrow hull, heavy hauler */
 	{ HULL_TAB_INTRO | 72, HC_STATION, 1.0f },	/* the orbital station behind the menu */
 	/* the intro's scenes: their own model, or a part keyed by its own (gl.c) */

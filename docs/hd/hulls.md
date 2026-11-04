@@ -252,7 +252,6 @@ Models (`hull_models[]`, by the whole type word and its table;
 | 72 | oval disc freighter, four drives | freighter, panels x8 |
 | 24 | small spaceplane, crescent wing | civilian, panels x1.5 |
 | 26 | slim light fighter | armour, panels x2 |
-| 38 | small flat kite-shaped hauler | civilian, panels x2 |
 | 74 | large triangular arrow hull, heavy hauler | freighter, panels x8 |
 | intro's 72 | the orbital station behind the menu | station |
 | 80 | orbital station outside, close up | station |
@@ -356,12 +355,11 @@ and a half tiles.
 |---|---|---|---|---|---|
 | 24 | small white spaceplane, crescent wing | 2^8 | 0 | civilian | x1.5 |
 | 26 | slim green light fighter | 2^8 | 2 | armour | x2 |
-| 38 | small flat kite-shaped hauler | 2^9 | 0 | civilian | x2 |
 | 74 | large triangular arrow hull, heavy hauler | 2^10 | 0 | freighter | x8 |
 
 Curved surfaces: a complex shape gets one plane, so a big curved one can
-streak. Words 26 and 38 have no complex shapes, and word 74's only one is
-a small flat face of 5 sides. Word 24 is nearly all complex shapes, and
+streak. Word 26 has no complex shapes, and word 74's only one is a small
+flat face of 5 sides. Word 24 is nearly all complex shapes, and
 its crescent wing leaves its plane by as much as word 64's waist does, so
 it was flown round and under at grazing angles: seams and rivets hold,
 with a little streaking in a narrow strip at the wing's outer edge in one
@@ -374,6 +372,7 @@ Left out, so still flat:
 | 28, 30 | 1, 0 | deltas whose body is parts (words 226 to 236); the plate sits on the wing alone and reads as crazy paving there, at the one scale tried |
 | 32 | 1 | shared: it also draws the landing pad and the landed ship's markings |
 | 34, 36 | 0 | small stubs (biggest own face 887 units) that draw word 32 as their body |
+| 38 | 0 | small flat kite-shaped hauler: its saturated red-orange paint has almost no blue, so a sunlit face passes the pure-colour test in `hull_paint5`, which reads the lit colour, and is drawn flat. In a steady turn in flight its biggest faces go plated, flat, plated from frame to frame. Shipyard light hides it |
 | 64 | 0 | waisted hull between two drive pods (a part, word 258): the waist is curved and one plane cannot follow it, so the hull streaks in the flown external view |
 | 68 | 0 | word 64's hull with a third pod; read plated in one trial, a second scale not checked, not flown, so whether it streaks as word 64 does is not known |
 | 76 | 5 | slice 1's stub, drawing other models |
