@@ -350,14 +350,28 @@ after the table for a part of record N.
 | 86 | the green ship, in several scenes | civilian, panels x2 |
 | 130 | the ship of modules | freighter, panels x6 |
 | 212 | the large ship of the first space scene | armour, panels x2 |
+| 138 | the city's large hall with stacks | building, panels x4 |
+| 160, 166, 168, 170, 172, 174, 176, 178, 184 | the city's low boxes, blocks, halls and tower | building, panels x1 (storeys on the offices' lit window rows) |
 
 - **Classes are by role.** Comparing the first 40 header bytes of every
   intro model with every game model finds twins only for 90, 192, 194,
   214, 220, 222 and 224; none of the intro's ships is a game ship, so each
   takes the class of the game's ships of its size and role.
-- **Flat:** the ground, the city, its buildings and the parts not
+- **Flat:** the ground and what lies on it (156, 164 roads and fields,
+  162 the river, 146 trees, 134 the pylons and the bridge deck, which
+  share one word), the houses (158), signs (202), lit window strips (46),
+  the stacks (144), 154 (a low maze-like block in the city, but also the
+  surface detail of a large ship in records 66 to 70, so a row would plate
+  that ship), the scenes' own models (40 to 54) and the parts not
   identified (76, 206, 124 to 128, 190, 218 to 222, 220 and 222 being
-  twins of game models that are not listed either).
+  twins of game models that are not listed either). `--flat-buildings`
+  draws the city's buildings flat too.
+- **Buildings' frame:** a part has no climb, so its storeys and its foot
+  shading count from the part's own origin, not the ground: for 166 to 174
+  (origin at the middle or above the walls) the foot shading falls mid-wall
+  or over the whole wall, and 172's and 174's roofs stay flat (no face of
+  theirs is above the origin). The shading is at most 30 % and forcing it
+  off changes the close city frames only slightly.
 - **Planets and stars:** the intro's planet is a circle (90, a twin of a
   game circle), and its sun a set of circles, not the game's planet or
   star objects, so the HD planet and the star corona do not draw them.
@@ -729,7 +743,7 @@ are listed in `hull_models[]` at x1, each with a class of its own.
 | `--hull-style 0..4` | the earlier looks, unchanged pixel for pixel: 0 fixed-function plating (`art/hull/plating.lum`), 1 big seeded texture, 2 panels, 3 bump and weathering, 4 a seeded profile per model (its own table, by the low byte of the word, as it always was) |
 | `--flat-hulls` | no plating at all: the game's flat faces exactly (buildings too) |
 | `--flat-wear` | every ship of a model plated alike: no per-object wear, the 3D view of the build before the wear exactly |
-| `--flat-buildings` | a surface port's buildings flat, everything else as it is: the frames before the building class, exactly |
+| `--flat-buildings` | a surface port's buildings and the intro city's flat, everything else as it is: the frames before the building class, exactly |
 | `--flat-pads` | a port's apron, roads and taxi strips (words 96 and 98) flat grey, everything else as it is: the frames before the ground shader, exactly |
 | Ctrl+Shift+H | steps 5, off, 0, 1, 2, 3, 4, 5 |
 | `FE2_HULL_TILE=path` | every class takes this raw square grey tile (64 to 2048 a side, a power of two, 128 = x1.0), to try a tile without a rebuild; set but empty, every class bakes its seeded plating |

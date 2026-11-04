@@ -61,6 +61,8 @@ float procfx_starfield_look (unsigned int tag, float rgb[3], float *glow);
 extern int flat_planets;
 /* --flat-clouds: no clouds on any world (docs/hd/clouds.md) */
 extern int flat_clouds;
+/* --flat-descent: no haze on the ground near a world (gl.c planet_haze) */
+extern int flat_descent;
 /* the cloud deck is a sphere at R (1 + CLOUD_DECK_H); CLOUD_DECK_T is the
  * band either side of it.  The shader takes both from here. */
 #define CLOUD_DECK_H	0.002
@@ -77,10 +79,11 @@ void procfx_planet_clouds (const float cover[4], const float tint[3], const floa
  * innermost atmosphere colour, alpha its weight (0 when airless or down
  * on the ground, 1 seen from space); look: the sun's fall-off (1 lit and
  * seen from space, 0 unlit or on the ground), limb darkening, detail
- * amplitude; seed: the body's.
+ * amplitude; hz: the ground's haze colour and weight, the eye in model
+ * space in R and R over the haze's reach (gl.c planet_haze); seed: the body's.
  * 0, changing nothing, when off or when the shader is not available. */
 int procfx_planet_begin (const float lo[4], const float hi[4], float soft,
-			 const float rim[4], const float look[3], unsigned int seed);
+			 const float rim[4], const float look[3], const float hz[8], unsigned int seed);
 /* between the two: light zone unit's texture */
 void procfx_planet_bind (int unit, unsigned int tex);
 /* before each vertex: cos(sun), view cosine, model direction there */
