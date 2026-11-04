@@ -1366,6 +1366,11 @@ void Nu_InsertZNode ()
 	}
 }
 
+/* this view's haze for what fades with the ground (planet_haze, for
+ * hull_hazed and puffs.c): colour and weight, the eye, the sun, 1 / R;
+ * and how far it is up: it goes as a ship lands, a port on the ground is
+ * as drawn */
+static float hull_hz[12], hull_hz_up;
 void Nu_3DViewInit ()
 {
 	fx_frame_begin ();
@@ -1387,6 +1392,8 @@ void Nu_3DViewInit ()
 		g->w += fmaxf (-0.04f, fminf (0.04f, aim - g->w));
 		g->dr = 0;
 	}
+	hull_hz_up += fmaxf (-0.02f, fminf (0.02f, ((STMemory_ReadByte (__DL5eb6_a6_base + 704) & 0xff) < 0x50) - hull_hz_up));
+	hull_hz[3] = 0;
 
 	//add_node (&znode_start, 0);
 	znode_start = NULL;
@@ -1594,6 +1601,7 @@ static unsigned int complex_st_start;
 static void hull_put_cctx (void);
 static void hull_rdcctx (void **data);
 static int hull_complex_begin (GLdouble c[][3], int n, void **data);
+static int hull_complex_hazed (int cloud, int puffed);
 static void hull_complex_end (void);
 
 /* procfx sky band: complex_sky when Nu_ComplexStart meets the background
@@ -1861,12 +1869,14 @@ void Nu_DrawComplexEnd (void **data)
 {
 	if (use_renderer == R_GL) {
 		/* style 5's plating, from the last contour before it goes */
-		int plated = hull_complex_begin (contour_v, contour_n, data);
+		int plated = hull_complex_begin (contour_v, contour_n, data), puffed = 0;
 		flush_contour ();
 		/* a low cloud's: shaded inside the game's own fill, or flat */
-		if (puff_open && (plated || !puff_shape ((const double (*)[3]) puff_e, puff_en,
-				tessModelMatrix, tessProjMatrix, tessViewport)))
-			puff_end ();
+		if (puff_open && !plated)
+			puffed = puff_shape ((const double (*)[3]) puff_e, puff_en,
+				tessModelMatrix, tessProjMatrix, tessViewport, hull_hz);
+		if (puff_open && !puffed) puff_end ();
+		if (!plated) plated = hull_complex_hazed (puff_open, puffed);
 		gluTessEndContour (tobj);
 		gluTessEndPolygon (tobj);
 		if (plated) hull_complex_end ();
@@ -3618,7 +3628,7 @@ static void hull_make_set (int prof, int level)
 }
 
 static GLuint gnd_prog;	/* a port's ground, gnd_begin */
-static int gnd_failed;
+static int gnd_failed, gnd_hz[3];
 
 static void hull_forget_shader (void)
 {
@@ -4226,7 +4236,8 @@ static void CALLBACK hull_tess_vertex (GLvoid *vertex, GLvoid *poly_data)
  */
 static const char gnd_fs[] =
 	"#version 120\n"
-	"varying vec4 vCol, vOb;\n"
+	"varying vec4 vUV, vCol, vOb;\n"
+	HAZE_GLSL HAZE_VIEW_GLSL
 	"float gnd_fade (float f, float k) { return 1.0 - smoothstep (0.15, 0.6, f * k); }\n"
 	/* value noise on the ground's plane: 4 lattice hashes, not pf_noise's 8 */
 	"float gnd_noise (vec2 x, float c)\n"
@@ -4245,7 +4256,8 @@ static const char gnd_fs[] =
 	"	float j = max (1.0 - smoothstep (0.012, 0.012 + fq.x, d.x), 1.0 - smoothstep (0.012, 0.012 + fq.y, d.y));\n"
 	"	float s = 0.06 * (pf_hash (vec3 (floor (q), 0.5)) - 0.5);\n"
 	"	float w = 0.12 * (0.67 * gnd_noise (p * 0.6, 1.3) + 0.33 * gnd_noise (p * 1.22, 7.1) - 0.5) * gnd_fade (f, 2.0);\n"
-	"	gl_FragColor = vec4 (vCol.rgb * (1.0 + g + w + jf * (s + 0.18 * (0.047 - j))), vCol.a);\n"
+	"	vec3 c = vCol.rgb * (1.0 + g + w + jf * (s + 0.18 * (0.047 - j)));\n"
+	"	gl_FragColor = vec4 (uHz.a > 0.0 ? pf_haze_view (c, vUV.xyz) : c, vCol.a);\n"
 	"}\n";
 static double gnd_tile;		/* the model's building tile */
 
@@ -4269,6 +4281,7 @@ static void CALLBACK gnd_tess_vertex (GLvoid *vertex, GLvoid *poly_data)
 			ob[j] += hull_cc.M[3*j+k] * ((k == 2 ? -e[k] : e[k]) - hull_cc.o[k]);
 		ob[j] /= gnd_tile;
 	}
+	glTexCoord3dv (e);
 	glMultiTexCoord4fv (GL_TEXTURE4, ob);
 	glVertex4d (d[0] * w, d[1] * w, d[2] * w, w);
 }
@@ -4300,13 +4313,17 @@ static int gnd_begin (GLdouble c[][3], int n, double tile, const int c8[3])
 		}
 	}
 	if (!(fabs (N[HULL_DECK_AXIS]) >= 0.9986 * sqrt (N[0] * N[0] + N[1] * N[1] + N[2] * N[2]))) return 0;
-	if (!gnd_prog && !(gnd_prog = hull_link (gnd_fs, 1))) {
-		fprintf (stderr, "GL: a port's ground needs GLSL 1.20, drawing it flat\n");
-		gnd_failed = 1;
-		return 0;
+	if (!gnd_prog) {
+		if (!(gnd_prog = hull_link (gnd_fs, 1))) {
+			fprintf (stderr, "GL: a port's ground needs GLSL 1.20, drawing it flat\n");
+			gnd_failed = 1;
+			return 0;
+		}
+		procfx_haze_find (gnd_prog, gnd_hz);
 	}
 	hull_end ();
 	glUseProgram (gnd_prog);
+	procfx_haze_set (gnd_hz, hull_hz);
 	hull_on = 2;	/* hull_end ends it */
 	hull_cur = -1;
 	gnd_tile = tile;
@@ -4440,6 +4457,60 @@ static void hull_door_edge (GLdouble c[][3], int n)
 	glPopAttrib ();
 }
 
+/* Near a world a port's hills and lakes (its flat green and blue) and its
+ * far roads and rivers fade with the ground, as do the apron (gnd_fs) and
+ * the dark patches (puffs.c); its buildings, lamps and signs keep their
+ * colours.  3 with the shader bound: each vertex sends its view place as
+ * its texture coordinate. */
+#define HULL_HAZE 3000	/* in hull_cur */
+static int hull_haze_on (void)
+{
+	if (!(hull_hz[3] > 0) || !procfx_haze_begin (hull_hz)) return 0;
+	hull_on = 2;
+	hull_cur = HULL_HAZE;
+	return 3;
+}
+
+static int hull_port_key (unsigned int key)
+{
+	int m = HULL_KEY_MODEL (key);
+
+	return (m == 96 || m == 98) && hull_key_listed (key);
+}
+
+static int hull_hazed (unsigned int key, const int rgb[3])
+{
+	if (hull_hz[3] <= 0 || (2 * rgb[1] <= 3 * fmaxf (rgb[0], rgb[2]) && 2 * rgb[2] <= 3 * fmaxf (rgb[0], rgb[1])) ||
+	    hull_ctx != 2 || fx_tagged () || !hull_port_key (key))
+		return 0;
+	return hull_haze_on ();
+}
+
+/* a shape's points come back in window coordinates: as hull_tess_vertex */
+static void CALLBACK hull_haze_vertex (GLvoid *vertex, GLvoid *poly_data)
+{
+	const GLdouble *d = (const GLdouble *) vertex;
+	double e[3], w = 1;
+
+	glColor3ub (complex_col[0], complex_col[1], complex_col[2]);
+	if (gluUnProject (d[0], d[1], d[2], tessModelMatrix, tessProjMatrix, tessViewport, &e[0], &e[1], &e[2])) {
+		if (e[2] < 0) w = -e[2];
+		glTexCoord3dv (e);
+	}
+	glVertex4d (d[0] * w, d[1] * w, d[2] * w, w);
+}
+
+/* 1 when the shape about to be drawn takes the ground's haze: a hill or
+ * lake, or the patch puff_shape has just bound (cloud: it went there) */
+static int hull_complex_hazed (int cloud, int puffed)
+{
+	const int c8[3] = { complex_col[0] & 255, complex_col[1] & 255, complex_col[2] & 255 };	/* signed */
+
+	if (cloud ? puffed != 2 : !hull_cc_on || !hull_hazed (hull_cc.key, c8)) return 0;
+	gluTessCallback (tobj, GLU_TESS_VERTEX_DATA, (_GLUfuncptr) hull_haze_vertex);
+	return 1;
+}
+
 static void hull_complex_end (void)
 {
 	gluTessCallback (tobj, GLU_TESS_VERTEX_DATA, (_GLUfuncptr) vertexCallback);
@@ -4489,14 +4560,15 @@ void Nu_DrawTriangle (void **data)
 		float st[3][2];
 		struct HullFrame hf;
 		int tex = hull_paint (p, 3, hull_ctx, &cx, hull_ctx && hull_decal_host (data), rgb, st, &hf);
-		int pf = puff_now && !tex && puff_face ((const double (*)[3]) p, 3);	/* a low cloud's */
+		int pf = puff_now && !tex && puff_face ((const double (*)[3]) p, 3, hull_hz);	/* a low cloud's */
+		if (!tex) tex = hull_hazed (cx.key, rgb);
 		if (!pf) puff_end ();
 		glBegin (GL_TRIANGLES);
-			if (tex == 1) glTexCoord2fv (st[0]); else if (tex == 2) hull_attr (&hf, 0); else if (pf) puff_corner (0);
+			if (tex == 1) glTexCoord2fv (st[0]); else if (tex == 2) hull_attr (&hf, 0); else if (pf) puff_corner (0); else if (tex) glTexCoord3fv (v1);
 			glVertex3fv (v1);
-			if (tex == 1) glTexCoord2fv (st[1]); else if (tex == 2) hull_attr (&hf, 1); else if (pf) puff_corner (1);
+			if (tex == 1) glTexCoord2fv (st[1]); else if (tex == 2) hull_attr (&hf, 1); else if (pf) puff_corner (1); else if (tex) glTexCoord3fv (v2);
 			glVertex3fv (v2);
-			if (tex == 1) glTexCoord2fv (st[2]); else if (tex == 2) hull_attr (&hf, 2); else if (pf) puff_corner (2);
+			if (tex == 1) glTexCoord2fv (st[2]); else if (tex == 2) hull_attr (&hf, 2); else if (pf) puff_corner (2); else if (tex) glTexCoord3fv (v3);
 			glVertex3fv (v3);
 		glEnd ();
 		if (hull_glow) hull_glow_draw (p, 3);
@@ -4547,16 +4619,17 @@ void Nu_DrawQuad (void **data)
 		struct HullFrame hf;
 		int rgb[3] = { r & 255, g & 255, b & 255 };	/* znode_rdcolor's are signed */
 		int tex = hull_paint (p, 4, hull_ctx, &cx, hull_ctx && hull_decal_host (data), rgb, st, &hf);
-		int pf = puff_now && !tex && puff_face ((const double (*)[3]) p, 4);	/* a low cloud's */
+		int pf = puff_now && !tex && puff_face ((const double (*)[3]) p, 4, hull_hz);	/* a low cloud's */
+		if (!tex) tex = hull_hazed (cx.key, rgb);
 		if (!pf) puff_end ();
 		glBegin (GL_TRIANGLE_STRIP);
-			if (tex == 1) glTexCoord2fv (st[0]); else if (tex == 2) hull_attr (&hf, 0); else if (pf) puff_corner (0);
+			if (tex == 1) glTexCoord2fv (st[0]); else if (tex == 2) hull_attr (&hf, 0); else if (pf) puff_corner (0); else if (tex) glTexCoord3iv (v1);
 			glVertex3iv (v1);
-			if (tex == 1) glTexCoord2fv (st[1]); else if (tex == 2) hull_attr (&hf, 1); else if (pf) puff_corner (1);
+			if (tex == 1) glTexCoord2fv (st[1]); else if (tex == 2) hull_attr (&hf, 1); else if (pf) puff_corner (1); else if (tex) glTexCoord3iv (v2);
 			glVertex3iv (v2);
-			if (tex == 1) glTexCoord2fv (st[3]); else if (tex == 2) hull_attr (&hf, 3); else if (pf) puff_corner (3);
+			if (tex == 1) glTexCoord2fv (st[3]); else if (tex == 2) hull_attr (&hf, 3); else if (pf) puff_corner (3); else if (tex) glTexCoord3iv (v4);
 			glVertex3iv (v4);
-			if (tex == 1) glTexCoord2fv (st[2]); else if (tex == 2) hull_attr (&hf, 2); else if (pf) puff_corner (2);
+			if (tex == 1) glTexCoord2fv (st[2]); else if (tex == 2) hull_attr (&hf, 2); else if (pf) puff_corner (2); else if (tex) glTexCoord3iv (v3);
 			glVertex3iv (v3);
 		glEnd ();
 		if (hull_glow) hull_glow_draw (p, 4);
@@ -5334,7 +5407,7 @@ static void cloud_stage (const struct PlanetPrim *p, double d, const double sun[
  * L the air's reach at sea level. */
 static void planet_haze (const struct PlanetPrim *p, double d, float hz[8])
 {
-	double up[3], e[3];
+	double up[3], e[3], sun[3];
 	int i, r, g, b;
 
 	memset (hz, 0, 8 * sizeof (float));
@@ -5347,6 +5420,16 @@ static void planet_haze (const struct PlanetPrim *p, double d, float hz[8])
 	to_model (p, up, e);
 	for (i = 0; i < 3; i++) hz[4+i] = e[i] / sqrt (pdot (e, e)) * d / p->R;	/* A: not quite a rotation */
 	hz[7] = 1 / p->hz;
+	if (hull_intro_base ()) return;
+	/* what fades with the ground has it in GL's view frame (z back) */
+	planet_sun (p, sun);
+	memcpy (hull_hz, hz, 8 * sizeof (float));
+	hull_hz[3] *= hull_hz_up;
+	for (i = 0; i < 3; i++) {
+		hull_hz[4+i] = (i == 2 ? 1 : -1) * p->centre[i] / p->R;
+		hull_hz[8+i] = (i == 2 ? -1 : 1) * sun[i];
+	}
+	hull_hz[11] = 1 / p->R;
 }
 
 static int planet_smooth_begin (const struct PlanetPrim *p, double d, const struct LightZone *z,
@@ -6959,6 +7042,11 @@ void Nu_PutLine ()
 	znode_wrvertex (GetReg (REG_A0)+4);
 	znode_wrvertex (GetReg (REG_A1)+4);
 	znode_wrcolor (GetReg (REG_D6));
+	{	/* a road or river far off: Nu_DrawLine, hull_hazed */
+		int c = GetReg (REG_D6) & 0xfff;
+		znode_wrlong ((c == 0x444 || 2 * (c & 15) > 3 * MAX (c >> 8, (c >> 4) & 15)) &&
+			      hull_port_key (hull_model_key ()));
+	}
 	shadow_put (REG_A0, 2, 0);
 }
 /* The 'you are here' label (the game's own stroke text) set like the HD
@@ -7022,11 +7110,12 @@ static void here_draw (void)
 void Nu_DrawLine (void **data)
 {
 	int v1[3], v2[3];
-	int r, g, b;
+	int r, g, b, hazed;
 	
 	znode_rdvertex (data, v1);
 	znode_rdvertex (data, v2);
 	znode_rdcolor (data, &r, &g, &b);
+	hazed = znode_rdlong (data) && hull_haze_on ();
 	
 	if (galmap == 1 && r == b && (unsigned char) r > 3 * (unsigned char) g + 40) {
 		/* the map's magenta, where you are: kept for here_draw */
@@ -7040,7 +7129,9 @@ void Nu_DrawLine (void **data)
 	glLineWidth ((galmap == 1 ? 0.6f : 1.0f) * px_scale ());
 	glColor3ub (r, g, b);
 	glBegin (GL_LINES);
+		if (hazed) glTexCoord3iv (v1);
 		glVertex3iv (v1);
+		if (hazed) glTexCoord3iv (v2);
 		glVertex3iv (v2);
 	glEnd ();
 	glLineWidth (1.0f);

@@ -48,8 +48,8 @@ int puff_next (int kind);
 void puff_end (void);
 void puff_frame (void);
 void puff_forget (void);
-int puff_shape (const double (*e)[3], int n, const double mv[16], const double pj[16], const int vp[4]);
-int puff_face (const double (*p)[3], int n);
+int puff_shape (const double (*e)[3], int n, const double mv[16], const double pj[16], const int vp[4], const float hz[12]);
+int puff_face (const double (*p)[3], int n, const float hz[12]);
 void puff_corner (int i);
 
 #endif
