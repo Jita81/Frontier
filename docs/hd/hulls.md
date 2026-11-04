@@ -157,7 +157,11 @@ and the reading of the model's frame). The art is in `art/hull/`.
      keeps the seams that run down a slanting face sharp and averages the
      ones across it away, so plates read as long boards. A floor seen from
      just above is edge on too, which is why the hangar and deck keep a
-     graze of 0.
+     graze of 0. The curved wings of the station behind the menu keep 0 as
+     well (their big grey complex shapes, `hull_complex_begin`; the flags of
+     `hull_intro_base` keep the fade): `e / det` differs from one triangle of
+     the tessellation to the next on a surface that leaves its plane, and at
+     a graze the fan showed as pale bars.
 
 ## Caching and cost
 
@@ -253,7 +257,7 @@ Models (`hull_models[]`, by the whole type word and its table;
 | 24 | small spaceplane, crescent wing | civilian, panels x1.5 |
 | 26 | slim light fighter | armour, panels x2 |
 | 74 | large triangular arrow hull, heavy hauler | freighter, panels x8 |
-| intro's 72 | the orbital station behind the menu | station |
+| intro's 72 | the orbital station behind the menu | station; its curved wings, a tile at most 0.08 off their plane, have no graze fade |
 | 80 | orbital station outside, close up | station |
 | 82 | launch structure | station |
 | 84 | docking bay seen through the slot | hangar; its faces out of the bay's box (the station's outside) station |
@@ -975,8 +979,8 @@ Known limits:
   marking and a sign that carries lettering hosts decals, and both stay
   flat. A large sign of another pure colour with no lettering of its own
   would be plated as paint.
-- Only the station has a graze fade. A hangar wall seen edge on from the
-  deck could still stripe.
+- Only the station has a graze fade, and the menu's station's wings do
+  without it. A hangar wall seen edge on from the deck could still stripe.
 - A part's plates are its own, so they do not line up with the wall
   around it. A face moved by its vertices keeps its plates by matching its
   corners frame to frame (above). The match is a heuristic: a new copy of
