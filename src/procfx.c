@@ -388,7 +388,7 @@ int flat_planets = 0;
  * with air, the lit ground fades into the sky's colour at the horizon
  * (uHz, uHe: gl.c planet_haze) by the air along the path to it, not its
  * length: density e^(-q/H), height q = (k1 u + k2 u^2) H along the path,
- * integrated in closed form to within a few percent, so a steep path is
+ * integrated in closed form, to about 20% at worst, so a steep path is
  * out of the air at once and a grazing one stays low.  e's 3e-7: float
  * noise, an eye on the sphere is not above it. */
 #define PLANET_GLSL_TEXT \

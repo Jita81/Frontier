@@ -138,8 +138,8 @@ sea level.
 the ground is the air along the path, not the path's length: `I` is the
 path's mean of e^(-height / H), with `HAZE_SCALE_H` H = 0.0003 R and the
 height taken from the sphere's curve along the path, in a closed form
-good to a few percent (the planet shader in procfx.c).  A path that
-looks steeply down leaves the air quickly and keeps the ground's own
+good to about 6% above 0.003 R and to about 20% on the lowest grazing
+paths (the planet shader in procfx.c).  A path that looks steeply down leaves the air quickly and keeps the ground's own
 colour; only one that grazes the ground stays low, so the fade gathers
 in a band just under the horizon at every height, with no cap to harden
 its edge.
@@ -150,9 +150,10 @@ are flat faces no shader sees, and only the first have a class; so they
 keep full contrast against the fading ground.
 
 Off: `--flat-descent` (byte-identical to base).  Nothing changes above
-2R, under `--old-renderer`, or in the cockpit view on the pad (the eye
-sits on the sphere on a terran world; an ice world's pad sits a little
-above it, and its external view changes slightly).
+2R, under `--old-renderer`, or in the cockpit view on a terran pad (the
+eye sits on the sphere there).  An ice world's pad sits a little above
+the sphere: its external view changes slightly, and its cockpit view by
+at most 3 levels of 255, in the far-ground strip the base already hazes.
 
 Measured at x = 1400 on a 1600x1200 terran climb, the flat reach this
 replaced to the path's air: in the view it paled most, the ground just
