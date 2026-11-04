@@ -407,9 +407,11 @@ after the table for a part of record N.
   the stacks (144), 154 (a low maze-like block in the city, but also the
   surface detail of a large ship in records 66 to 70, so a row would plate
   that ship), the scenes' own models (40 to 54) and the parts not
-  identified (76, 206, 124 to 128, 190, 218 to 222, 220 and 222 being
-  twins of game models that are not listed either). `--flat-buildings`
-  draws the city's buildings flat too.
+  identified (76, 124 to 128, 190, 218 to 222, 220 and 222 being twins of
+  game models that are not listed either). `--flat-buildings` draws the
+  city's buildings flat too.  186 and 206, the clouds, are in no table
+  here: `puff_key` lights them (clouds.md, "The intro's clouds"), and
+  `--flat-clouds` draws them flat.
 - **Buildings' frame:** a part has no climb, so its storeys and its foot
   shading count from the part's own origin, not the ground: for 166 to 174
   (origin at the middle or above the walls) the foot shading falls mid-wall
