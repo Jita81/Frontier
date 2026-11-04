@@ -111,7 +111,7 @@ HOST_STAMP := gen/.flags-host-$(if $(SAN),$(SAN),plain)
 CORE_FLAGS_TEXT := $(CC) $(CFLAGS)
 HOST_FLAGS_TEXT := $(CC) $(CFLAGS) $(HOST_CFLAGS)
 
-.PHONY: all $(TARGET) allclean clean install-hooks stress FORCE
+.PHONY: all $(TARGET) allclean clean install-hooks stress check-gl FORCE
 
 all: $(TARGET)
 
@@ -162,8 +162,14 @@ stress:
 	$(CC) -O3 -pthread -I. tools/stress/vbl_race.c host.c -o san/vbl_race
 	san/vbl_race 20000000 4
 
+# Every GL id cached in a file-scope static is cleared when the GL context goes
+# (tools/check-gl-forget, docs/hd/rings.md).  Needs no game data.
+check-gl:
+	@tools/check-gl-forget
+
 # Run the game-data guard before every commit in this repository: point git at
-# .githooks (pre-commit runs tools/check-no-game-data.sh --staged).  Sets
+# .githooks (pre-commit runs tools/check-gl-forget and
+# tools/check-no-game-data.sh, both --staged).  Sets
 # core.hooksPath for this repository only, never --global.
 install-hooks:
 	git config --local core.hooksPath .githooks
