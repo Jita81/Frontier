@@ -261,7 +261,8 @@ static void change_vidmode ()
 	 * on every SDL_SetVideoMode - when the window goes fullscreen or
 	 * back - and every texture of the old one is gone. Release ours
 	 * while that context is still current, they get made again when
-	 * needed. */
+	 * needed. A new GL id cached in a static is cleared on this path too:
+	 * tools/check-gl-forget fails without it. */
 	planet_forget_textures ();
 	hull_forget_texture ();
 	hdtext_forget ();
@@ -277,6 +278,7 @@ static void change_vidmode ()
 	}
 	procfx_forget ();
 	puff_forget ();
+	skies_forget ();
 	hdtip_forget ();
 	hddamage_forget ();
 	if (screen_tex) {
