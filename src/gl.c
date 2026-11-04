@@ -1373,6 +1373,8 @@ void Nu_InsertZNode ()
 static float hull_hz[12], hull_hz_up;
 void Nu_3DViewInit ()
 {
+	int up;
+
 	fx_frame_begin ();
 	skies_frame_begin ();
 	queued_string_pos = 0;
@@ -1392,7 +1394,8 @@ void Nu_3DViewInit ()
 		g->w += fmaxf (-0.04f, fminf (0.04f, aim - g->w));
 		g->dr = 0;
 	}
-	hull_hz_up += fmaxf (-0.02f, fminf (0.02f, ((STMemory_ReadByte (__DL5eb6_a6_base + 704) & 0xff) < 0x50) - hull_hz_up));
+	up = (STMemory_ReadByte (__DL5eb6_a6_base + 704) & 0xff) < 0x50;
+	hull_hz_up = up || hull_hz[3] > 0 ? hull_hz_up + fmaxf (-0.02f, fminf (0.02f, up - hull_hz_up)) : 0;	/* 0: a game loaded on the ground */
 	hull_hz[3] = 0;
 
 	//add_node (&znode_start, 0);
