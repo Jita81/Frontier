@@ -574,7 +574,10 @@ drawn as before), adds no geometry, and depends on no clock, RNG or
 view. `--flat-pads` draws the ground flat, exactly as before. On the
 airless port little passes: the wide grey round its pad is not one of
 word 98's complex shapes (a tint of every accepted shape left it
-untouched), so it stays flat, and its level shapes are mostly gardens.
+untouched), so it stays flat, and its level shapes are mostly gardens. In-run
+pairs at 1600x1200, the shader toggled against flat every 30 frames
+(ABBAABBA), measured it at +0.35 ms a frame landed and -0.17 ms on the
+lift-off (median of the paired cycles), inside the 0.5 ms rule.
 
 Seeded ground props round a port (trees, shrubs, ice spires; W11b, #81)
 were tried and removed at the operator's call: props are not terrain and
