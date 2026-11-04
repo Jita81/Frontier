@@ -51,6 +51,7 @@ const struct HullClass hull_classes[HC_N] = {
 	{ "freighter",	"hull/freighter.png",	HP_TRADER,	12288,	0.18, 0.18, 0.70, 0.40, 1.20, 0.25, 16, 0.40, 0.40, 0 },
 	{ "armour",	"hull/armour.png",	HP_MILITARY,	8192,	0.14, 0.22, 0.25, 0.10, 1.20, 0.50, 40, 0.45, 0.05, 0 },
 	{ "fighter",	"hull/fighter.png",	HP_SMALL,	6144,	0.16, 0.20, 0.10, 0.00, 0.70, 0.65, 64, 0.30, 0.00, 0 },
+	{ "enamel",	"hull/enamel.png",	HP_SMALL,	10240,	0.05, 0.04, 0.03, 0.00, 0.20, 1.00, 32, 0.25, 0.00, 0 },
 	/* B10: no tile, the seeded plating of their own profiles, in the
 	 * enum's order (hull.h); panel measured, see docs/hd/hulls.md */
 	{ "cargo",	NULL,			HP_CARGO,	256,	0, 0, 0, 0,	1.00, 0.30, 20, 0.40, 0.30, 0 },
@@ -138,7 +139,7 @@ static const struct {
 	/* the intro's scenes: their own model, or a part keyed by its own (gl.c) */
 	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 62,  HC_STATION,	1.0f },	/* the ring station */
 	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 192, HC_STATION,	1.0f },	/* its hub (a twin of the game's 86) */
-	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 86,  HC_CIVIL,	2.0f },	/* the green ship, in several scenes */
+	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 86,  HC_ENAMEL,	2.0f },	/* the green ship, in several scenes */
 	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 130, HC_FREIGHT,	6.0f },	/* the ship of modules */
 	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 212, HC_ARMOUR,	2.0f },	/* the large ship of the first space scene */
 	/* the intro city's buildings, by their own words (records 40 to 54);
@@ -756,7 +757,8 @@ void hull_bake_tile (int cls, const unsigned char *lum, int n, unsigned char *t0
 	size_t cnt = (size_t) n * n, i;
 	float *D, *H, *Hb, *tmp, *GR, *cav, *CHp, sum = 0, gsum = 0, k, sd, bs = n / 512.0f;
 	double mean = 0, var = 0;
-	unsigned int seed = 0x6a09e667u + (unsigned int) cls * 7919u, rs;
+	/* the rows after the enamel's keep the grime they were baked with */
+	unsigned int seed = 0x6a09e667u + (unsigned int) (cls - (cls > HC_ENAMEL)) * 7919u, rs;
 	int x, y, p, scratches;
 
 	N = n; NM = n - 1; SC = n / 1024.0f;

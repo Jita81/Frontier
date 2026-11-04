@@ -20,7 +20,7 @@ The code is in `src/hull.c` and `src/hull.h` (plain C, no GL, no 68k
 state) and in the hull region of `src/gl.c` (the shaders, the draw calls
 and the reading of the model's frame). The art is in `art/hull/`.
 `tools/art/hull_tile.py` makes the tiles that start as Grok pictures, and
-`tools/art/plate_tile.py` draws the station's tile in code.
+`tools/art/plate_tile.py` draws the station's and the enamel's tiles in code.
 
 ## What it does, face by face
 
@@ -191,7 +191,9 @@ and the reading of the model's frame). The art is in `art/hull/`.
       listed model kept flat: `sign/marking (yellow paint)`,
       `sign/marking (hosts lettering)`, `lamp, window or lit sign (pure
       colour)`, `lamp or light strip (near white)`, or `no frame for the
-      tile (a sliver or a face edge-on)`
+      tile (a sliver or a face edge-on)`. An enamel ship's pure-colour face
+      is logged without the words `drawn flat`, as `lit vent panel (pure
+      colour)`.
     - for a complex shape (S is its point count and colour, as it has no
       face number): `complex shape: lamp or lit sign (pure colour)`,
       `complex shape: sign/marking (yellow paint)`, `complex shape:
@@ -210,6 +212,7 @@ and the reading of the model's frame). The art is in `art/hull/`.
 | freighter | `freighter.png` | thick welded plates, patch plates, oil and grime | 12288 |
 | armour | `armour.png` | thick bevelled armour plates, deep gaps, bolts | 8192 |
 | fighter | `fighter.png` | sleek composite skin, fine lines, high sheen | 6144 |
+| enamel | `enamel.png` | clean fine paint, thin inset panel lines, satin sheen, no rivets or chips (drawn in code; see Enamel) | 10240 |
 | station | `station.png` | large rectangular steel plates, straight seams, two hatches and two vents a tile (drawn in code) | 131072 |
 | hangar | `hangar.png` | industrial bulkheads, beams, conduits | 49152 |
 | deck | `deck.png` | tread and plain deck plates, grating (hangar floor and ceiling) | 32768 |
@@ -273,6 +276,35 @@ face, measured in the shipyard's view (the Viper's biggest face is some
 times across a face and read as crazy paving. The fighters use the armour
 tile: the fighter tile's fine diagonal weave, once big enough to see,
 read as wood grain on an orange Krait.
+
+### Enamel
+
+A clean, well-kept painted ship, the green ship first. Nothing in the class
+names a model, so another ship can take it. Its row has low wear, no chips,
+high gloss and a tile of thin lines, and sits after `fighter`, below
+`HC_STATION`, so it is a ship (`HULL_BUILDING`). `hull_bake_tile` leaves this
+row out of its seed, so the classes after it keep the grime they had.
+
+`uB.w` is 0 for a ship and above 0 for a building, so a negative value is a
+branch of `hull_fs5` no other class reaches. `hull_ub` sets it for each new
+class, and `hull_begin5` sets it again on its cached path after a vent, so a
+vent does not reach the next face or class.
+
+- **Face (`uB.w` -1):** a thin dark line with a finer lighter lip, inset from
+  the face's edges by the edge distance d (0.011 and 0.014 of a tile). It
+  fades out by pixel footprint with the tile, so a small ship does not
+  crawl. A complex shape has no edge distance, so no trim. The class also
+  adds a satin sheen, broad specular and a soft clear coat at a graze, and
+  takes the tile's blurred second scale and most of the weathering away.
+- **Vent (`uB.w` below -1):** a pure-colour face of this class is not a
+  lamp. `hull_paint5` calls `hull_vent_ub`, and the shader draws a dark
+  inset frame (d 0.016), fine louvres (`VENT_PITCH`, 0.022 of a tile) and a
+  glow in the face's own colour, brighter toward the engine end (the
+  model's low z), evenly if the face has no model frame. The frame and the
+  louvres fade to the plain glow when they are too small to hold. The log
+  says `lit vent panel (pure colour)`. Other classes keep the lamp rule.
+- **Off:** with no shader (`FE2_HULL_FIXED=1`, no GLSL 1.20) the vent is the
+  game's flat face and the hull has the class's tile with no trim.
 
 ### Census (B2, slice 1)
 
@@ -395,7 +427,7 @@ after the table for a part of record N.
 | intro word | what | HD path |
 |---|---|---|
 | 62 (a scene's own model) and 192 | the ring station and its hub | station plating |
-| 86 | the green ship, in several scenes | civilian, panels x2 |
+| 86 | the green ship, in several scenes | enamel, panels x2 |
 | 130 | the ship of modules | freighter, panels x6 |
 | 212 | the large ship of the first space scene | armour, panels x2 |
 | 138 | the city's large hall with stacks | building, panels x4 |
@@ -442,7 +474,7 @@ after the table for a part of record N.
 | 96 | a pale cloud a ship comes out of | the hypercloud glow |
 | 114, 116 | the fireball's circles, in a scene and in the credits | the explosion fireball (`fx.c`, `put_model`, as model 188) |
 | 80, 92, 132 | red beams (ground and space) | a red pulse laser, look 1: travelling bolts with a muzzle glow in the beam's colour (`fx_laser_line`) |
-| 86's plumes | the green ship's engines | the HD plume (halo, white core, flicker; `exhaust_intro`) |
+| 86's plumes | the green ship's engines | the HD plume, soft (halo, blue-white core, flicker; `exhaust_intro`) |
 
 - **Plumes:** a part's plume is HD when its word has a `hull_models[]`
   row that is not a building's (86 is the only such ship with a plume) or
@@ -450,6 +482,17 @@ after the table for a part of record N.
   record, the word, the plume's place in the frame and the game's clock,
   so two ships of one scene do not flicker in step and a replay draws the
   same.
+- **Soft plumes:** `exhaust_intro` sets `EXHAUST_SOFT` (bit 24 of the hd
+  word), so every HD plume of a scene is soft. `Nu_DrawTeardrop` then draws
+  each of its four layers with `exhaust_soft`: the same Bezier outline,
+  scaled about a point near the engine in seven rings, with alpha falling
+  smoothly to 0 at the rim, so no layer has an edge. The core is the game's
+  colour paled at a lower alpha, so it cannot clip to a white ball. Length,
+  direction, colour family and flicker are the plume's own. A flight plume
+  has no flag (`exhaust_hd (0)`), and a plume of projected radius 8 or less
+  stays a line. `--flat-exhaust` gives the flat plume on the enamel hull.
+  The plume is no part of the hull look: `--hull-style 0..4` keep their
+  hulls and show it too.
 - **Left flat:** 144's orange teardrops (on a part not listed: flames,
   not a ship's engine), the red beams with no part word in records 56 and
   68 (part -1, the record's own model), 126's circles beside the fireball
@@ -793,7 +836,7 @@ are listed in `hull_models[]` at x1, each with a class of its own.
 | switch | effect |
 |---|---|
 | `--hull-style 5` | the per-class material (default) |
-| `--hull-style 0..4` | the earlier looks, unchanged pixel for pixel: 0 fixed-function plating (`art/hull/plating.lum`), 1 big seeded texture, 2 panels, 3 bump and weathering, 4 a seeded profile per model (its own table, by the low byte of the word, as it always was) |
+| `--hull-style 0..4` | the earlier looks, unchanged pixel for pixel but for the intro's soft plume: 0 fixed-function plating (`art/hull/plating.lum`), 1 big seeded texture, 2 panels, 3 bump and weathering, 4 a seeded profile per model (its own table, by the low byte of the word, as it always was) |
 | `--flat-hulls` | no plating at all: the game's flat faces exactly (buildings too) |
 | `--flat-wear` | every ship of a model plated alike: no per-object wear, the 3D view of the build before the wear exactly |
 | `--flat-buildings` | a surface port's buildings and the intro city's flat, everything else as it is: the frames before the building class, exactly |
@@ -842,6 +885,18 @@ access hatches and two louvred vents, and a faint mottle that is the same
 in every direction. It writes `NAME.png` (1024, mean 128) and
 `NAME-2x2.png`.
 
+The enamel's tile is the same tool with a finer, quieter recipe, 34 plates
+and no hatches, vents or bolts:
+
+```
+python3 -I tools/art/plate_tile.py SCRATCH/tiles/enamel --seed 23 --cells 12 --std 0.06 \
+    --hatches 0 --vents 0 --bolts 0 --tone 0.5 --mottle 0.3
+```
+
+`--bolts` is the share of plates with corner bolts (0.5 by default), and
+`--tone` and `--mottle` scale each plate's tone and the mottle (1 by
+default).
+
 The other tiles start as a Grok picture:
 
 ```
@@ -865,7 +920,7 @@ Size: a tile repeats, so its size sets texel density, not screen size.
 - 1024 suits the station, hangar and deck: one tile spans a whole wall
   section, seen across a 1600x1200 window.
 
-The nine tiles total 1.6 MB.
+The ten tiles total 1.6 MB.
 
 ## Provenance of every art file
 
@@ -896,6 +951,9 @@ Every prompt ends with the same suffix:
 
 `station.png` is drawn in code: `tools/art/plate_tile.py OUT --seed 11`
 with its defaults (1024, 16 cells, `--std 0.09`, 2 hatches, 2 vents). No
+picture goes into it.
+
+`enamel.png` is drawn in code too, by the command in Making a tile. No
 picture goes into it.
 
 Each shipped file reproduces byte for byte from its raw image (or, for
