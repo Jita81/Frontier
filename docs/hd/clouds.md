@@ -144,16 +144,30 @@ colour; only one that grazes the ground stays low, so the fade gathers
 in a band just under the horizon at every height, with no cap to harden
 its edge.
 
-The port's own ground is not hazed.  The model hills and lakes (key 96,
-98 on ice) and the patches and roads (key 198, with the game's clouds)
-are flat faces no shader sees, and only the first have a class; so they
-keep full contrast against the fading ground.
+The port's own ground fades with it, by the same `pf_haze` (procfx.h):
+same colour and air, along the path to each fragment, cut off where the
+ray would meet the sphere (the port is flat, the world is not, and a far
+hill stands past the ground it is drawn on).  That is the port model's
+flat green and blue faces (hills, lakes; `hull_hazed`), its grey and blue
+lines (roads and rivers far off), its apron, pad and near roads (one
+shape, `gnd_fs`), and the dark patches of key 198, which go through the
+clouds' program and are told from them by lying under `GROUND_Y` in the
+model.  `planet_haze` hands these the view's values in `hull_hz`.  A
+cloud stays as it was: the program takes a zero `uHz` for it.
 
-Off: `--flat-descent` (byte-identical to base).  Nothing changes above
-2R, under `--old-renderer`, or in the cockpit view on a terran pad (the
-eye sits on the sphere there).  An ice world's pad sits a little above
-the sphere: its external view changes slightly, and its cockpit view by
-at most 3 levels of 255, in the far-ground strip the base already hazes.
+Left as drawn: buildings, signs, lamps, grey and white hills (grey faces
+cannot be told from a building, and a lit part must not pale), ships,
+stations and every model view (no planet there).  `hull_hz_up` takes it
+all away in about a second (50 views) once the game says the ship is
+down, so a port seen from the ground is as the base draws it.
+
+Off: `--flat-descent` (byte-identical to base); `--classic-ui`,
+`--flat-hulls` and `--pixel-*` keep the port as drawn (`hull_intro_base`).
+Nothing changes above 2R, under `--old-renderer`, or in the cockpit view
+on a terran pad (the eye sits on the sphere there).  An ice world's pad
+sits a little above the sphere: its external view changes slightly, and
+its cockpit view by at most 3 levels of 255, in the far-ground strip the
+base already hazes.
 
 Measured at x = 1400 on a 1600x1200 terran climb, the flat reach this
 replaced to the path's air: in the view it paled most, the ground just
@@ -291,12 +305,12 @@ the guard shades as the rest.
 How the intro is proved: an idle replay of the opening, 9000 frames at
 1600x1200, frame hashes against the base (neither tape nor frames kept).
 
-- Bands, 80 frames of six shots: 95-98% of their pixels now move (32-45%
+- Bands, 79 frames of six shots: 95-98% of their pixels now move (32-45%
   in the two night shots before).  Blue p5/p50/p95 about 80/97/111 in
   five shots, 77/86/110 in the smallest (a sliver, frames 7178-7296).
 - Steps: at the 14 frames the seed flipped, the change from the frame
   before is no bigger than its neighbours'.  The mottle follows the pan:
-  the best shift between frames leaves about 0.1 of a level (up to 2 at
+  the best shift between frames leaves about 0.1 of a level (up to 1 at
   the fastest pans, 25-40 pixels a frame).  A held frame stays held.
 - Changed frames fall in the cloud footprints: 1441-2401, 4130-4705 and
   6914-7297, every other frame the same bytes bar noise, so 186 too.  One

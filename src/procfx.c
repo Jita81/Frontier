@@ -310,8 +310,6 @@ void procfx_sky_end (void)
 
 int flat_planets = 0;
 
-#define PF_STR2(x)	#x
-#define PF_STR(x)	PF_STR2 (x)
 
 /* The cloud model, the one every view of the clouds uses (docs/hd/clouds.md):
  * cl_cover (q, oct) is the cover, 0..1, over the model direction q.  Its
@@ -366,8 +364,6 @@ int flat_planets = 0;
 	"	return vec2 (dot (nn, normalize (s)), smoothstep (uClCover.x, uClCover.x + 0.12, d));\n" \
 	"}\n"
 
-/* the air the ground's haze crosses thins by e over this height, in R */
-#define HAZE_SCALE_H 0.0003
 /* gl.c binds the textures of up to four light zones, each baked by
  * planet.c from the body's own features and colours, on units 0-3, and
  * gives every vertex: gl_TexCoord[0] the texture position, [1] cos(sun)
@@ -395,7 +391,7 @@ int flat_planets = 0;
 	"uniform sampler2D uZ0, uZ1, uZ2, uZ3;\n" \
 	"uniform vec4 uLo, uHi, uRim;\n" \
 	"uniform vec3 uLook, uSeed;\n" \
-	"uniform vec4 uHz, uHe;\n" \
+	HAZE_GLSL \
 	"uniform float uSoft;\n" \
 	"void main () {\n" \
 	"	float c = gl_TexCoord[1].x, mu = clamp (gl_TexCoord[1].y, 0.0, 1.0);\n" \
@@ -432,11 +428,7 @@ int flat_planets = 0;
 	"	col = mix (col, uRim.rgb, uRim.a * 0.6 * pow (1.0 - mu, 4.0) * day);\n" \
 	"	if (uHz.a > 0.0) {\n" \
 	"		vec3 v = normalize (gl_TexCoord[2].xyz) - uHe.xyz;\n" \
-	"		float H = 2.0 * " PF_STR (HAZE_SCALE_H) ";\n" \
-	"		float e = max (dot (uHe.xyz, uHe.xyz) - 1.0000003, 0.0), a = min (dot (v, v), e);\n" \
-	"		float k1 = (e - a) / H, k = max (0.5 * k1 + sqrt (0.25 * k1 * k1 + 1.273 * a / H), 1e-4);\n" \
-	"		col = mix (col, uHz.rgb, uHz.a * smoothstep (-0.1, 0.1, c)\n" \
-	"		          * (1.0 - exp (-sqrt (a) * uHe.w * (1.0 - exp (-k)) / k)));\n" \
+	"		col = pf_haze (col, dot (v, v), c);\n" \
 	"	}\n" \
 	"	gl_FragColor = vec4 (col, 1.0);\n" \
 	"}\n"
@@ -747,6 +739,39 @@ void procfx_corona_end (void)
 	glPopAttrib ();
 }
 
+/* A port's hills, lakes and far roads (gl.c hull_hazed) in the ground's haze. */
+static const char haze_glsl[] = HAZE_GLSL HAZE_VIEW_GLSL
+	"void main () { gl_FragColor = vec4 (pf_haze_view (gl_Color.rgb, gl_TexCoord[0].xyz), gl_Color.a); }\n";
+static GLuint haze_prog;
+static int haze_u[3], haze_failed;
+
+void procfx_haze_find (unsigned int prog, int u[3])
+{
+	u[0] = glGetUniformLocation (prog, "uHz");
+	u[1] = glGetUniformLocation (prog, "uHe");
+	u[2] = glGetUniformLocation (prog, "uHzSun");
+}
+
+void procfx_haze_set (const int u[3], const float hz[12])
+{
+	int i;
+
+	for (i = 0; i < 3; i++) glUniform4fv (u[i], 1, hz + 4 * i);
+}
+
+int procfx_haze_begin (const float hz[12])
+{
+	if (!haze_prog && !haze_failed) {
+		haze_prog = procfx_program ("port haze", haze_glsl);
+		haze_failed = !haze_prog;
+		if (haze_prog) procfx_haze_find (haze_prog, haze_u);
+	}
+	if (!haze_prog) return 0;
+	glUseProgram (haze_prog);
+	procfx_haze_set (haze_u, hz);
+	return 1;
+}
+
 /* the GL context is about to go: compile again in the next one */
 void procfx_forget (void)
 {
@@ -754,10 +779,11 @@ void procfx_forget (void)
 	if (pp_base.prog) glDeleteProgram (pp_base.prog);
 	if (pp_cl.prog) glDeleteProgram (pp_cl.prog);
 	if (end_prog) glDeleteProgram (end_prog);
+	if (haze_prog) glDeleteProgram (haze_prog);
 	if (corona[0].prog) glDeleteProgram (corona[0].prog);
 	if (corona[1].prog) glDeleteProgram (corona[1].prog);
-	sky_prog = end_prog = 0;
-	sky_failed = end_failed = 0;
+	sky_prog = end_prog = haze_prog = 0;
+	sky_failed = end_failed = haze_failed = 0;
 	memset (corona, 0, sizeof corona);
 	memset (&pp_base, 0, sizeof pp_base);
 	memset (&pp_cl, 0, sizeof pp_cl);
