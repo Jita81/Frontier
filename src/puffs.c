@@ -1,6 +1,6 @@
 /*
- * puffs: the game's own low clouds (model 198) lit as cumulus, see
- * docs/hd/clouds.md, "Low clouds".
+ * puffs: the low clouds (the game's model 198, the intro's 186 and 206,
+ * puff_key in gl.c) lit as cumulus, see docs/hd/clouds.md, "Low clouds".
  *
  * Far away a low cloud is a few outlines of Bezier curves (complex
  * shapes), close by a few quads and triangles.  The game's fill draws
