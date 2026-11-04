@@ -122,31 +122,43 @@ Low over a world with air, the far ground fades into the sky's colour at
 the horizon.  The planet shader (plain and cloud programs, sphere and
 horizon cap) mixes each ground fragment towards `uHz.rgb` by
 
-    a = w * smoothstep(-0.1, 0.1, c) * (1 - exp(-|m - e| * R / L))
+    a = w * smoothstep(-0.1, 0.1, c) * (1 - exp(-D * I * R / L))
 
-with `m` the fragment and `e` the eye in model space (in R), `c` the
+with `D` the distance from the eye to the fragment (in R), `c` the
 sun's cosine there (no haze on the night side, so no glow), and `w` = 1 -
 ramp(1.02, `PLANET_SKY_RATIO`, d/R): full in the air, gone by 2R.  The
 colour is the halo's innermost layer, the game's sun-tinted rim (0xeee
 on a terran world by day), kept when the ST draws no halo, so it follows
 the sun and looking down cannot pop it.  The reach L is the 6th column
-of `cloud_look` times R: terran 0.012, ice 0.018, rocky 0.036, corrosive
-0.006 (thick air hazes more, thin less; none without air).  Above
-`AIR_SCALE_H` = 0.001 R of height, L grows with the height, since only
-that part of the view ray is in the air.  Off: `--flat-descent`
-(byte-identical to base).  Nothing changes above 2R, under
-`--old-renderer`, or on the pad (the eye sits on the sphere).
+of `cloud_look` times R: terran 0.009, ice 0.0135, rocky 0.027, corrosive
+0.0045 (thick air hazes more, thin less; none without air), the reach at
+sea level.
 
-Measured at x = 1400 on a 1600x1200 terran climb, base to haze: a few
-hundred metres up (0.00008 R), the ground just under the horizon
-(78,130,59) to (101,146,86); a few km (0.0014 R) (79,130,60) to
-(182,198,177) at the horizon, (78,130,59) to (135,167,125) below it;
-0.17 R (92,129,80) to (109,139,98); dusk (66,116,46) to (89,131,74);
-night unchanged.  The sky's rows are unchanged in every frame.
-The 3D view's draw time on the lift-off climb (a scratch probe timing
-each frame to `glFinish` in both builds; 12 runs, ABBAABBA then BAAB,
-load 4 to 10): the median of the runs' medians is 9.31 ms for base and
-9.41 ms with the haze, while single runs' medians range 8.8 to 13.6 ms.
+`I` is what makes it read as air.  Air thins with height, so what fades
+the ground is the air along the path, not the path's length: `I` is the
+path's mean of e^(-height / H), with `HAZE_SCALE_H` H = 0.0003 R and the
+height taken from the sphere's curve along the path, in a closed form
+good to a few percent (the planet shader in procfx.c).  A path that
+looks steeply down leaves the air quickly and keeps the ground's own
+colour; only one that grazes the ground stays low, so the fade gathers
+in a band just under the horizon at every height, with no cap to harden
+its edge.
+
+The port's own ground is not hazed.  The model hills and lakes (key 96,
+98 on ice) and the patches and roads (key 198, with the game's clouds)
+are flat faces no shader sees, and only the first have a class; so they
+keep full contrast against the fading ground.
+
+Off: `--flat-descent` (byte-identical to base).  Nothing changes above
+2R, under `--old-renderer`, or in the cockpit view on the pad (the eye
+sits on the sphere on a terran world; an ice world's pad sits a little
+above it, and its external view changes slightly).
+
+Measured at x = 1400 on a 1600x1200 terran climb, the flat reach this
+replaced to the path's air: in the view it paled most, the ground just
+under the horizon (201,209,199) to (171,191,165) and the ground below
+it (123,159,112) to (98,142,83); in the hover, low over the port,
+(144,173,134) to (149,176,139), a touch stronger.
 The oracle end line is exact.
 
 ## The game's own clouds and the intro

@@ -366,6 +366,8 @@ int flat_planets = 0;
 	"	return vec2 (dot (nn, normalize (s)), smoothstep (uClCover.x, uClCover.x + 0.12, d));\n" \
 	"}\n"
 
+/* the air the ground's haze crosses thins by e over this height, in R */
+#define HAZE_SCALE_H 0.0003
 /* gl.c binds the textures of up to four light zones, each baked by
  * planet.c from the body's own features and colours, on units 0-3, and
  * gives every vertex: gl_TexCoord[0] the texture position, [1] cos(sun)
@@ -383,8 +385,12 @@ int flat_planets = 0;
  * up (from the eye it cancels in float at orbit distance), its cloud lit
  * a little past the ground's terminator and no brighter than the ground
  * at night, and the cloud's shadow on the lit ground.  Last, near a world
- * with air, the lit ground fades with distance into the sky's colour at
- * the horizon (uHz, uHe: gl.c planet_haze). */
+ * with air, the lit ground fades into the sky's colour at the horizon
+ * (uHz, uHe: gl.c planet_haze) by the air along the path to it, not its
+ * length: density e^(-q/H), height q = (k1 u + k2 u^2) H along the path,
+ * integrated in closed form to within a few percent, so a steep path is
+ * out of the air at once and a grazing one stays low.  e's 3e-7: float
+ * noise, an eye on the sphere is not above it. */
 #define PLANET_GLSL_TEXT \
 	"uniform sampler2D uZ0, uZ1, uZ2, uZ3;\n" \
 	"uniform vec4 uLo, uHi, uRim;\n" \
@@ -424,9 +430,14 @@ int flat_planets = 0;
 	"	col = mix (col, mix (col, cc, lit), cl_cover (cq, 5) * smoothstep (rd, rd + CL_T, length (uClEye)));\n" \
 	"#endif\n" \
 	"	col = mix (col, uRim.rgb, uRim.a * 0.6 * pow (1.0 - mu, 4.0) * day);\n" \
-	"	if (uHz.a > 0.0)\n" \
+	"	if (uHz.a > 0.0) {\n" \
+	"		vec3 v = normalize (gl_TexCoord[2].xyz) - uHe.xyz;\n" \
+	"		float H = 2.0 * " PF_STR (HAZE_SCALE_H) ";\n" \
+	"		float e = max (dot (uHe.xyz, uHe.xyz) - 1.0000003, 0.0), a = min (dot (v, v), e);\n" \
+	"		float k1 = (e - a) / H, k = max (0.5 * k1 + sqrt (0.25 * k1 * k1 + 1.273 * a / H), 1e-4);\n" \
 	"		col = mix (col, uHz.rgb, uHz.a * smoothstep (-0.1, 0.1, c)\n" \
-	"		          * (1.0 - exp (-uHe.w * length (gl_TexCoord[2].xyz - uHe.xyz))));\n" \
+	"		          * (1.0 - exp (-sqrt (a) * uHe.w * (1.0 - exp (-k)) / k)));\n" \
+	"	}\n" \
 	"	gl_FragColor = vec4 (col, 1.0);\n" \
 	"}\n"
 static const char planet_glsl[] = PLANET_GLSL_TEXT;
