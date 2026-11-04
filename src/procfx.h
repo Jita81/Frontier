@@ -80,7 +80,7 @@ void procfx_planet_clouds (const float cover[4], const float tint[3], const floa
  * on the ground, 1 seen from space); look: the sun's fall-off (1 lit and
  * seen from space, 0 unlit or on the ground), limb darkening, detail
  * amplitude; hz: the ground's haze colour and weight, the eye in model
- * space in R and R over the haze's reach (gl.c planet_haze); seed: the body's.
+ * space in R and R over the haze's reach at sea level (gl.c planet_haze); seed: the body's.
  * 0, changing nothing, when off or when the shader is not available. */
 int procfx_planet_begin (const float lo[4], const float hi[4], float soft,
 			 const float rim[4], const float look[3], const float hz[8], unsigned int seed);
