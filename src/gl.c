@@ -2049,6 +2049,8 @@ extern int flat_exhaust;	/* --flat-exhaust (main.c) */
  * while paused), now's and the next, and the way between them (bits 4-11):
  * a frame draws the same in every run. */
 static unsigned int hull_frame_no;	/* the engine's frames, for hull_anim_bind and the plumes */
+#define EXHAUST_SOFT	0x01000000u	/* the hd word's: the intro's, exhaust_soft */
+#define EXHAUST_RINGS	7
 static unsigned int exhaust_hd (unsigned int w)
 {
 	static unsigned int frame, rec, order;
@@ -2067,7 +2069,7 @@ static unsigned int exhaust_intro (void)
 	if (!w || (hull_intro_fx (w, NULL) != HULL_FX_EXHAUST &&
 		   (!hull_key_listed (k) || HULL_BUILDING (hull_class_of_key (k, &sc, off)))))
 		return 0;
-	return exhaust_hd (w);
+	return exhaust_hd (w) | EXHAUST_SOFT;
 }
 static unsigned int exhaust_put (void)
 {
@@ -2115,6 +2117,32 @@ static void exhaust_fan (GLfloat cp[4][3], const GLfloat mid[3], const float *c,
 		glVertex3dv (rim[i]);
 	}
 	glEnd ();
+}
+
+/* The same layer with no edge of its own (EXHAUST_SOFT): the outline scaled
+ * about mid in rings, alpha falling smoothly from a at mid to 0 at the rim,
+ * and by the fraction tail toward the pointed tail. */
+static void exhaust_soft (GLfloat cp[4][3], const GLfloat mid[3], const float *c, float a, float tail)
+{
+	GLdouble rim[TD_BEZIER_STEPS + 1][3], v[3];
+	float t, q, f;
+	int i, k, r, e;
+
+	for (i = 0; i <= TD_BEZIER_STEPS; i++) eval_bezier (rim[i], i * (1.0f / TD_BEZIER_STEPS), cp);
+	for (r = 0; r < EXHAUST_RINGS; r++) {
+		glBegin (GL_QUAD_STRIP);
+		for (i = 0; i <= TD_BEZIER_STEPS; i++)
+			for (e = r; e <= r + 1; e++) {
+				t = i * (1.0f / TD_BEZIER_STEPS);
+				q = sqrtf (e * (1.0f / EXHAUST_RINGS));
+				f = q > 0.5f ? 2.0f * q - 1.0f : 0.0f;
+				f = (1.0f - f * f * (3.0f - 2.0f * f)) * (1.0f - q * tail * (1.0f - 4.0f * t * (1.0f - t)));
+				for (k = 0; k < 3; k++) v[k] = mid[k] + q * (rim[i][k] - mid[k]);
+				glColor4f (c[0], c[1], c[2], a * f);
+				glVertex3dv (v);
+			}
+		glEnd ();
+	}
 }
 
 /* For engines and industry chimney flares.
@@ -2228,8 +2256,9 @@ void Nu_DrawTeardrop (void **data)
 			col[1][i] = (unsigned char) (i == 0 ? r : i == 1 ? g : b) / 255.0f;
 			col[0][i] = 0.75f * col[1][i] * col[1][i];
 			col[2][i] = 0.3f * col[1][i] + 0.7f;
-			col[3][i] = 1.0f - 0.1f * i;
+			col[3][i] = hd & EXHAUST_SOFT ? col[2][i] : 1.0f - 0.1f * i;
 		}
+		if (hd & EXHAUST_SOFT) a[2] *= 0.7f, a[3] *= 0.5f;	/* it must not clip to a flat white */
 		glPushAttrib (GL_COLOR_BUFFER_BIT | GL_CURRENT_BIT | GL_LIGHTING_BIT);
 		glEnable (GL_BLEND);
 		glShadeModel (GL_SMOOTH);
@@ -2239,10 +2268,11 @@ void Nu_DrawTeardrop (void **data)
 				lay[0][i] = lay[3][i] = eng[i] - s[k] * dir[i];
 				lay[1][i] = lay[0][i] + TD_STRETCH * s[k] * dir[i] + w[k] * ppd[i];
 				lay[2][i] = lay[0][i] + TD_STRETCH * s[k] * dir[i] - w[k] * ppd[i];
-				mid[i] = eng[i] - 0.4f * s[k] * dir[i];
+				mid[i] = eng[i] - (hd & EXHAUST_SOFT ? 0.15f : 0.4f) * s[k] * dir[i];
 			}
 			if (k == 2) glBlendFunc (GL_SRC_ALPHA, GL_ONE);
-			exhaust_fan (lay, mid, col[k], a[k], tail[k]);
+			if (hd & EXHAUST_SOFT) exhaust_soft (lay, mid, col[k], a[k], tail[k]);
+			else exhaust_fan (lay, mid, col[k], a[k], tail[k]);
 		}
 		glPopAttrib ();
 		return;
@@ -3436,7 +3466,7 @@ static const char hull_fs5[] =
 	"	float e = dot (jx, jx) + dot (jy, jy), det = abs (jx.x * jy.y - jx.y * jy.x);\n"
 	"	float fa = uG > 0.0 ? 1.0 - smoothstep (uG, 1.5 * uG, e / max (det, 1e-4 * e + 1e-30)) : 1.0;\n"
 	"	float fp = sqrt (max (dot (jx, jx), dot (jy, jy))), fd = (1.0 - smoothstep (0.015, 0.06, fp)) * fa;\n"
-	"	float tone = mix (1.0, a.b * a.a * 2.0, fd) * mix (1.0, a2.b * a2.a * 2.0, 0.5 * fa);\n"
+	"	float tone = mix (1.0, a.b * a.a * 2.0, fd) * mix (1.0, a2.b * a2.a * 2.0, uB.w < 0.0 ? 0.0 : 0.5 * fa);\n"
 	"	vec3 L = normalize (vLT.xyz), V = normalize (vVT.xyz);\n"
 	"	float mx = max (max (vCol.r, vCol.g), vCol.b), mn = min (min (vCol.r, vCol.g), vCol.b);\n"
 	"	float lum = dot (vCol.rgb, vec3 (0.3, 0.59, 0.11));\n"
@@ -3478,6 +3508,19 @@ static const char hull_fs5[] =
 	"		col = mix (col, min (y * uB.rgb / max (sl, 0.02), vec3 (1.0)), 0.55 * ga);\n"
 	"		col *= 1.0 - 0.3 * fd * (1.0 - smoothstep (0.0, 0.15, vLT.w));\n"
 	"	}\n"
+	"	if (uB.w < -1.0) {	/* a lit vent: dark frame, louvres, glow to the engine */\n"
+	"		float td = max (fwidth (d), 1e-5), s = clamp (dot (uB.xy, vUV.xy) + uB.z, 0.0, 1.0);\n"
+	"		float l = s * (-uB.w - 1.0), lw = fwidth (l), big = smoothstep (0.5, 2.0, 0.012 / td);\n"
+	"		float gap = 1.0 - smoothstep (0.2, 0.2 + max (lw, 0.05), abs (fract (l) - 0.5));\n"
+	"		float in_ = smoothstep (0.016, 0.016 + max (td, 0.001), d);\n"
+	"		vec3 g = vCol.rgb * (0.4 + 0.6 * s) * mix (0.75, mix (0.22, 1.0, gap), 1.0 - smoothstep (0.2, 0.45, lw));\n"
+	"		col = mix (g, mix (vec3 (0.07, 0.08, 0.09), g, in_), big);\n"
+	"	} else if (uB.w < 0.0) {	/* enamel: an inset line and its lip, and the sheen */\n"
+	"		float td = max (fwidth (d), 1e-5), t = smoothstep (0.5, 2.0, 0.008 / td) * fa;\n"
+	"		float tl = 1.0 - smoothstep (0.0012, 0.0012 + max (td, 0.001), abs (d - 0.011));\n"
+	"		float tp = 1.0 - smoothstep (0.0008, 0.0008 + max (td, 0.001), abs (d - 0.014));\n"
+	"		col *= 1.0 + t * (0.14 * tp - 0.5 * tl);\n"
+	"	}\n"
 	"	if (uB.w > 0.0) col *= 0.96 + 0.16 * fract (uB.w);\n"
 	"	float top = max (max (col.r, col.g), col.b);\n"
 	"	if (top > 0.85) col *= (0.85 + 0.15 * (1.0 - exp ((0.85 - top) / 0.15))) / top;\n"
@@ -3486,6 +3529,7 @@ static const char hull_fs5[] =
 	"	float sp = (max (pow (max (dot (n, H), 0.0), uP.z) - s0, 0.0) * b.g + 0.15 * s0)\n"
 	"		 * uP.y * lit * clamp (lum * 3.0, 0.0, 1.0) * (1.0 - 0.8 * smoothstep (0.5, 0.95, mx));\n"
 	"	col += sp * (0.5 + 0.5 * vCol.rgb / max (mx, 0.05));\n"
+	"	if (uB.w == -1.0) col += (0.3 * pow (max (dot (n, H), 0.0), 24.0) + 0.2 * pow (1.0 - max (V.z, 0.0), 3.0)) * lit * vCol.rgb;\n"
 	"	gl_FragColor = vec4 (col, vCol.a);\n"
 	"}\n";
 
@@ -3694,12 +3738,25 @@ static void hull_begin_shader (int prof, int level, int calm)
  * for a face that hosts decals (its lettering and markings): less bump,
  * half the weathering and no chipped paint. 0 if the maps could not be
  * made. */
+/* uB between faces: enamel's trim (hull_fs5, uB.w < 0), else none; a vent
+ * (hull_paint5) is one face's, so the next one takes this back */
+static int hull_vent;
+
+static void hull_ub (int cls)
+{
+	glUniform4f (hull_uloc5[3], 0, 0, 0, cls == HC_ENAMEL ? -1.0f : 0.0f);
+	hull_vent = 0;
+}
+
 static int hull_begin5 (int cls, int calm)
 {
 	const struct HullClass *c = &hull_classes[cls];
 	int cur = 1000 + cls * 2 + calm, k;
 
-	if (hull_on == 2 && hull_cur == cur) return 1;
+	if (hull_on == 2 && hull_cur == cur) {
+		if (hull_vent) hull_ub (cls);
+		return 1;
+	}
 	if (!hull_cls[cls].t[0] && !hull_cls[cls].failed) {
 		hull_make_class (cls, 1);
 		/* B10: the small objects' maps made in the port's load hitch, not
@@ -3715,9 +3772,10 @@ static int hull_begin5 (int cls, int calm)
 	glActiveTexture (GL_TEXTURE0);
 	glBindTexture (GL_TEXTURE_2D, hull_cls[cls].t[0]);
 	glUniform4f (hull_uloc5[0], c->bump * (calm ? 0.7f : 1.0f), c->gloss, c->shine, c->ao);
-	glUniform4f (hull_uloc5[1], c->tint, hull_cls[cls].grime, calm ? 0.5f : 1.0f, calm ? 0.0f : 1.0f);
+	glUniform4f (hull_uloc5[1], c->tint, hull_cls[cls].grime,
+		     cls == HC_ENAMEL ? 0.15f : calm ? 0.5f : 1.0f, calm ? 0.0f : 1.0f);
 	glUniform1f (hull_uloc5[2], c->graze);
-	glUniform4f (hull_uloc5[3], 0, 0, 0, 0);	/* a building's: hull_paint5 */
+	hull_ub (cls);	/* a building's: hull_paint5 */
 	hull_on = 2;
 	hull_cur = cur;
 	return 1;
@@ -4049,6 +4107,36 @@ static int hull_roof (const float w[][3], int n, float t)
 	return N[1] * N[1] >= 0.97f * (N[0] * N[0] + N[1] * N[1] + N[2] * N[2]);
 }
 
+/* A vent's uB (hull_fs5): dot (xy, uv) + z is s, 0 to 1 along the model's
+ * length to its engine end, at low z; -w - 1 louvres on that span, one a
+ * VENT_PITCH of a tile. No model frame or a face across the length: even. */
+#ifdef HULL_SHADERS
+#define VENT_PITCH 0.022
+static void hull_vent_ub (const struct HullCtx *cx, const struct HullFrame *hf, int n)
+{
+	const float (*w)[3] = cx->w, (*uv)[2] = hf->uv;
+	double a = 0, b = 0, c = 1, l = 1, hi = 0, lo = 0, e1, e2;
+	double u1 = uv[1][0] - uv[0][0], v1 = uv[1][1] - uv[0][1];
+	double u2 = uv[n - 1][0] - uv[0][0], v2 = uv[n - 1][1] - uv[0][1], det = u1 * v2 - u2 * v1;
+	int i;
+
+	if (cx->wok & 1) for (i = 0; i < n; i++) {
+		if (!i || w[i][2] > hi) hi = w[i][2];
+		if (!i || w[i][2] < lo) lo = w[i][2];
+	}
+	if (hi > lo && fabs (det) > 1e-9) {
+		e1 = (w[0][2] - w[1][2]) / (hi - lo);
+		e2 = (w[0][2] - w[n - 1][2]) / (hi - lo);
+		a = (e1 * v2 - e2 * v1) / det;
+		b = (e2 * u1 - e1 * u2) / det;
+		c = (hi - w[0][2]) / (hi - lo) - a * uv[0][0] - b * uv[0][1];
+		l = 1 / (sqrt (a * a + b * b) * VENT_PITCH);
+	}
+	glUniform4f (hull_uloc5[3], a, b, c, -1 - l);
+	hull_vent = 1;
+}
+#endif
+
 static int hull_paint5 (double p[][3], int n, const struct HullCtx *cx, int host,
 			const int rgb[3], float st[][2], struct HullFrame *hf)
 {
@@ -4057,7 +4145,7 @@ static int hull_paint5 (double p[][3], int n, const struct HullCtx *cx, int host
 	double wpanel = hull_classes[cls].panel * sc;	/* the model's, for the wear */
 	int mx = rgb[0] > rgb[1] ? rgb[0] : rgb[1], mn = rgb[0] < rgb[1] ? rgb[0] : rgb[1];
 	int calm = host && !HULL_BUILDING (cls);
-	int lamp, pure, mark = HULL_BUILDING (cls) && hull_marking (rgb);
+	int lamp, pure, vent, mark = HULL_BUILDING (cls) && hull_marking (rgb);
 	double light[3];
 
 	if (rgb[2] > mx) mx = rgb[2];
@@ -4069,6 +4157,8 @@ static int hull_paint5 (double p[][3], int n, const struct HullCtx *cx, int host
 	if (cls == HC_HANGAR && (cx->wok & 2)) cls = HC_STATION;
 	lamp = cls == HC_HANGAR && mn >= 208;
 	pure = mx > 191 && mn < 0.2 * mx;
+	vent = pure && cls == HC_ENAMEL;	/* no lamp: a lit panel, hull_vent_ub */
+	pure &= !vent;
 	/* the hangar's lights: a lamp, a small face of pure colour (a lamp,
 	 * a door's window) or a sign of strong colour that carries
 	 * lettering, drawn flat and then lit (hull_glow_draw) */
@@ -4109,6 +4199,7 @@ static int hull_paint5 (double p[][3], int n, const struct HullCtx *cx, int host
 			       pure ? "lamp, window or lit sign (pure colour), drawn flat" :
 			       lamp ? "lamp or light strip (near white), drawn flat" :
 			       "sign/marking (hosts lettering), drawn flat");
+	if (hull_log_on () && vent) hull_log_face (cx->key, cx->seed, rgb, "lit vent panel (pure colour)");
 	light[0] = cx->light[0]; light[1] = cx->light[1]; light[2] = cx->light[2];
 	if (mark || pure || lamp || (host && !calm && cls != HC_STATION)) {
 		hull_end ();
@@ -4133,10 +4224,11 @@ static int hull_paint5 (double p[][3], int n, const struct HullCtx *cx, int host
 			glUniform4f (hull_uloc5[3], (sk & 255) / 255.0f, (sk >> 8 & 255) / 255.0f,
 				     (sk >> 16 & 255) / 255.0f, (roof ? 4 : 1 + v % 3) + ((v >> 4) + 0.5f) / 32);
 		}
+		if (vent) hull_vent_ub (cx, hf, n);
 		return 2;
 	}
 #endif
-	if (roof) {	/* no roof but by the shader */
+	if (roof || vent) {	/* neither but by the shader */
 		hull_end ();
 		return 0;
 	}

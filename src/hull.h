@@ -87,6 +87,7 @@ unsigned int hull_mix (unsigned int x);
  * it flat.
  */
 enum { HC_GENERIC, HC_POLICE, HC_CIVIL, HC_FREIGHT, HC_ARMOUR, HC_FIGHTER,
+       HC_ENAMEL,	/* a well-kept painted ship: gl.c, hull_fs5's trim and vent */
        HC_CARGO, HC_CAPSULE,	/* B10: small objects, before HC_STATION: not buildings */
        HC_STATION, HC_HANGAR, HC_DECK, HC_BUILDING, HC_N };
 /* HC_STATION and after are buildings and interiors: their decal hosts and

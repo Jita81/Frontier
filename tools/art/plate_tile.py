@@ -3,6 +3,7 @@
 
     python3 -I tools/art/plate_tile.py OUT [--size 1024] [--cells 16] [--seed 7]
                                        [--std 0.09] [--hatches 2] [--vents 2]
+                                       [--bolts 0.5] [--tone 1] [--mottle 1]
 
 writes OUT.png (an 8-bit grey PNG, mean 128, the format of art/hull/*.png:
 see hull_tile.py) and OUT-2x2.png to look at the repeat.  No picture goes
@@ -108,6 +109,9 @@ def main():
                     help="spread of the multiplier about 1.0 (as hull_tile.py)")
     ap.add_argument("--hatches", type=int, default=2, help="access hatches a tile")
     ap.add_argument("--vents", type=int, default=2, help="louvred vents a tile")
+    ap.add_argument("--bolts", type=float, default=0.5, help="share of plates with corner bolts")
+    ap.add_argument("--tone", type=float, default=1.0, help="scale of the plates' tones")
+    ap.add_argument("--mottle", type=float, default=1.0, help="scale of the faint mottle")
     a = ap.parse_args()
     n, g = a.size, a.cells
     s = n / 1024.0
@@ -137,12 +141,13 @@ def main():
         tone = rnd.uniform(-0.12, 0.12)
         if rnd.random() < 0.08:
             tone += rnd.choice((-0.25, 0.25))
+        tone *= a.tone
         x0, y0, pw, ph = cx * c + lo, cy * c + lo, w * c - lo - hi, hh * c - lo - hi
         rect(x0, y0, pw, ph, tone)
         if min(w, hh) >= 3 and rnd.random() < 0.5:
             k = round(14 * s)
             outline(x0 + k, y0 + k, pw - 2 * k, ph - 2 * k, max(1, round(2 * s)), tone + GROOVE)
-        if min(w, hh) >= 2 and rnd.random() < 0.5:
+        if min(w, hh) >= 2 and rnd.random() < a.bolts:
             k, r = round(8 * s), max(1, round(2 * s))
             for bx, by in ((x0 + k, y0 + k), (x0 + pw - k, y0 + k),
                            (x0 + k, y0 + ph - k), (x0 + pw - k, y0 + ph - k)):
@@ -180,7 +185,7 @@ def main():
     for period, amp in ((4, 0.10), (8, 0.06), (32, 0.03)):
         m = value_noise(n, period, rnd)
         for i in range(n * n):
-            h[i] += amp * m[i]
+            h[i] += a.mottle * amp * m[i]
 
     mean = sum(h) / len(h)
     sd = math.sqrt(sum((v - mean) ** 2 for v in h) / len(h)) or 1.0
