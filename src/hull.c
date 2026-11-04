@@ -97,9 +97,10 @@ int hull_profile_of_key (unsigned int key)
  * word, so its ships are listed by theirs). FE2_HULL_LOG=1 prints the ones
  * a session meets, and says which are not listed here. One line per model; edit freely. scale multiplies
  * the class's panel size for that model. Only ship and station hulls (and
- * the station's hangar inside) are listed: a model that is not listed is
- * drawn flat (gl.c, hull_paint), so the intro's titles, text, planets,
- * buildings on the ground, missiles and debris keep the game's own look.
+ * the station's hangar inside) and the intro city's buildings are listed:
+ * a model that is not listed is drawn flat (gl.c, hull_paint), so the
+ * intro's titles, text, planets, ground, roads, trees, houses, signs,
+ * missiles and debris keep the game's own look.
  * Parts a model draws (a hangar door, a landing leg) carry its type word
  * and so its class; the tile is bound to the part (gl.c, hull_model_frame).
  * A ship's scale puts one to one and a half tiles across its biggest face
@@ -136,6 +137,18 @@ static const struct {
 	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 86,  HC_CIVIL,	2.0f },	/* the green ship, in several scenes */
 	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 130, HC_FREIGHT,	6.0f },	/* the ship of modules */
 	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 212, HC_ARMOUR,	2.0f },	/* the large ship of the first space scene */
+	/* the intro city's buildings, by their own words (records 40 to 54);
+	 * scale 1 puts the storeys on the offices' lit window rows */
+	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 138, HC_BUILDING,	4.0f },	/* large hall with stacks */
+	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 160, HC_BUILDING,	1.0f },	/* low box */
+	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 166, HC_BUILDING,	1.0f },	/* mid block */
+	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 168, HC_BUILDING,	1.0f },	/* tall block */
+	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 170, HC_BUILDING,	1.0f },	/* low block */
+	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 172, HC_BUILDING,	1.0f },	/* distant low block */
+	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 174, HC_BUILDING,	1.0f },	/* distant block at the horizon */
+	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 176, HC_BUILDING,	1.0f },	/* long low hall */
+	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 178, HC_BUILDING,	1.0f },	/* sloped-wall hall */
+	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 184, HC_BUILDING,	1.0f },	/* tower */
 	{ 80,  HC_STATION,	1.0f },	/* orbital station, outside, close up */
 	{ 82,  HC_STATION,	1.0f },	/* launch structure */
 	{ 88,  HC_STATION,	1.0f },	/* large cross-armed orbital station (its slot too) */
