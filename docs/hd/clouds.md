@@ -204,26 +204,47 @@ the model's space through the tag's frame.  A shape whose y extent is
 under 2% of its larger x or z extent is a *sheet* (the flat base); any
 other shape is a *lobe*.
 
-**Lobes.**  A lobe is lit as the front half of an ellipsoid filling its
-bound on screen and facing the eye: pseudo-normal (q, sqrt (1 - |q|^2)),
-q the pixel's place in the bound.  Wrap light from the game's own light
-vector, lambda = (N.L + `WRAP`) / (1 + `WRAP`), `WRAP` 0.6.  The shade
-factor is f = 1 + day (`K_SUN` (lambda - mean) + `K_TOP` (q.up)), where
-mean is lambda averaged over the bound, so the lit side gains what the
-shaded side loses and the mean stays at the game's colour; up is the
-model's y on screen.  `K_SUN` 0.30, `K_TOP` 0.12.
+**One dome.**  Each shape's light is its own idea of a ball, so two shapes
+that meet disagree along their shared edge and it reads as a ridge.  The
+light of a cloud comes instead from one dome for the whole of it: the ball
+about the cloud's centre, in the model's space, centre (0, 15, 81) and radii
+(46, 45, 104) at the model's size.  The game draws the model at that size, a
+half and a quarter; a part's height or half a sheet's width says which
+(`dome_size`; every shape of a record agreed on 137477 records).  The
+pixel's ray goes from the eye through the dome (`uW` turns a window point
+into that ray, a face gets it from its corners), and the point it reaches
+gives normal n and f = 1 + day `K_SUN` (lambda + `DOME_TOP` n.y - mean).  No
+term depends on the shape, so two shapes of a cloud agree where they meet by
+construction, and a far cloud agrees with its near faces.  lambda is wrap
+light from the game's own light vector, (n.L + `WRAP`) / (1 + `WRAP`),
+`WRAP` 0.6; mean is the same taken over the half of the dome towards the eye
+(`dome_bind`), so the lit side gains what the shaded side loses and the mean
+stays at the game's colour.  `K_SUN` 0.30, `DOME_TOP` 0.4.  The numbers are
+model 198's: another model on this path would be lit about the wrong centre.
 
-**Sheets.**  The game's colour, a little darker towards the middle:
-f = 1 - `K_MID` (0.5 - |q|^2), `K_MID` 0.12.
+**Lobes.**  A lobe adds a little of its own relief to that: the front half
+of an ellipsoid filling its bound on screen, pseudo-normal
+(q, sqrt (1 - |q|^2)), q the pixel's place in the bound, by `K_OWN` 0.35 of
+the old term and fading to nothing at its edge: f += day `K_OWN` (1 - |q|^2)
+(`K_SUN` (lambda - lambda's mean over the bound) + `K_TOP` (q.up)), `K_TOP`
+0.12, up the model's y on screen.
+
+**Sheets.**  The flat base takes the dome and nothing of its own.  The
+ground's shadow is a sheet too (below the cloud, y under -0.5), or flat
+faces (y extent at most 1), and stays as it was: the game's colour, a sheet
+a little darker towards the middle, f = 1 - `K_MID` (0.5 - |q|^2), `K_MID`
+0.12.
 
 **Mottle.**  Every pixel takes f *= 1 + `K_MOT` (n - 0.5), n one two-octave
-`pf_fbm` (two noise reads), `K_MOT` 0.16, so within +-8%.  Shapes read it
-at their q; faces at their place in the model's space (radius `FACE_R` 20
-to a lobe).  The colour is gl_Color.rgb * clamp (f, 0.6, 1 + 0.3 day): one
-multiply by the game's colour, never brighter than that by night.
+`pf_fbm` (two noise reads), `K_MOT` 0.16, so within +-8%.  The cloud reads it
+on the dome (`K_DOME` 4 to the dome's radius), so it carries across shapes
+and the switch to faces; the shadow reads it at q, or a face at its place in
+the model's space (radius `FACE_R` 20 to a lobe).  The colour is
+gl_Color.rgb * clamp (f, 0.6, 1 + 0.3 day): one multiply by the game's
+colour, never brighter than that by night.
 
 **Day.**  day = smoothstep of (L.y + 0.1) / 0.3, y the model's up: by night
-the sun and top terms go and only the mottle stays.
+the dome's light and the lobe's own term go and only the mottle stays.
 
 **Soft rims.**  The outline's radius in q is taken in 32 directions from
 its edges (`uR`).  Alpha falls from 1 to 0.15 over the last `RIM_PX` 3
@@ -244,18 +265,20 @@ for one frame.  The table's clock is the frames drawn (`puff_frame`),
 never time.
 
 **Near faces.**  The quads and triangles keep the game's colour and take
-only the mottle, from their place in the model's space.  The far-to-near
-switch is per part of a cloud, so in one record outlines and faces mix;
-the faces' mean is the game's colour, as the outlines' is, and there is
-no step at the switch (frames 8116-8118 and 8126 of the climb).
+the dome and the mottle as the outlines do (flat faces of the ground's
+shadow take only the mottle).  The far-to-near switch is per part of a
+cloud, so in one record outlines and faces mix; both read the same dome, so
+a part looks the same on either side of its switch.
 
 **Guard.**  A shape with a point at or behind the near plane (so one
 round the camera), one whose bound is more than 4 screens or under one
 pixel takes the game's flat fill.
 
-**Seed.**  The object's seed mixed with the shape's centre in the model's
-space, quantised to 4 units: the mottle stays on the cloud and two clouds
-differ.  Never view space, time, a frame count or `rand`.
+**Seed.**  The object's seed mixed with a point of the model's space
+quantised to 4 units: its origin for a cloud, so the mottle runs on over
+every shape of it, the shape's centre for a shadow's sheet.  The mottle
+stays on the cloud and two clouds differ.  Never view space, time, a frame
+count or `rand`.
 
 **Measured** (1600x1200, scratch builds with frame-hash and frame-time
 hooks, `FE2_HD_BACKDROP=0`; a pad-to-space climb tape and a landed tape,
@@ -264,11 +287,34 @@ neither committed):
 - Step 0 (the bound identity program): every frame the same bytes as
   the base, 9270 climb frames and 1804 landed.
 - Coverage (each puff fragment drawn magenta, and again only where alpha
-  is above 0): on the pad and seven climb frames, from 9770 to 143941
+  is above 0): on three pad and twelve climb frames, from 9770 to 143941
   covered pixels, no pixel changed outside the game's footprint and no
-  hole inside it.  Mean RGB inside it moves by at most 2.4 of 255 on the
-  climb (the worst coverage, frame 7272: 131.4 to 133.8) and 5.8 on the
-  pad front view (196.1 to 190.3).
+  hole inside it.  Mean grey over a cloud's own pixels stays within 2.0 of
+  255 of the game's colour on the climb and the pad (the pad front view
+  196.1 to 197.4), but for one distant view, frame 5000 (14583 pixels,
+  +3.2).  The ground's shadow does not move.
+- Joins, the step across each in 8-bit grey (mean of a 3-pixel strip
+  either side).  The ridges were all shading, the game's colour being the
+  same on both sides; those are gone:
+
+  | Join | Lobe light on each shape | One dome | Game's colour alone |
+  |---|---|---|---|
+  | climb 7272, lobe to lobe | +40.7 | +1.3 | 0 |
+  | climb 7000, lobe to lobe | +34.7 | -2.3 | 0 |
+  | pad, lobe to lobe | -20.7 | -1.0 | 0 |
+  | pad, sheet to lobe | -18.3 | +0.7 | 0 |
+  | climb 7250, sheet to lobe | -16.5 | -1.0 | 0 |
+
+  What is left is the game's own colour per part, 16 to 64 levels (176 to
+  the near-black shadows, at the switch), which this code leaves alone.
+  Where the old light happened to oppose such a step it now shows in full
+  (pad: +17.0 to +33.8, the game's +32).  Two clouds, one before the other,
+  are lit by two domes, so a step across them can be more than the game's
+  (frame 7000, +33.3 to +66.0, the game's +32): it reads as depth.  At the
+  switch steps between faces rise by 8 to 18 levels (112 to 122, the
+  game's 112): the dome multiplies the game's colours.  Frame to frame the climb
+  moves no more than the base (9270 frames: every band's median within 1.1%,
+  the switch 18.4M to 18.6M).
 - Off, against the base: climb and landed with `--flat-clouds`,
   `--old-renderer`, `--classic-ui` and `--pixel-art`, and the intro with
   default flags (no model-198 primitive drawn in it), the same bytes but
@@ -294,3 +340,13 @@ neither committed):
 
   `puff_shape` itself takes 0.21 ms a frame on the landed tape (92 shapes,
   6522 points): no trigonometry per point, which halved it from 0.48 ms.
+
+  The dome against the base, whole replays in ABBAABBA order, each frame's
+  mean over the runs set against the same frame in the other tree: on the
+  landed tape +0.35 and +0.34 ms in two sets of eight (5-minute load 7 to
+  10; front view +0.31 and +0.32), the 95th percentile 11.19 to 11.66 and
+  14.20 to 14.09 ms; on the climb -0.25 ms (load 5 to 14), the 95th 24.84
+  to 24.79 ms.  Single pairs still swing by more than that (-1.3 to +3.0 ms
+  on the landed tape), so these are the shader's cost to within a few
+  tenths.  Off every fourth frame in one process it shows nothing (0.00 to
+  +0.01 ms): the program is the same one either way.
