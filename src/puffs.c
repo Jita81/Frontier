@@ -10,6 +10,8 @@
  * face with NU_PUFF; nothing else is added to the stream.  A new file
  * because it is one shader with its own bind, as skies.c is for the rings.
  * Off (puff_on): the old renderer, --flat-clouds, --classic-ui, --pixel-*.
+ * The dark patches under them come through here too (the same model and
+ * key); those lie on the ground and fade with it (GROUND_Y, uHz).
  */
 #include <math.h>
 #include <string.h>
@@ -50,7 +52,9 @@ int puff_on (void)
 #define RIM_BINS 32
 #define WRAP 0.6		/* wrap lighting: the shaded side is not black */
 #define FACE_R 20.0		/* a lobe's radius in the model's space */
+#define GROUND_Y -0.25		/* a patch is under this in the model's y, a cloud never */
 static const char puff_glsl[] =
+	HAZE_GLSL HAZE_VIEW_GLSL
 	"uniform vec4 uC, uK, uL;\n"
 	"uniform vec2 uU;\n"
 	"uniform float uR[32];\n"
@@ -77,14 +81,17 @@ static const char puff_glsl[] =
 	"		p = vec3 (q * 2.5, 0.0);\n"
 	"	}\n"
 	"	f *= 1.0 + K_MOT * (pf_fbm (p + uK.y, 2) - 0.5);\n"
-	"	gl_FragColor = vec4 (gl_Color.rgb * clamp (f, 0.6, 1.0 + 0.3 * day), a);\n"
+	"	vec3 c = gl_Color.rgb * clamp (f, 0.6, 1.0 + 0.3 * day);\n"
+	"	gl_FragColor = vec4 (uHz.a > 0.0 ? pf_haze_view (c, gl_TexCoord[0].xyz) : c, a);\n"
 	"}\n";
 
 static GLuint prog;
 static GLint u_c, u_k, u_l, u_u, u_r;
+static int u_hz[3];
 static int failed, bound, pending;
 static struct puff_tag cur;
-static float corner[4][3];
+static float corner[4][3], eye[4][3];
+static const float no_haze[12];
 
 /* once for a run of a record's shapes and faces, not for each one */
 static int puff_bind (void)
@@ -99,6 +106,7 @@ static int puff_bind (void)
 		u_k = glGetUniformLocation (prog, "uK");
 		u_l = glGetUniformLocation (prog, "uL");
 		u_r = glGetUniformLocation (prog, "uR");
+		procfx_haze_find (prog, u_hz);
 	}
 	glPushAttrib (GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT);
 	glEnable (GL_BLEND);
@@ -247,10 +255,11 @@ static double puff_atan2 (double y, double x)
  * One shape, just before the game's tessellator draws it: its n points e
  * in GL eye space, mv pj vp what gluProject takes them through.  0 when
  * the game's flat fill is to be used: a shape at or behind the near
- * plane, one bigger than 4 screens or too small to see.
+ * plane, one bigger than 4 screens or too small to see; 2 for a patch
+ * in haze (hz, gl.c hull_hz): its vertices send their view place.
  */
 #define MAX_PTS 1024
-int puff_shape (const double (*e)[3], int n, const double mv[16], const double pj[16], const int vp[4])
+int puff_shape (const double (*e)[3], int n, const double mv[16], const double pj[16], const int vp[4], const float hz[12])
 {
 	static double win[MAX_PTS][2];
 	double C[3] = { 0, 0, 0 }, X[3], Y[3], Z[3], M[3], w[3], lo[3], hi[3], P[16];
@@ -326,27 +335,35 @@ int puff_shape (const double (*e)[3], int n, const double mv[16], const double p
 		glUniform2f (u_u, ul > 0 ? (float) (ux / ul) : 0, ul > 0 ? (float) (uy / ul) : 1);
 		glUniform1fv (u_r, RIM_BINS, R);
 	}
-	return 1;
+	k = hi[1] < GROUND_Y && hz[3] > 0;
+	procfx_haze_set (u_hz, k ? hz : no_haze);
+	return 1 + k;
 }
 
 /* A face (its n corners p in GL eye space): 0 when flat; else
  * puff_corner (i) before each corner's glVertex */
-int puff_face (const double (*p)[3], int n)
+int puff_face (const double (*p)[3], int n, const float hz[12])
 {
 	static const double zero[3] = { 0, 0, 0 };
-	int i, k;
+	int i, k, ground = 1;
 
 	for (i = 0; i < n; i++) {
 		double w[3];
 		puff_obj (p[i], w);
-		for (k = 0; k < 3; k++) corner[i][k] = (float) (w[k] * (2.5 / FACE_R));
+		ground &= w[1] < GROUND_Y;
+		for (k = 0; k < 3; k++) {
+			corner[i][k] = (float) (w[k] * (2.5 / FACE_R));
+			eye[i][k] = (float) p[i][k];
+		}
 	}
 	if (!puff_bind ()) return 0;
 	glUniform4f (u_k, 0, puff_seed (zero), 0, puff_day ());
+	procfx_haze_set (u_hz, ground ? hz : no_haze);
 	return 1;
 }
 
 void puff_corner (int i)
 {
 	glMultiTexCoord3f (GL_TEXTURE1, corner[i][0], corner[i][1], corner[i][2]);
+	glTexCoord3fv (eye[i]);
 }

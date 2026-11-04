@@ -89,6 +89,8 @@ int flat_planets;
 int flat_clouds;
 int flat_descent;
 static int planet_shader = 1;
+static float hull_hz[12], hull_hz_up;
+static int hull_intro_base (void) { return 0; }
 static float planet_rim_alpha, planet_sun_falloff;
 int procfx_planet_begin (const float lo[4], const float hi[4], float soft,
 			 const float rim[4], const float look[3], const float hz[8], unsigned int seed)

@@ -123,6 +123,42 @@ struct procfx_sunglow { float w, aim, y, dr, air[3]; };
 extern struct procfx_sunglow procfx_sunglow;
 void procfx_corona_end (void);
 
+/* The ground's haze, shared by what fades with it: the air the path
+ * crosses thins by e over HAZE_SCALE_H (in R), see procfx.c planet_glsl.
+ * pf_haze: col seen along a path of squared length a (in R) from the eye
+ * uHe, cos(sun) c at its far end.  pf_haze_view the same for a fragment
+ * at p, its place in GL's view frame: a port is flat and the
+ * world is not (a hill can stand five times past the ground it is drawn
+ * on), so it takes the ground's path along its ray or its own, the less,
+ * and a past the horizon the horizon's; uHe in that frame, uHzSun the sun
+ * there and w 1 / R (gl.c hull_hz). */
+#define PF_STR2(x)	#x
+#define PF_STR(x)	PF_STR2 (x)
+#define HAZE_SCALE_H 0.0003
+#define HAZE_GLSL \
+	"uniform vec4 uHz, uHe;\n" \
+	"vec3 pf_haze (vec3 col, float a, float c) {\n" \
+	"	float H = 2.0 * " PF_STR (HAZE_SCALE_H) ";\n" \
+	"	float e = max (dot (uHe.xyz, uHe.xyz) - 1.0000003, 0.0);\n" \
+	"	a = min (a, e);\n" \
+	"	float k1 = (e - a) / H, k = max (0.5 * k1 + sqrt (0.25 * k1 * k1 + 1.273 * a / H), 1e-4);\n" \
+	"	return mix (col, uHz.rgb, uHz.a * smoothstep (-0.1, 0.1, c)\n" \
+	"	            * (1.0 - exp (-sqrt (a) * uHe.w * (1.0 - exp (-k)) / k)));\n" \
+	"}\n"
+#define HAZE_VIEW_GLSL \
+	"uniform vec4 uHzSun;\n" \
+	"vec3 pf_haze_view (vec3 col, vec3 p) {\n" \
+	"	vec3 t = p * uHzSun.w, u = normalize (t);\n" \
+	"	float e = max (dot (uHe.xyz, uHe.xyz) - 1.0000003, 0.0), b = dot (uHe.xyz, u);\n" \
+	"	float d = min (e / max (sqrt (max (b * b - e, 0.0)) - b, 1e-6), length (t));\n" \
+	"	return pf_haze (col, d * d, dot (normalize (uHe.xyz + u * d), uHzSun.xyz));\n" \
+	"}\n"
+/* hz: gl.c hull_hz.  _find and _set for a program that has these two in
+ * it, _begin binds the plain one: 0 when it is not available */
+void procfx_haze_find (unsigned int prog, int u[3]);
+void procfx_haze_set (const int u[3], const float hz[12]);
+int procfx_haze_begin (const float hz[12]);
+
 /* a layer's program: the shared noise library plus body, its main();
  * 0, after a note on stderr, when it does not compile (skies.c too) */
 unsigned int procfx_program (const char *name, const char *body);
