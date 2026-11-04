@@ -161,7 +161,7 @@ stations and every model view (no planet there).  `hull_hz_up` takes it
 all away in about a second (50 views) once the game says the ship is
 down, so a port seen from the ground is as the base draws it.
 
-Off: `--flat-descent` (byte-identical to base); `--classic-ui`,
+Off: `--flat-descent` takes this haze out whole; `--classic-ui`,
 `--flat-hulls` and `--pixel-*` keep the port as drawn (`hull_intro_base`).
 Nothing changes above 2R, under `--old-renderer`, or in the cockpit view
 on a terran pad (the eye sits on the sphere there).  An ice world's pad
@@ -227,7 +227,9 @@ about the cloud's centre, in the model's space, centre (0, 15, 81) and radii
 half and a quarter; a part's height or half a sheet's width says which
 (`dome_size`; every shape of a record agreed on 137477 records).  The
 pixel's ray goes from the eye through the dome (`uW` turns a window point
-into that ray, a face gets it from its corners), and the point it reaches
+into that ray, a face gets it from its corners).  With h the ray's nearest
+point to the centre, P = h - d max(1 - h.h, 0) stands in for where the ray
+enters: no square root, so not an exact hit, but smooth across the dome.  P
 gives normal n and f = 1 + day `K_SUN` (lambda + `DOME_TOP` n.y - mean).  No
 term depends on the shape, so two shapes of a cloud agree where they meet by
 construction, and a far cloud agrees with its near faces.  lambda is wrap
@@ -382,6 +384,10 @@ neither committed):
   | pad, sheet to lobe | -18.3 | +0.7 | 0 |
   | climb 7250, sheet to lobe | -16.5 | -1.0 | 0 |
 
+  The merged release draws every cloud pixel of those four frames the same
+  as the tree the table was read from (89454 to 143941 pixels, none
+  differ), so the table stands for it.
+
   What is left is the game's own colour per part, 16 to 64 levels (176 to
   the near-black shadows, at the switch), which this code leaves alone.
   Where the old light happened to oppose such a step it now shows in full
@@ -426,3 +432,12 @@ neither committed):
   on the landed tape), so these are the shader's cost to within a few
   tenths.  Off every fourth frame in one process it shows nothing (0.00 to
   +0.01 ms): the program is the same one either way.
+
+  The merged release (bands, station and dome) against 5f9483b, which
+  already holds W10c's +0.39 to +0.41 ms: the median of paired per-frame
+  deltas over four runs each way, on the hooked trees (5-minute load up to
+  6.5).  Landed -0.002 ms, its cloud frames +0.001; climb +0.010, no window
+  of it above +0.024; the 95th percentile 6.50 to 6.51 and 24.40 to 24.29
+  ms.  The
+  dome's +0.35 ms above did not come back at this load and against this
+  base.  That is not explained; both readings are inside the 0.5 ms rule.
