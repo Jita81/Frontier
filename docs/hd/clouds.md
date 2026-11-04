@@ -136,16 +136,115 @@ be a flat white outline of Bezier curves and close by a few white quads and
 grey triangles (read from the counts, not traced per cloud).  The object
 frame resolved on every logged primitive.
 
-**Lit puffs: the next slice, not this one.**  The triangles and quads
-already carry their object-frame corners to Draw, but they are a few per
-frame.  The bulk of the clouds are the complex shapes, and those carry no
-object frame for an unlisted model (the complex context's frame is written
-only for listed models), and are drawn from their outline.  A lit puff
-with one radial measure per cloud needs, per shape, the frame (twelve
-values) plus the cloud's centre and radius in its own space, written at Put
-time by the complex path, which is outside the model-198 branch.  The
-plan for that slice: admit model 198 to the complex context, take the
-radius from the model, and in the 198 branch shade each fragment from
-`cl_cover` over the object-space position, feathered over the outer 15%,
-lit from the context's light and seeded from the object seed, with no
-clock.
+## Low clouds
+
+`src/puffs.c` lights model 198 as cumulus: sunlit tops, shaded sides, a
+darker flat base and soft rims, on the game's own outlines.  Off
+(`puff_on`): the old renderer, `--flat-clouds`, `--classic-ui` and every
+`--pixel-*` flag.  With it off nothing is tagged and the frames are the
+same bytes as before.
+
+**Nothing new is drawn.**  The put side (`gl.c`) writes `NU_PUFF` and a
+`puff_tag` (the model's frame, the sun and the object's seed, all read
+from the hcall's registers and ST memory, never written) before each
+model-198 complex shape, triangle and quad.  The draw side keeps the
+game's GLU fill and its flat faces exactly as they were (the same
+tessellation, the same vertices, so the same pixels covered) and binds
+one fragment program around them: once for a run of a record's shapes
+and faces, released by the first primitive that is not one.
+
+**Classification, in the model's space.**  Each shape's points go back to
+the model's space through the tag's frame.  A shape whose y extent is
+under 2% of its larger x or z extent is a *sheet* (the flat base); any
+other shape is a *lobe*.
+
+**Lobes.**  A lobe is lit as the front half of an ellipsoid filling its
+bound on screen and facing the eye: pseudo-normal (q, sqrt (1 - |q|^2)),
+q the pixel's place in the bound.  Wrap light from the game's own light
+vector, lambda = (N.L + `WRAP`) / (1 + `WRAP`), `WRAP` 0.6.  The shade
+factor is f = 1 + day (`K_SUN` (lambda - mean) + `K_TOP` (q.up)), where
+mean is lambda averaged over the bound, so the lit side gains what the
+shaded side loses and the mean stays at the game's colour; up is the
+model's y on screen.  `K_SUN` 0.30, `K_TOP` 0.12.
+
+**Sheets.**  The game's colour, a little darker towards the middle:
+f = 1 - `K_MID` (0.5 - |q|^2), `K_MID` 0.12.
+
+**Mottle.**  Every pixel takes f *= 1 + `K_MOT` (n - 0.5), n one two-octave
+`pf_fbm` (two noise reads), `K_MOT` 0.16, so within +-8%.  Shapes read it
+at their q; faces at their place in the model's space (radius `FACE_R` 20
+to a lobe).  The colour is gl_Color.rgb * clamp (f, 0.6, 1 + 0.3 day): one
+multiply by the game's colour, never brighter than that by night.
+
+**Day.**  day = smoothstep of (L.y + 0.1) / 0.3, y the model's up: by night
+the sun and top terms go and only the mottle stays.
+
+**Soft rims.**  The outline's radius in q is taken in 32 directions from
+its edges (`uR`).  Alpha falls from 1 to 0.15 over the last `RIM_PX` 3
+pixels inside it (by `fwidth`), never outside: the coverage is the
+game's.  No rim on a shape under 8 pixels across, a full one from 24.
+
+**Shared edges stay hard.**  The lobes of one cloud are faces of one
+closed solid, so two that meet share their edge's points exactly; where
+the two lie on either side of that edge on screen it is inside the cloud,
+and a soft edge there shows the sky through as a light seam.  A table
+keyed by (seed, the point in the model's space at half-unit steps) keeps,
+per point, the inward normal on screen of the first shape to use it this
+frame; a second shape whose normal there points the other way (more than
+a quarter turn off) marks it inside.  A rim direction whose outline runs
+along edges with both ends inside last frame stays hard.  A point not
+seen last frame is hard, so a cloud just come into view has hard edges
+for one frame.  The table's clock is the frames drawn (`puff_frame`),
+never time.
+
+**Near faces.**  The quads and triangles keep the game's colour and take
+only the mottle, from their place in the model's space.  The far-to-near
+switch is per part of a cloud, so in one record outlines and faces mix;
+the faces' mean is the game's colour, as the outlines' is, and there is
+no step at the switch (frames 8116-8118 and 8126 of the climb).
+
+**Guard.**  A shape with a point at or behind the near plane (so one
+round the camera), one whose bound is more than 4 screens or under one
+pixel takes the game's flat fill.
+
+**Seed.**  The object's seed mixed with the shape's centre in the model's
+space, quantised to 4 units: the mottle stays on the cloud and two clouds
+differ.  Never view space, time, a frame count or `rand`.
+
+**Measured** (1600x1200, scratch builds with frame-hash and frame-time
+hooks, `FE2_HD_BACKDROP=0`; a pad-to-space climb tape and a landed tape,
+neither committed):
+
+- Step 0 (the bound identity program): every frame the same bytes as
+  the base, 9270 climb frames and 1804 landed.
+- Coverage (each puff fragment drawn magenta, and again only where alpha
+  is above 0): on the pad and seven climb frames, from 9770 to 143941
+  covered pixels, no pixel changed outside the game's footprint and no
+  hole inside it.  Mean RGB inside it moves by at most 2.4 of 255 on the
+  climb (the worst coverage, frame 7272: 131.4 to 133.8) and 5.8 on the
+  pad front view (196.1 to 190.3).
+- Off, against the base: climb and landed with `--flat-clouds`,
+  `--old-renderer`, `--classic-ui` and `--pixel-art`, and the intro with
+  default flags (no model-198 primitive drawn in it), the same bytes but
+  for single frames that differ between two runs of the base too (one to
+  three a run, a different frame each run).
+- Two runs of the same tape, lit: no frame differed, 9270 climb and 1804
+  landed.
+- Cost, the 3D view's draw time (`glFinish` at both ends).  Whole replays
+  in ABBAABBA order could not resolve it with other work on the machine
+  (5-minute load 9 to 18; one view's pairs swung by up to 3 ms): the
+  median pair difference was -0.27 ms on the climb, +0.91 in its worst
+  coverage and +0.90 on the pad.  So one process compared itself: every
+  fourth frame unlit, each set against the lit frame before it, the
+  control being the two lit frames before that.
+
+  | View | Pairs | Lit minus unlit | Control |
+  |---|---|---|---|
+  | climb, under the deck | 5678 | +0.32 ms | -0.03 ms |
+  | whole climb | 9268 | +0.18 ms | 0.00 ms |
+  | climb, worst coverage | 64 | +0.24 ms | +0.26 ms (not resolved) |
+  | climb, the switch to faces | 86 | -0.03 ms | +0.11 ms |
+  | pad, front view | 170 | +0.33 ms | -0.15 ms |
+
+  `puff_shape` itself takes 0.21 ms a frame on the landed tape (92 shapes,
+  6522 points): no trigonometry per point, which halved it from 0.48 ms.
