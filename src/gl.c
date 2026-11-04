@@ -4402,7 +4402,7 @@ static int hull_complex_begin (GLdouble c[][3], int n, void **data)
 	 * shows as pale bars. They stay plated to the edge; hull_end drops this
 	 * with the program */
 	if (hull_cmode == 2 && HULL_KEY_MODEL (hull_cc.key) == (HULL_TAB_INTRO | 72) &&
-	    mx == mn && n >= 32)
+	    mx == mn && n >= 32 && !hull_intro_base ())
 		glUniform1f (hull_uloc5[2], 0);
 #endif
 	if (!hull_cmode && !hull_cls[cls].failed && hull_fixed5 (cls)) hull_cmode = 1;

@@ -158,9 +158,10 @@ and the reading of the model's frame). The art is in `art/hull/`.
      ones across it away, so plates read as long boards. A floor seen from
      just above is edge on too, which is why the hangar and deck keep a
      graze of 0. The curved wings of the station behind the menu keep 0 as
-     well (their big grey complex shapes, `hull_complex_begin`): `e / det`
-     differs from one triangle of the tessellation to the next on a surface
-     that leaves its plane, and at a graze the fan showed as pale bars.
+     well (their big grey complex shapes, `hull_complex_begin`; the flags of
+     `hull_intro_base` keep the fade): `e / det` differs from one triangle of
+     the tessellation to the next on a surface that leaves its plane, and at
+     a graze the fan showed as pale bars.
 
 ## Caching and cost
 
