@@ -130,6 +130,10 @@ static const struct {
 	{ 72,  HC_FREIGHT,	8.0f },	/* oval disc freighter, four drives */
 	{ 66,  HC_FREIGHT,	6.0f },	/* Python */
 	{ 70,  HC_FREIGHT,	6.0f },	/* Transporter */
+	/* B2, slice 2: the rest of the ships that take plating (docs/hd/hulls.md) */
+	{ 24,  HC_CIVIL,	1.5f },	/* small white spaceplane, crescent wing */
+	{ 26,  HC_ARMOUR,	2.0f },	/* slim green light fighter */
+	{ 74,  HC_FREIGHT,	8.0f },	/* large triangular arrow hull, heavy hauler */
 	{ HULL_TAB_INTRO | 72, HC_STATION, 1.0f },	/* the orbital station behind the menu */
 	/* the intro's scenes: their own model, or a part keyed by its own (gl.c) */
 	{ HULL_TAB_INTRO | HULL_TAB_SCENE | 62,  HC_STATION,	1.0f },	/* the ring station */

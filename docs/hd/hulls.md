@@ -56,9 +56,12 @@ and the reading of the model's frame). The art is in `art/hull/`.
      - Tv = n x Tu
      - h = d . (n[cu], n[cv])
 
-     This is isometric on the face, so plates are never stretched. Neighbours
-     facing the same way share the same coordinates. `hull_frame_obj` handles
-     triangles and quads, and `hull_plane_obj` handles complex shapes.
+     This is isometric on a flat face, so plates are not stretched there.
+     Neighbours facing the same way share the same coordinates.
+     `hull_frame_obj` handles triangles and quads, and `hull_plane_obj`
+     handles complex shapes. A curved surface drawn as one complex shape
+     gets one plane, so its plates stretch where it leaves that plane (see
+     the census under B2, slice 2).
    - **Parts.** A part (a door, a lift, a turning dish) takes its own turn
      and origin, with the object's scale. Its tile is bound to it and moves
      with it, so a sliding bay door carries its plates as it opens instead
@@ -247,6 +250,9 @@ Models (`hull_models[]`, by the whole type word and its table;
 | 60 | swept-wing passenger transport | civilian, panels x6 |
 | 62 | long faceted hexagonal hauler | freighter, panels x6 |
 | 72 | oval disc freighter, four drives | freighter, panels x8 |
+| 24 | small spaceplane, crescent wing | civilian, panels x1.5 |
+| 26 | slim light fighter | armour, panels x2 |
+| 74 | large triangular arrow hull, heavy hauler | freighter, panels x8 |
 | intro's 72 | the orbital station behind the menu | station |
 | 80 | orbital station outside, close up | station |
 | 82 | launch structure | station |
@@ -312,6 +318,7 @@ same models with the same classes as base.
   3. List the PNG in `.githooks/allowed-images`.
 
 Not listed, so drawn flat:
+- the words slice 2's census below leaves out;
 - game table 32 (the landing pad and the landed ship's markings) and 198
   (the port's clouds, not a city as this page used to say);
 - game table 76 (unit 2^10), a giant blocky bulk freighter: plated, its
@@ -333,6 +340,43 @@ Not listed, so drawn flat:
 - the intro's 4 (the title), 12, 34 (the banner), 36, 38, 40 to 54 (its
   scenes, the city among them) and every other intro word but 72 and the
   scene rows below.
+
+### Census (B2, slice 2)
+
+The words slice 1 left, 24 to 38, 64, 68 and 74 to 78. Nine natural
+sessions (five shipyard visits and four long saves, six distinct stocks
+because three of the saves repeat a shipyard's) met only 26, 28, 32 and
+76, so the rest were opened by forcing the word into the shipyard's stock
+on a scratch build that is not committed. The sessions column counts the
+natural ones. Scale by eye at two scales, the biggest face at one to one
+and a half tiles.
+
+| word | shape and role | unit | sessions | class | panels |
+|---|---|---|---|---|---|
+| 24 | small white spaceplane, crescent wing | 2^8 | 0 | civilian | x1.5 |
+| 26 | slim green light fighter | 2^8 | 2 | armour | x2 |
+| 74 | large triangular arrow hull, heavy hauler | 2^10 | 0 | freighter | x8 |
+
+Curved surfaces: a complex shape gets one plane, so a big curved one can
+streak. Word 26 has no complex shapes, and word 74's only one is a small
+flat face of 5 sides. Word 24 is nearly all complex shapes, and
+its crescent wing leaves its plane by as much as word 64's waist does, so
+it was flown round and under at grazing angles: seams and rivets hold,
+with a little streaking in a narrow strip at the wing's outer edge in one
+view of the orbit.
+
+Left out, so still flat:
+
+| word | sessions | why |
+|---|---|---|
+| 28, 30 | 1, 0 | deltas whose body is parts (words 226 to 236); the plate sits on the wing alone and reads as crazy paving there, at the one scale tried |
+| 32 | 1 | shared: it also draws the landing pad and the landed ship's markings |
+| 34, 36 | 0 | small stubs (biggest own face 887 units) that draw word 32 as their body |
+| 38 | 0 | small flat kite-shaped hauler: its saturated red-orange paint has almost no blue, so a sunlit face passes the pure-colour test in `hull_paint5`, which reads the lit colour, and is drawn flat. In a steady turn in flight its biggest faces go plated, flat, plated from frame to frame. Shipyard light hides it |
+| 64 | 0 | waisted hull between two drive pods (a part, word 258): the waist is curved and one plane cannot follow it, so the hull streaks in the flown external view |
+| 68 | 0 | word 64's hull with a third pod; read plated in one trial, a second scale not checked, not flown, so whether it streaks as word 64 does is not known |
+| 76 | 5 | slice 1's stub, drawing other models |
+| 78 | 0 | not reached: forcing it stopped the scratch build in the shipyard |
 
 ### The intro's scenes
 
