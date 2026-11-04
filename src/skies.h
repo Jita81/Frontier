@@ -37,7 +37,8 @@ void skies_forget (void);	/* before the GL context goes */
  * 206) lit as cumulus.  Put side: NU_PUFF and a puff_tag before a low
  * cloud's complex shape (kind 0) or face (kind 1): the model's frame (a
  * view point v is M (v - o) in the model's space), towards the sun in GL
- * eye space, the object's seed and gain, 0 but for the intro's bands (206).
+ * eye space, the object's seed and gain: the swing of an intro band (206),
+ * -1 for the cloud with a dome (198), else 0.
  * Draw side: puff_next before every primitive outside a shape,
  * puff_shape just before a tagged shape is tessellated, puff_face and
  * puff_corner around a tagged face, puff_frame at the end of the frame,

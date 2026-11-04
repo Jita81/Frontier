@@ -3176,7 +3176,7 @@ static void puff_put (int kind, unsigned int key)
 	if (!hull_model_frame (key, M, t.o, NULL, NULL)) return;
 	t.kind = kind;
 	t.seed = hull_obj_seed (key);
-	t.gain = (key & 0xff) == 206 ? 5.0f : 0;
+	t.gain = (key & 0xff) == 206 ? 5.0f : (key & 0xff) == 198 ? -1.0f : 0;	/* a band's swing; < 0: dome_c fits */
 	hull_read_light (lt);
 	l = sqrt ((double) lt[0] * lt[0] + (double) lt[1] * lt[1] + (double) lt[2] * lt[2]);
 	for (j = 0; j < 9; j++) t.M[j] = (float) ldexp (M[j], 2 - unit);

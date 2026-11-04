@@ -351,8 +351,9 @@ round the camera), one whose bound is more than 4 screens or under one
 pixel takes the game's flat fill.  A band shades instead, without the rim.
 
 **Seed.**  The object's seed mixed with a point of the model's space
-quantised to 4 units: its origin for a cloud, so the mottle runs on over
-every shape of it, the shape's centre for a shadow's sheet.  The mottle
+quantised to 4 units: its origin for a domed cloud, so the mottle runs on
+over every shape of it, the shape's centre for a shadow's sheet and the
+intro's clouds.  The mottle
 stays on the cloud and two clouds differ.  Never view space, time, a frame
 count or `rand`.  A band has none: the ray alone places its mottle.
 

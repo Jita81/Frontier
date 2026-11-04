@@ -43,13 +43,14 @@ int puff_on (void)
  * the sun in that frame, uK.z the mean of the light over the bound, so
  * the lit side gains what the shaded side loses; the top (uU, the model's
  * up on screen) a little brighter.  Two lobes do not agree on that where
- * they meet, so it is kept small (K_OWN) and the light comes from one dome
- * for the whole cloud: uE.w 1, the pixel's ray in space where the cloud is
+ * they meet, so on a model with a dome (only the game's 198: cur.gain < 0)
+ * it is kept small (K_OWN) and the light comes from one dome for the whole
+ * cloud: uE.w 1, the pixel's ray in space where the cloud is
  * the unit ball (uE the eye, uW the ray of a window point, a face's ray
  * from its corners, gl_TexCoord[1]), uS the sun, uS.w the mean over the
  * half seen.  None of it depends on the shape, so shapes agree where they
  * meet and a far cloud agrees with its near faces.  uE.w 0, the ground's
- * shadow: a sheet a little darker towards its middle, a face only the
+ * shadow and the intro's clouds: a sheet a little darker towards its middle, a face only the
  * mottle, from its place in the model's space (gl_TexCoord[1]).  uR is
  * the outline's radius in 32 directions: the edge softens over its last
  * pixels (uL.w 0 for a shape too small for it).  uK.y the seed, uK.w the
@@ -91,7 +92,7 @@ static const char puff_glsl[] =
 	"		float r = length (q), r2 = min (r * r, 1.0);\n"
 	"		if (uK.x < 1.5) {\n"
 	"			float lam = clamp ((dot (vec3 (q, sqrt (1.0 - r2)), uL.xyz) + WRAP) / (1.0 + WRAP), 0.0, 1.0);\n"
-	"			f += day * K_OWN * (1.0 - r2) * (K_SUN * (lam - uK.z) + K_TOP * dot (q, uU));\n"
+	"			f += day * (uE.w > 0.5 ? K_OWN * (1.0 - r2) : 1.0) * (K_SUN * (lam - uK.z) + K_TOP * dot (q, uU));\n"
 	"		} else if (uK.x < 2.5 && uE.w < 0.5)\n"
 	"			f -= K_MID * (0.5 - r2);\n"
 	"		float t = atan (q.y, q.x) * (16.0 / 3.14159265) + 15.5, i = floor (t);\n"
@@ -334,7 +335,7 @@ static int puff_band (const double pj[16], const int vp[4], float rim)
 	float A[9];
 	int j;
 
-	if (cur.gain == 0 || !puff_bind ()) return 0;
+	if (cur.gain <= 0 || !puff_bind ()) return 0;
 	for (j = 0; j < 3; j++) {
 		A[j] = (float) (ax * cur.M[3*j]);
 		A[3+j] = (float) (ay * cur.M[3*j+1]);
@@ -356,7 +357,7 @@ int puff_shape (const double (*e)[3], int n, const double mv[16], const double p
 	double c[2], s[2], x0 = 1e30, y0 = 1e30, x1 = -1e30, y1 = -1e30, l, d;
 	float R[RIM_BINS], H[RIM_BINS];
 	static char hard[MAX_PTS];
-	int i, j, k, sheet, shadow;
+	int i, j, k, sheet, shadow, dome;
 
 	if (n < 3 || n > MAX_PTS) return 0;
 	for (i = 0; i < 16; i++)
@@ -386,6 +387,7 @@ int puff_shape (const double (*e)[3], int n, const double mv[16], const double p
 	}
 	sheet = hi[1] - lo[1] < 0.02 * fmax (hi[0] - lo[0], hi[2] - lo[2]);
 	shadow = sheet && lo[1] < -0.5;
+	dome = cur.gain < 0 && !shadow;
 	c[0] = (x0 + x1) / 2; s[0] = (x1 - x0) / 2;
 	c[1] = (y0 + y1) / 2; s[1] = (y1 - y0) / 2;
 
@@ -420,12 +422,12 @@ int puff_shape (const double (*e)[3], int n, const double mv[16], const double p
 		lc = (0.667 * lz + WRAP) / (1 + WRAP);
 		for (j = 0; j < 3; j++) w[j] = (lo[j] + hi[j]) / 2;
 		glUniform4f (u_c, (float) c[0], (float) c[1], (float) (1 / s[0]), (float) (1 / s[1]));
-		glUniform4f (u_k, sheet ? 2 : 1, puff_seed (shadow ? w : zero), (float) fmin (fmax (lc, 0), 1), puff_day ());
+		glUniform4f (u_k, sheet ? 2 : 1, puff_seed (dome ? zero : w), (float) fmin (fmax (lc, 0), 1), puff_day ());
 		d = fmin (fmax ((fmin (s[0], s[1]) - 4) / 8, 0), 1);	/* the rim: none under 8 px across */
 		glUniform4f (u_l, (float) dot3 (L, X), (float) dot3 (L, Y), (float) lz, (float) d);
 		glUniform2f (u_u, ul > 0 ? (float) (ux / ul) : 0, ul > 0 ? (float) (uy / ul) : 1);
 		glUniform1fv (u_r, RIM_BINS, R);
-		if (shadow)
+		if (!dome)
 			glUniform4f (u_e, 0, 0, 0, 0);
 		else {
 			/* window (x, y, 1) to the ray in the dome's space: GL eye
@@ -462,7 +464,7 @@ int puff_face (const double (*p)[3], int n, const float hz[12])
 		puff_obj (p[i], w[i]);
 		lo = fmin (lo, w[i][1]); hi = fmax (hi, w[i][1]);
 	}
-	if (hi - lo > 1) a = dome_size (hi - lo);	/* else the ground's shadow */
+	if (cur.gain < 0 && hi - lo > 1) a = dome_size (hi - lo);	/* else the ground's shadow */
 	for (i = 0; i < n; i++) {
 		if (a) dome_unit (w[i], a, 1, u);
 		for (k = 0; k < 3; k++) {
