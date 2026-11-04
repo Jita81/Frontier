@@ -321,8 +321,8 @@ So a band takes neither light nor seed.  The camera sits within about 2
 units of the model's origin and the bands on a ring of radius about 210
 around it: it only turns.  `puff_band` hangs the mottle on the ray to the
 pixel in the model's frame, 4 octaves and 6 times the swing (the gain, in
-`puff_tag`, 0 for any other model), about 1, so the mean stays the band's
-colour.  One rule for every shot, no seam between shapes, and a shape past
+`puff_tag`; a model with no band mottle has none: 0, or -1 for the dome's
+model), about 1, so the mean stays the band's colour.  One rule for every shot, no seam between shapes, and a shape past
 the guard shades as the rest.
 
 How the intro is proved: an idle replay of the opening, 9000 frames at
@@ -436,8 +436,8 @@ neither committed):
   The merged release (bands, station and dome) against 5f9483b, which
   already holds W10c's +0.39 to +0.41 ms: the median of paired per-frame
   deltas over four runs each way, on the hooked trees (5-minute load up to
-  6.5).  Landed -0.002 ms, its cloud frames +0.001; climb +0.010, no window
-  of it above +0.024; the 95th percentile 6.50 to 6.51 and 24.40 to 24.29
+  6.5).  Landed -0.002 ms, its cloud frames +0.001; climb +0.010, its windows
+  under +0.12 on every run; the 95th percentile 6.50 to 6.51 and 24.40 to 24.29
   ms.  The
   dome's +0.35 ms above did not come back at this load and against this
   base.  That is not explained; both readings are inside the 0.5 ms rule.
