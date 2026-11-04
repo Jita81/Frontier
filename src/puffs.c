@@ -42,28 +42,48 @@ int puff_on (void)
  * eye, normal (q, sqrt (1 - |q|^2)) in the frame of the ray to it: uL is
  * the sun in that frame, uK.z the mean of the light over the bound, so
  * the lit side gains what the shaded side loses; the top (uU, the model's
- * up on screen) a little brighter.  A sheet is a little darker towards
- * its middle.  uR is the outline's radius in 32 directions: the edge
- * softens over its last pixels (uL.w 0 for a shape too small for it).
- * A face (uK.x 0) keeps its colour and takes only the mottle, from its
- * place in the model's space (gl_TexCoord[1]).  uK.y the seed, uK.w the
- * day (the sun above the cloud's horizon): by night only darker.
+ * up on screen) a little brighter.  Two lobes do not agree on that where
+ * they meet, so on a model with a dome (only the game's 198: cur.gain < 0)
+ * it is kept small (K_OWN) and the light comes from one dome for the whole
+ * cloud: uE.w 1, the pixel's ray in space where the cloud is
+ * the unit ball (uE the eye, uW the ray of a window point, a face's ray
+ * from its corners, gl_TexCoord[1]), uS the sun, uS.w the mean over the
+ * half seen.  None of it depends on the shape, so shapes agree where they
+ * meet and a far cloud agrees with its near faces.  uE.w 0, the ground's
+ * shadow and the intro's clouds: a sheet a little darker towards its middle, a face only the
+ * mottle, from its place in the model's space (gl_TexCoord[1]).  uR is
+ * the outline's radius in 32 directions: the edge softens over its last
+ * pixels (uL.w 0 for a shape too small for it).  uK.y the seed, uK.w the
+ * day (the sun above the cloud's horizon): by night only the mottle.
+ *
+ * A band over the limb (uK.x 3, puff_band) takes neither light nor seed.
+ * Its mottle hangs on the ray to the pixel in the model's frame (uA turns
+ * a window point into it), with 4 octaves, and uG scales the swing about
+ * 1, so the mean stays the band's colour; uG is 0 for every other cloud.
  */
 #define RIM_BINS 32
 #define WRAP 0.6		/* wrap lighting: the shaded side is not black */
 #define FACE_R 20.0		/* a lobe's radius in the model's space */
 #define GROUND_Y -0.25		/* a patch is under this in the model's y, a cloud never */
+#define DOME_TOP 0.4		/* the dome's top over its underside, of the sun's swing */
 static const char puff_glsl[] =
 	HAZE_GLSL HAZE_VIEW_GLSL
-	"uniform vec4 uC, uK, uL;\n"
+	"uniform vec4 uC, uK, uL, uE, uS;\n"
 	"uniform vec2 uU;\n"
+	"uniform mat3 uA, uW;\n"
+	"uniform float uG;\n"
 	"uniform float uR[32];\n"
 	"#define K_SUN 0.30\n"	/* the sun's swing about the mean */
 	"#define K_TOP 0.12\n"	/* tops over undersides */
 	"#define K_MID 0.12\n"	/* a sheet's middle */
 	"#define K_MOT 0.16\n"	/* the mottle, +-8% */
+	"#define K_OWN 0.35\n"	/* of a lobe's own term, as relief */
+	"#define K_DOME 4.0\n"	/* the mottle's size on the dome */
 	"#define RIM_PX 3.0\n"	/* the soft edge, pixels */
 	"#define WRAP 0.6\n"
+	"#define BAND_XZ 12.0\n"	/* a band's mottle, per unit of the ray */
+	"#define BAND_Y 24.0\n"	/* flatter across the band than along it */
+	"#define DOME_TOP 0.4\n"
 	"void main () {\n"
 	"	float f = 1.0, a = 1.0, day = uK.w;\n"
 	"	vec3 p = gl_TexCoord[1].xyz;\n"
@@ -72,21 +92,28 @@ static const char puff_glsl[] =
 	"		float r = length (q), r2 = min (r * r, 1.0);\n"
 	"		if (uK.x < 1.5) {\n"
 	"			float lam = clamp ((dot (vec3 (q, sqrt (1.0 - r2)), uL.xyz) + WRAP) / (1.0 + WRAP), 0.0, 1.0);\n"
-	"			f += day * (K_SUN * (lam - uK.z) + K_TOP * dot (q, uU));\n"
-	"		} else\n"
+	"			f += day * (uE.w > 0.5 ? K_OWN * (1.0 - r2) : 1.0) * (K_SUN * (lam - uK.z) + K_TOP * dot (q, uU));\n"
+	"		} else if (uK.x < 2.5 && uE.w < 0.5)\n"
 	"			f -= K_MID * (0.5 - r2);\n"
 	"		float t = atan (q.y, q.x) * (16.0 / 3.14159265) + 15.5, i = floor (t);\n"
 	"		float R = max (uR[int (mod (i, 32.0))], uR[int (mod (i + 1.0, 32.0))]);\n"
 	"		a = mix (1.0, mix (0.15, 1.0, smoothstep (0.0, RIM_PX, (R - r) / max (fwidth (r), 1e-5))), uL.w);\n"
-	"		p = vec3 (q * 2.5, 0.0);\n"
+	"		p = uK.x < 2.5 ? vec3 (q * 2.5, 0.0) : normalize (uA * vec3 (gl_FragCoord.xy, 1.0)) * vec3 (BAND_XZ, BAND_Y, BAND_XZ);\n"
 	"	}\n"
-	"	f *= 1.0 + K_MOT * (pf_fbm (p + uK.y, 2) - 0.5);\n"
-	"	vec3 c = gl_Color.rgb * clamp (f, 0.6, 1.0 + 0.3 * day);\n"
+	"	if (uE.w > 0.5) {\n"
+	"		vec3 d = normalize (uK.x > 0.5 ? uW * vec3 (gl_FragCoord.xy, 1.0) : p - uE.xyz);\n"
+	"		vec3 h = uE.xyz - d * dot (uE.xyz, d), P = h - d * max (1.0 - dot (h, h), 0.0), n = normalize (P);\n"
+	"		f += day * K_SUN * (clamp ((dot (n, uS.xyz) + WRAP) / (1.0 + WRAP), 0.0, 1.0) + DOME_TOP * n.y - uS.w);\n"
+	"		p = P * K_DOME;\n"
+	"	}\n"
+	"	f *= 1.0 + K_MOT * (pf_fbm (p + uK.y, uG > 0.0 ? 4 : 2) - 0.5);\n"
+	"	f = clamp (f, 0.6, 1.0 + 0.3 * day);\n"
+	"	vec3 c = gl_Color.rgb * (f + uG * (f - 1.0));\n"
 	"	gl_FragColor = vec4 (uHz.a > 0.0 ? pf_haze_view (c, gl_TexCoord[0].xyz) : c, a);\n"
 	"}\n";
 
 static GLuint prog;
-static GLint u_c, u_k, u_l, u_u, u_r;
+static GLint u_c, u_k, u_l, u_u, u_r, u_a, u_g, u_e, u_s, u_w;
 static int u_hz[3];
 static int failed, bound, pending;
 static struct puff_tag cur;
@@ -106,7 +133,12 @@ static int puff_bind (void)
 		u_k = glGetUniformLocation (prog, "uK");
 		u_l = glGetUniformLocation (prog, "uL");
 		u_r = glGetUniformLocation (prog, "uR");
+		u_a = glGetUniformLocation (prog, "uA");
+		u_g = glGetUniformLocation (prog, "uG");
 		procfx_haze_find (prog, u_hz);
+		u_e = glGetUniformLocation (prog, "uE");
+		u_s = glGetUniformLocation (prog, "uS");
+		u_w = glGetUniformLocation (prog, "uW");
 	}
 	glPushAttrib (GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT);
 	glEnable (GL_BLEND);
@@ -188,6 +220,38 @@ static float puff_seed (const double w[3])
 	return (float) ((h >> 16) % 1021) * 0.37f;
 }
 
+/* Model 198's dome: centre and radii at its size, its origin the near end
+ * of its sheet.  The game draws it at that size, a half and a quarter: h,
+ * a part's height or half a sheet's width, says which. */
+static const double dome_c[3] = { 0, 15, 81 }, dome_r[3] = { 46, 45, 104 }, zero[3] = { 0, 0, 0 };
+
+static double dome_size (double h) { return pow (2, floor (log2 (fmax (h, 1) / 38))); }
+
+/* into the dome's space, s its size; at 0 for a direction */
+static void dome_unit (const double w[3], double s, int at, double n[3])
+{
+	int j;
+
+	for (j = 0; j < 3; j++) n[j] = (w[j] - at * dome_c[j] * s) / (dome_r[j] * s);
+}
+
+static void dome_bind (double s)
+{
+	double w[3], a[3], E[3], S[3], L[3] = { cur.L[0], cur.L[1], cur.L[2] }, l, m, y;
+	int j;
+
+	puff_obj (zero, w);
+	dome_unit (w, s, 1, E);
+	for (j = 0; j < 3; j++) puff_axis (j, a), S[j] = dot3 (L, a);
+	l = fmax (dot3 (E, E), 1e-12);
+	y = 0.08 * (1 - E[1] * E[1] / l);	/* from the side, what shows is the dome above the sheet */
+	l = sqrt (l);
+	m = (0.667 * dot3 (S, E) / l + y * S[1] + WRAP) / (1 + WRAP);
+	m = fmin (fmax (m, 0), 1) + DOME_TOP * (0.667 * E[1] / l + y);
+	glUniform4f (u_e, (float) E[0], (float) E[1], (float) E[2], 1);
+	glUniform4f (u_s, (float) S[0], (float) S[1], (float) S[2], (float) m);
+}
+
 /*
  * The lobes of a cloud are faces of one solid: two that meet share their
  * edge's points exactly.  Where they lie on either side of it on screen
@@ -255,10 +319,37 @@ static double puff_atan2 (double y, double x)
  * One shape, just before the game's tessellator draws it: its n points e
  * in GL eye space, mv pj vp what gluProject takes them through.  0 when
  * the game's flat fill is to be used: a shape at or behind the near
- * plane, one bigger than 4 screens or too small to see; 2 for a patch
- * in haze (hz, gl.c hull_hz): its vertices send their view place.
+ * plane, one bigger than 4 screens or too small to see (not a band); 2
+ * for a patch in haze (hz, gl.c hull_hz): its vertices send their view
+ * place.
  */
 #define MAX_PTS 1024
+/* The camera turns inside the ring of bands, so a direction in the model's
+ * frame stays on a band with no shape's size, seed or tessellation in it.
+ * 0 for any other model; a band too near or too big shades too, rim 0. */
+static int puff_band (const double pj[16], const int vp[4], float rim)
+{
+	double ax = 2 / (vp[2] * pj[0]), ay = 2 / (vp[3] * pj[5]);
+	double bx = (pj[8] - 1 - vp[0] * 2.0 / vp[2]) / pj[0];
+	double by = (pj[9] - 1 - vp[1] * 2.0 / vp[3]) / pj[5];
+	float A[9];
+	int j;
+
+	if (cur.gain <= 0 || !puff_bind ()) return 0;
+	for (j = 0; j < 3; j++) {
+		A[j] = (float) (ax * cur.M[3*j]);
+		A[3+j] = (float) (ay * cur.M[3*j+1]);
+		A[6+j] = (float) (bx * cur.M[3*j] + by * cur.M[3*j+1] + cur.M[3*j+2]);
+	}
+	glUniformMatrix3fv (u_a, 1, GL_FALSE, A);
+	glUniform4f (u_k, 3, 0, 0, 1);
+	glUniform4f (u_l, 0, 0, 0, rim);
+	glUniform1f (u_g, cur.gain);
+	glUniform4f (u_e, 0, 0, 0, 0);
+	procfx_haze_set (u_hz, no_haze);
+	return 1;
+}
+
 int puff_shape (const double (*e)[3], int n, const double mv[16], const double pj[16], const int vp[4], const float hz[12])
 {
 	static double win[MAX_PTS][2];
@@ -266,7 +357,7 @@ int puff_shape (const double (*e)[3], int n, const double mv[16], const double p
 	double c[2], s[2], x0 = 1e30, y0 = 1e30, x1 = -1e30, y1 = -1e30, l, d;
 	float R[RIM_BINS], H[RIM_BINS];
 	static char hard[MAX_PTS];
-	int i, j, k, sheet;
+	int i, j, k, sheet, shadow, dome;
 
 	if (n < 3 || n > MAX_PTS) return 0;
 	for (i = 0; i < 16; i++)
@@ -274,7 +365,7 @@ int puff_shape (const double (*e)[3], int n, const double mv[16], const double p
 	for (i = 0; i < n; i++) {
 		const double *p = e[i];
 		double cw = P[3] * p[0] + P[7] * p[1] + P[11] * p[2] + P[15];
-		if (p[2] > -1.0 || cw <= 0) return 0;
+		if (p[2] > -1.0 || cw <= 0) return puff_band (pj, vp, 0);
 		win[i][0] = vp[0] + vp[2] * 0.5 * (1 + (P[0] * p[0] + P[4] * p[1] + P[8] * p[2] + P[12]) / cw);
 		win[i][1] = vp[1] + vp[3] * 0.5 * (1 + (P[1] * p[0] + P[5] * p[1] + P[9] * p[2] + P[13]) / cw);
 		x0 = fmin (x0, win[i][0]); x1 = fmax (x1, win[i][0]);
@@ -286,7 +377,7 @@ int puff_shape (const double (*e)[3], int n, const double mv[16], const double p
 			C[j] += p[j] / n;
 		}
 	}
-	if ((x1 - x0) * (y1 - y0) > 4.0 * vp[2] * vp[3] || x1 - x0 < 1 || y1 - y0 < 1) return 0;
+	if ((x1 - x0) * (y1 - y0) > 4.0 * vp[2] * vp[3] || x1 - x0 < 1 || y1 - y0 < 1) return puff_band (pj, vp, 0);
 	shapes++;
 	for (l = 0, i = 0; i < n; i++) l += win[i][0] * win[(i+1)%n][1] - win[(i+1)%n][0] * win[i][1];
 	for (i = 0; i < n; i++) {
@@ -295,6 +386,8 @@ int puff_shape (const double (*e)[3], int n, const double mv[16], const double p
 		hard[i] = puff_shared (w, (float) (l > 0 ? -ty : ty), (float) (l > 0 ? tx : -tx));
 	}
 	sheet = hi[1] - lo[1] < 0.02 * fmax (hi[0] - lo[0], hi[2] - lo[2]);
+	shadow = sheet && lo[1] < -0.5;
+	dome = cur.gain < 0 && !shadow;
 	c[0] = (x0 + x1) / 2; s[0] = (x1 - x0) / 2;
 	c[1] = (y0 + y1) / 2; s[1] = (y1 - y0) / 2;
 
@@ -329,11 +422,31 @@ int puff_shape (const double (*e)[3], int n, const double mv[16], const double p
 		lc = (0.667 * lz + WRAP) / (1 + WRAP);
 		for (j = 0; j < 3; j++) w[j] = (lo[j] + hi[j]) / 2;
 		glUniform4f (u_c, (float) c[0], (float) c[1], (float) (1 / s[0]), (float) (1 / s[1]));
-		glUniform4f (u_k, sheet ? 2 : 1, puff_seed (w), (float) fmin (fmax (lc, 0), 1), puff_day ());
+		glUniform4f (u_k, sheet ? 2 : 1, puff_seed (dome ? zero : w), (float) fmin (fmax (lc, 0), 1), puff_day ());
 		d = fmin (fmax ((fmin (s[0], s[1]) - 4) / 8, 0), 1);	/* the rim: none under 8 px across */
 		glUniform4f (u_l, (float) dot3 (L, X), (float) dot3 (L, Y), (float) lz, (float) d);
 		glUniform2f (u_u, ul > 0 ? (float) (ux / ul) : 0, ul > 0 ? (float) (uy / ul) : 1);
 		glUniform1fv (u_r, RIM_BINS, R);
+		if (!dome)
+			glUniform4f (u_e, 0, 0, 0, 0);
+		else {
+			/* window (x, y, 1) to the ray in the dome's space: GL eye
+			 * to the model's axes (puff_obj) to the unit ball */
+			double a = dome_size (sheet ? (hi[0] - lo[0]) / 2 : hi[1] - lo[1]);
+			double g[3][3] = { { 2 / (vp[2] * P[0]), 0, 0 }, { 0, 2 / (vp[3] * P[5]), 0 },
+				{ (P[8] - 1 - 2.0 * vp[0] / vp[2]) / P[0], (P[9] - 1 - 2.0 * vp[1] / vp[3]) / P[5], -1 } };
+			GLfloat W[9];
+			dome_bind (a);
+			for (k = 0; k < 3; k++) {
+				for (j = 0; j < 3; j++)
+					w[j] = cur.M[3*j] * g[k][0] + cur.M[3*j+1] * g[k][1] - cur.M[3*j+2] * g[k][2];
+				dome_unit (w, a, 0, w);
+				for (j = 0; j < 3; j++) W[3*k+j] = (GLfloat) w[j];
+			}
+			glUniformMatrix3fv (u_w, 1, GL_FALSE, W);
+		}
+		glUniform1f (u_g, 0);
+		puff_band (pj, vp, (float) d);
 	}
 	k = hi[1] < GROUND_Y && hz[3] > 0;
 	procfx_haze_set (u_hz, k ? hz : no_haze);
@@ -344,21 +457,26 @@ int puff_shape (const double (*e)[3], int n, const double mv[16], const double p
  * puff_corner (i) before each corner's glVertex */
 int puff_face (const double (*p)[3], int n, const float hz[12])
 {
-	static const double zero[3] = { 0, 0, 0 };
-	int i, k, ground = 1;
+	double w[4][3], lo = 1e30, hi = -1e30, a = 0, u[3];
+	int i, k;
 
 	for (i = 0; i < n; i++) {
-		double w[3];
-		puff_obj (p[i], w);
-		ground &= w[1] < GROUND_Y;
+		puff_obj (p[i], w[i]);
+		lo = fmin (lo, w[i][1]); hi = fmax (hi, w[i][1]);
+	}
+	if (cur.gain < 0 && hi - lo > 1) a = dome_size (hi - lo);	/* else the ground's shadow */
+	for (i = 0; i < n; i++) {
+		if (a) dome_unit (w[i], a, 1, u);
 		for (k = 0; k < 3; k++) {
-			corner[i][k] = (float) (w[k] * (2.5 / FACE_R));
+			corner[i][k] = (float) (a ? u[k] : w[i][k] * (2.5 / FACE_R));
 			eye[i][k] = (float) p[i][k];
 		}
 	}
 	if (!puff_bind ()) return 0;
 	glUniform4f (u_k, 0, puff_seed (zero), 0, puff_day ());
-	procfx_haze_set (u_hz, ground ? hz : no_haze);
+	glUniform1f (u_g, 0);
+	if (a) dome_bind (a); else glUniform4f (u_e, 0, 0, 0, 0);
+	procfx_haze_set (u_hz, hi < GROUND_Y ? hz : no_haze);
 	return 1;
 }
 

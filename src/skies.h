@@ -33,16 +33,18 @@ void skies_ring_end (void);
 void skies_forget (void);	/* before the GL context goes */
 
 /*
- * puffs.c: the game's own low clouds (model 198) lit as cumulus.  Put
- * side: NU_PUFF and a puff_tag before a low cloud's complex shape (kind
- * 0) or face (kind 1): the model's frame (a view point v is M (v - o) in
- * the model's space), towards the sun in GL eye space and the object's
- * seed.  Draw side: puff_next before every primitive outside a shape,
+ * puffs.c: the game's own low clouds (model 198, the intro's 186 and
+ * 206) lit as cumulus.  Put side: NU_PUFF and a puff_tag before a low
+ * cloud's complex shape (kind 0) or face (kind 1): the model's frame (a
+ * view point v is M (v - o) in the model's space), towards the sun in GL
+ * eye space, the object's seed and gain: the swing of an intro band (206),
+ * -1 for the cloud with a dome (198), else 0.
+ * Draw side: puff_next before every primitive outside a shape,
  * puff_shape just before a tagged shape is tessellated, puff_face and
  * puff_corner around a tagged face, puff_frame at the end of the frame,
  * puff_forget before the GL context goes.
  */
-struct puff_tag { int kind; unsigned int seed; float M[9], L[3]; int o[3]; };
+struct puff_tag { int kind; unsigned int seed; float M[9], L[3], gain; int o[3]; };
 int puff_on (void);
 void puff_draw_tag (void **data);
 int puff_next (int kind);
