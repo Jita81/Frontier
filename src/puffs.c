@@ -200,6 +200,14 @@ void puff_frame (void)
 	frame++;
 }
 
+/* the GL context is about to go: compile again in the next one */
+void puff_forget (void)
+{
+	if (prog) glDeleteProgram (prog);
+	prog = 0;
+	failed = 0;
+}
+
 static int puff_shared (const double w[3], float nx, float ny)
 {
 	unsigned int h = cur.seed * 0x9e3779b1u, i, k, m = (1 << PT_BITS) - 1;

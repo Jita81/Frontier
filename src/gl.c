@@ -276,6 +276,7 @@ static void change_vidmode ()
 		galaxy_tex = 0;
 	}
 	procfx_forget ();
+	puff_forget ();
 	hdtip_forget ();
 	hddamage_forget ();
 	if (screen_tex) {
