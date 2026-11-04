@@ -5276,10 +5276,10 @@ static float cloud_look (int model_word, int air, int rim, unsigned int seed,
 	/* threshold at 0 and 1 of the range, haze floor, opacity, tint to rim,
 	 * the ground's haze reach in R (planet_haze: thick air less, thin more) */
 	static const float look[4][6] = {
-		{ 0.582f, 0.559f, 0.0f, 1.0f, 0.0f, 0.012f },	/* terran, ocean: 28-35% */
-		{ 0.685f, 0.653f, 0.0f, 1.0f, 0.0f, 0.018f },	/* ice: 9-14% */
-		{ 0.729f, 0.685f, 0.0f, 0.5f, 0.6f, 0.036f },	/* rocky: wisps, 5-10% */
-		{ 0.500f, 0.500f, 0.8f, 1.0f, 0.5f, 0.006f },	/* corrosive, methane: haze */
+		{ 0.582f, 0.559f, 0.0f, 1.0f, 0.0f, 0.009f },	/* terran, ocean: 28-35% */
+		{ 0.685f, 0.653f, 0.0f, 1.0f, 0.0f, 0.0135f },	/* ice: 9-14% */
+		{ 0.729f, 0.685f, 0.0f, 0.5f, 0.6f, 0.027f },	/* rocky: wisps, 5-10% */
+		{ 0.500f, 0.500f, 0.8f, 1.0f, 0.5f, 0.0045f },	/* corrosive, methane: haze */
 	};
 	const float *l;
 	float u, rgb[3] = { 1, 1, 1 };
@@ -5327,13 +5327,11 @@ static void cloud_stage (const struct PlanetPrim *p, double d, const double sun[
 }
 
 /* Aerial haze (docs/hd/clouds.md), 0 in hz[3] for none: the ground fades
- * as 1 - exp(-dist / L) into the sky's colour at the horizon, the halo's
- * innermost layer (the rim, kept when the ST draws no halo, so looking
- * down cannot pop it), weight full in the air and gone by
- * PLANET_SKY_RATIO; hz[4-6] the eye in model space in R, hz[7] R / L, L
- * the air's reach stretched once the eye is above its scale height, where
- * only that part of the view ray is in the air. */
-#define AIR_SCALE_H	0.001
+ * into the sky's colour at the horizon, the halo's innermost layer (the
+ * rim, kept when the ST draws no halo, so looking down cannot pop it),
+ * by the air along the path (procfx.c), weight full in the air and gone
+ * by PLANET_SKY_RATIO; hz[4-6] the eye in model space in R, hz[7] R / L,
+ * L the air's reach at sea level. */
 static void planet_haze (const struct PlanetPrim *p, double d, float hz[8])
 {
 	double up[3], e[3];
@@ -5347,8 +5345,8 @@ static void planet_haze (const struct PlanetPrim *p, double d, float hz[8])
 	hz[3] = 1 - planet_ramp (1.02, PLANET_SKY_RATIO, d / p->R);
 	for (i = 0; i < 3; i++) up[i] = -p->centre[i] / d;
 	to_model (p, up, e);
-	for (i = 0; i < 3; i++) hz[4+i] = e[i] * d / p->R;
-	hz[7] = fmin (1.0, AIR_SCALE_H / fmax (d / p->R - 1, 1e-9)) / p->hz;
+	for (i = 0; i < 3; i++) hz[4+i] = e[i] / sqrt (pdot (e, e)) * d / p->R;	/* A: not quite a rotation */
+	hz[7] = 1 / p->hz;
 }
 
 static int planet_smooth_begin (const struct PlanetPrim *p, double d, const struct LightZone *z,
