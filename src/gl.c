@@ -4396,6 +4396,14 @@ static int hull_complex_begin (GLdouble c[][3], int n, void **data)
 #ifdef HULL_SHADERS
 	if (cls == HC_STATION) calm = 0;	/* as hull_paint5 */
 	if (hull_program5 () && hull_begin5 (cls, calm)) hull_cmode = 2;
+	/* the menu's station: its wings (big and grey; the record's one other
+	 * such shape, a white disc, faces the view) are curved, so at a graze
+	 * each triangle of the tessellation fades by its own amount and the fan
+	 * shows as pale bars. They stay plated to the edge; hull_end drops this
+	 * with the program */
+	if (hull_cmode == 2 && HULL_KEY_MODEL (hull_cc.key) == (HULL_TAB_INTRO | 72) &&
+	    mx == mn && n >= 32)
+		glUniform1f (hull_uloc5[2], 0);
 #endif
 	if (!hull_cmode && !hull_cls[cls].failed && hull_fixed5 (cls)) hull_cmode = 1;
 	if (!hull_cmode) {
