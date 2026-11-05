@@ -24,6 +24,7 @@
 #define PX_HI		0.028f	/* all of it above */
 #define FLAT_LO		0.02f	/* n.v at which the cap lies flat on the oval */
 #define FLAT_HI		0.11f	/* and has its full height */
+#define EDGE_ON		0.02f	/* |n.v| below this the game keeps its own pilot */
 
 typedef float V3[3];
 struct part { V3 c, up; float ru, rs; const float *rgb; };
@@ -190,18 +191,17 @@ static void blob (const struct part *b)
 /* the seat, and in it the figure about the game's head, far parts first */
 static void figure (const float *hd, const float *helmet)
 {
-	static const float seat[3] = { 0.20f, 0.21f, 0.24f }, suit[3] = { 0.48f, 0.44f, 0.14f };
+	static const float seat[3] = { 0.24f, 0.25f, 0.28f }, suit[3] = { 0.30f, 0.28f, 0.12f };
 	static const float visor[3] = { 0.30f, 0.62f, 0.68f };
 	/* in head radii from the head: down his back, aft, forward; radii */
-	static const struct { float down, aft, fore, ru, rs; const float *rgb; } shape[5] = {
-		{ 2.2f, 1.05f, 0, 2.0f, 1.2f, seat }, { 2.15f, 0, 0, 1.45f, 1, suit },
-		{ 3.0f, 0, 1.4f, 1.5f, 0.7f, suit }, { 0, 0, 0, 1, 1, NULL },
-		{ -0.12f, 0, 0.7f, 0.3f, 0.72f, visor }
+	static const struct { float down, aft, fore, ru, rs; const float *rgb; } shape[4] = {
+		{ 1.5f, 1.2f, 0, 1.6f, 2.0f, seat }, { 1.45f, 0.5f, 0, 0.95f, 1.5f, suit },
+		{ 0, 0, 0, 1, 1, NULL }, { -0.12f, 0, 0.7f, 0.3f, 0.72f, visor }
 	};
 	const float q = HEAD * rb;
-	struct part b[5], t;
+	struct part b[4], t;
 	V3 seated, back, aft;
-	int i, j, k, n = helmet ? 5 : 1;
+	int i, j, k, n = helmet ? 4 : 1;
 
 	if (!hd) {	/* no pilot: the seat alone, on the centre line, aft */
 		at (seated, 0.2f, 0, 3 * q);
@@ -214,7 +214,7 @@ static void figure (const float *hd, const float *helmet)
 	for (i = 0; i < n; i++) {
 		for (k = 0; k < 3; k++) {
 			b[i].c[k] = hd[k] + q * (shape[i].aft * aft[k] - shape[i].down * back[k] - shape[i].fore * ax[k]);
-			b[i].up[k] = i == 2 ? ax[k] : back[k];
+			b[i].up[k] = back[k];
 		}
 		b[i].ru = shape[i].ru * q;
 		b[i].rs = shape[i].rs * q;
@@ -315,6 +315,7 @@ void cockpit_draw (const short lt[3], const double proj[16])
 	norm (li);
 	z = norm (eye);
 	if (!(ra > 0) || !(rb > 0) || !(z > 0)) return;
+	nv = dot (nx, eye);
 	/* the size of it decides: below PX_LO the game's oval and pilot stay */
 	fade = smooth (PX_LO, PX_HI, (float) (ra * proj[5] / 2 / -ce[2]));
 	/* the game's pilot of this oval, if it drew one */
@@ -327,7 +328,7 @@ void cockpit_draw (const short lt[3], const double proj[16])
 	if (best < reach) {
 		hd = pilot[who].e;
 		helmet = pilot[who].rgb;
-		pilot[who].took = fade >= 1 ? reach : 0;
+		pilot[who].took = fade >= 1 && fabsf (nv) > EDGE_ON ? reach : 0;
 	}
 	if (fade <= 0) return;
 	if (cs[1][0] == 0)
@@ -335,7 +336,6 @@ void cockpit_draw (const short lt[3], const double proj[16])
 			cs[i][0] = cosf (i * TURN / SEGS);
 			cs[i][1] = sinf (i * TURN / SEGS);
 		}
-	nv = dot (nx, eye);
 	h = smooth (FLAT_LO, FLAT_HI, nv);
 	z = WELL * rb / fmaxf (nv, 0.2f);	/* along the plane, towards the eye */
 	floor_at[0] = dot (ax, eye) * z / ra;
@@ -348,7 +348,7 @@ void cockpit_draw (const short lt[3], const double proj[16])
 	glEnable (GL_BLEND);
 	glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	cabin ();
-	if (fabsf (nv) > 0.02f) figure (hd, helmet);
+	if (fabsf (nv) > EDGE_ON) figure (hd, helmet);
 	glBlendFunc (GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 	if (h > 0) glass (h * HEIGHT * rb, h * fade);
 	glPopAttrib ();

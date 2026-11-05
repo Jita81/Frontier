@@ -544,9 +544,10 @@ frame's own numbers.
   complex shape ends: the cabin, the figure, the glass; then the wire lines
   and the faces after the oval, as in the game. The cabin is a dark graded
   well with a floor that slides with the view and a faint glow forward. The
-  figure is five small convex parts sorted far to near, about the head the
-  game put, in the game's helmet colour; where the game drew no pilot the
-  seat stands alone. The glass is a squashed half sphere, front faces only,
+  figure is four small convex parts sorted far to near, about the head the
+  game put, in the game's helmet colour: the seat back, wider than the
+  short dark shoulders it frames, then the head and visor. Where the game
+  drew no pilot the seat stands alone. The glass is a squashed half sphere, front faces only,
   premultiplied: a faint centre, a Fresnel rim, the sky, and a soft
   highlight kept up on the crown.
 - **The game's pilot.** Its head circle is read at Put for the position, and
@@ -560,6 +561,8 @@ frame's own numbers.
 - **Small ships.** Below `PX_LO` of the view the layer draws nothing and
   the game's oval and pilot stay; it fades in up to `PX_HI`, where the
   figure takes over from the game's pilot.
+- **Edge on.** Within `EDGE_ON` of n.v the figure is not drawn, so the
+  game's pilot stays for those frames and he never blinks out.
 - **Later faces.** The hull faces that follow the oval overdraw the cap
   like anything else in the painter's order. That reads right at every
   close angle of the opening, so the glass stays in the oval's slot.
