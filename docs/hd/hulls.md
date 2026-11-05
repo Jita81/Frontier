@@ -523,6 +523,52 @@ after the table for a part of record N.
   flight frames moves by more than 24 of 255 against the base (run to run
   noise, no beam or glow).
 
+### The cockpit
+
+`src/cockpit.c` draws the green ship's cockpit in the oval's own painter
+slot, under the game's wire lines, which stay as canopy struts. It is
+the one new part of a model; everything in it is made in code, from the
+frame's own numbers.
+
+- **Selection.** By sub-model: the oval is intro word 88 and the pilot word
+  90, the words that carry `HULL_TAB_SCENE`, so `hull_intro_base()` turns
+  the layer off and `--flat-hulls`, `--flat-fx`, `--classic-ui`,
+  `--pixel-art` and `--old-renderer` give the game's own oval, lines and
+  pilot. There is no switch of its own. Nothing else pays more than one
+  compare on a key already read.
+- **Frame.** The oval's curves are half ellipses, so its first curve gives
+  the centre and the two axes in eye space at draw time, one for each
+  ship. No number comes from the model; the constants are art ratios of the
+  radii.
+- **Order.** The window is the game's oval, kept. Over it, when the oval's
+  complex shape ends: the cabin, the figure, the glass; then the wire lines
+  and the faces after the oval, as in the game. The cabin is a dark graded
+  well with a floor that slides with the view and a faint glow forward. The
+  figure is four small convex parts about the head the game put, in the
+  game's helmet colour: the seat back, wider than the short dark shoulders
+  it frames and always drawn first, then shoulders, head and visor sorted
+  far to near. Where the game drew no pilot the seat stands alone. The glass is a squashed half sphere, front faces only,
+  premultiplied: a faint centre, a Fresnel rim, the sky, and a soft
+  highlight kept up on the crown.
+- **The game's pilot.** Its head circle is read at Put for the position, and
+  the faces and the circle are skipped at Draw, where the oval's pixel size
+  is known; the game state is never written. Word 90's lines stay: a line
+  carries no key, and they read as the instruments.
+- **Popping.** The game shows or hides the sub-model as a unit. The cap's
+  height, and its alpha with it, follows n.v between `FLAT_LO` and
+  `FLAT_HI`, so it flattens onto the oval at grazing angles. When the game
+  brings the oval in at a steeper angle the cap arrives part raised, in the
+  same frame as the oval; at that size it is hard to see. A wire frame that
+  pops is the game's own.
+- **Small ships.** Below `PX_LO` of the view the layer draws nothing and
+  the game's oval and pilot stay; it fades in up to `PX_HI`, where the
+  figure takes over from the game's pilot.
+- **Edge on.** Within `EDGE_ON` of n.v the figure is not drawn, so the
+  game's pilot stays for those frames and he never blinks out.
+- **Later faces.** The hull faces that follow the oval overdraw the cap
+  like anything else in the painter's order. That reads right at every
+  close angle of the opening, so the glass stays in the oval's slot.
+
 ## A surface port's buildings
 
 Census (`FE2_HULL_LOG=1` with `FE2_HULL_DBG=1`, landed at the

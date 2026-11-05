@@ -57,6 +57,7 @@ typedef void (*_GLUfuncptr)();
 #include "hdtip.h"
 #include "hddamage.h"
 #include "shadows.h"
+#include "cockpit.h"
 /* MEM_SIZE, and the engine's variables by label address (__D<label>) */
 #include "../host.h"
 #include "../fixups.h"
@@ -1605,6 +1606,8 @@ static unsigned int complex_st_start;
 /* style 5 plates complex shapes too: see hull_put_cctx */
 static void hull_put_cctx (void);
 static void hull_rdcctx (void **data);
+static int hull_cockpit (void);
+static void hull_cockpit_draw (void);
 static int hull_complex_begin (GLdouble c[][3], int n, void **data);
 static int hull_complex_hazed (int cloud, int puffed);
 static void hull_complex_end (void);
@@ -1891,6 +1894,7 @@ void Nu_DrawComplexEnd (void **data)
 		glPopMatrix ();
 		glMatrixMode (GL_MODELVIEW);
 		glPopMatrix ();
+		if (hull_cockpit ()) hull_cockpit_draw ();
 	} else if (use_renderer == R_GLWIRE) {
 		glVertex3dv (tess_vertices[0]);
 		glEnd ();
@@ -2010,6 +2014,7 @@ void Nu_DrawComplexBezier (void **data)
 	znode_rdvertexf (data, ctrlpoints[3]);
 	
 	bezier_steps = bezier_steps_for (ctrlpoints);
+	if (hull_cockpit ()) cockpit_arc (ctrlpoints);
 	
 	/* S-6: was an assert. The GL path is bounded in
 	 * push_contour_vertex; the wireframe one stores one vertex below */
@@ -2783,6 +2788,7 @@ static void hull_latch (void)
 {
 	hull_ctx = !flat_hulls && use_renderer != R_OLD ? (hull_style >= 5 ? 2 : 1) : 0;
 	hull_frame_no++;
+	cockpit_begin ();
 }
 
 static inline int st_readable (unsigned int addr, unsigned int len);
@@ -3304,6 +3310,9 @@ static void hull_put_cctx (void)
 		znode_wrblock (o, sizeof o);
 	}
 }
+
+static int hull_cockpit (void) { return hull_cc.key == COCKPIT_OVAL; }
+static void hull_cockpit_draw (void) { cockpit_draw (hull_cc.light, tessProjMatrix); }
 
 static void hull_rdcctx (void **data)
 {
@@ -4664,6 +4673,7 @@ void Nu_DrawTriangle (void **data)
 	znode_rdvertexf (data, v3);
 	znode_rdcolorv (data, rgb);
 	if (hull_ctx) hull_rdctx (data, &cx, 3);
+	if (cx.key == COCKPIT_PILOT && cockpit_replaced (v1[0], v1[1], v1[2])) return;
 	if (fx_tri (v1, v2, v3)) return;
 	glColor3ub (rgb[0], rgb[1], rgb[2]);
 	if (use_renderer == R_GLWIRE) {
@@ -4721,6 +4731,7 @@ void Nu_DrawQuad (void **data)
 	znode_rdvertex (data, v4);
 	znode_rdcolor (data, &r, &g, &b);
 	if (hull_ctx) hull_rdctx (data, &cx, 4);
+	if (cx.key == COCKPIT_PILOT && cockpit_replaced (v1[0], v1[1], v1[2])) return;
 	
 	glColor3ub (r, g, b);
 	if (use_renderer == R_GLWIRE) {
@@ -6467,6 +6478,11 @@ void Nu_PutCircle ()
 
 	if (use_renderer == R_OLD) return;
 	key = hull_model_key ();
+	if (key == COCKPIT_PILOT) {
+		int e[3] = { (int) STMemory_ReadLong (GetReg (REG_A0) + 4), (int) STMemory_ReadLong (GetReg (REG_A0) + 8),
+			     -(int) STMemory_ReadLong (GetReg (REG_A0) + 12) };
+		cockpit_pilot_put (e, GetReg (REG_D6) & 0xfff);
+	}
 	put_fx ();
 	znode_wrlong (NU_CIRCLE);
 	znode_wrlong (GetReg (REG_D2));	/* untouched: its high word is the radius's fraction */
@@ -6651,6 +6667,10 @@ void Nu_DrawCircle (void **data)
 	znode_rdvertex (data, v1);
 	znode_rdcolor (data, &r, &g, &b);
 	hyper = znode_rdlong (data);
+	if ((hyper & 0x3ffff) == COCKPIT_PILOT_CIRCLE && cockpit_replaced (v1[0], v1[1], v1[2])) {
+		*data += sizeof (struct procfx_star);	/* put_star's bytes, unread */
+		return;
+	}
 	if (fx_circle (v1, dreg2, r, g, b)) {	/* an explosion's fireball */
 		*data += sizeof (struct procfx_star);	/* put_star's bytes, unread */
 		return;
