@@ -544,10 +544,10 @@ frame's own numbers.
   complex shape ends: the cabin, the figure, the glass; then the wire lines
   and the faces after the oval, as in the game. The cabin is a dark graded
   well with a floor that slides with the view and a faint glow forward. The
-  figure is four small convex parts sorted far to near, about the head the
-  game put, in the game's helmet colour: the seat back, wider than the
-  short dark shoulders it frames, then the head and visor. Where the game
-  drew no pilot the seat stands alone. The glass is a squashed half sphere, front faces only,
+  figure is four small convex parts about the head the game put, in the
+  game's helmet colour: the seat back, wider than the short dark shoulders
+  it frames and always drawn first, then shoulders, head and visor sorted
+  far to near. Where the game drew no pilot the seat stands alone. The glass is a squashed half sphere, front faces only,
   premultiplied: a faint centre, a Fresnel rim, the sky, and a soft
   highlight kept up on the crown.
 - **The game's pilot.** Its head circle is read at Put for the position, and

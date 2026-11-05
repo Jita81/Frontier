@@ -188,7 +188,7 @@ static void blob (const struct part *b)
 	glEnd ();
 }
 
-/* the seat, and in it the figure about the game's head, far parts first */
+/* the seat, then in it the figure about the game's head, far parts first */
 static void figure (const float *hd, const float *helmet)
 {
 	static const float seat[3] = { 0.24f, 0.25f, 0.28f }, suit[3] = { 0.30f, 0.28f, 0.12f };
@@ -220,8 +220,8 @@ static void figure (const float *hd, const float *helmet)
 		b[i].rs = shape[i].rs * q;
 		b[i].rgb = shape[i].rgb ? shape[i].rgb : helmet;
 	}
-	for (i = 1; i < n; i++)
-		for (j = i; j > 0 && dot (b[j].c, b[j].c) > dot (b[j - 1].c, b[j - 1].c); j--) {
+	for (i = 2; i < n; i++)
+		for (j = i; j > 1 && dot (b[j].c, b[j].c) > dot (b[j - 1].c, b[j - 1].c); j--) {
 			t = b[j];
 			b[j] = b[j - 1];
 			b[j - 1] = t;
