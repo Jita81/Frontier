@@ -556,8 +556,10 @@ frame's own numbers.
   carries no key, and they read as the instruments.
 - **Popping.** The game shows or hides the sub-model as a unit. The cap's
   height, and its alpha with it, follows n.v between `FLAT_LO` and
-  `FLAT_HI`, so it lies flat on the oval before the gate fires. A wire frame
-  that pops is the game's own.
+  `FLAT_HI`, so it flattens onto the oval at grazing angles. When the game
+  brings the oval in at a steeper angle the cap arrives part raised, in the
+  same frame as the oval; at that size it is hard to see. A wire frame that
+  pops is the game's own.
 - **Small ships.** Below `PX_LO` of the view the layer draws nothing and
   the game's oval and pilot stay; it fades in up to `PX_HI`, where the
   figure takes over from the game's pilot.
